@@ -279,6 +279,12 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
   }
 }
 
+/**
+ * 把模型给的一个路径解析到工作区内 —— **注意这个和 `@meng/config` 的
+ * `resolveRoot(scope)` 不是一回事**, 只是名字撞了:
+ * 那个回答"工作区在哪", 这个回答"这条相对路径落在工作区的哪"。
+ * 前者本文件用的是 `sandboxRoot(ctx)`。
+ */
 function resolveRoot(input: string, base?: string): string {
   return posix(resolve(base ?? '.', input))
 }
