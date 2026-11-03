@@ -6,6 +6,8 @@
   "main": "./src/index.ts",
   "dependencies": {
     "@meng/core": "workspace:*",
+    "@meng/config": "workspace:*",
+    "@meng/plugin-config-local": "workspace:*",
     "@meng/llm": "workspace:*",
     "@meng/session": "workspace:*",
     "@meng/tools": "workspace:*",

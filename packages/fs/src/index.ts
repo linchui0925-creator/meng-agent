@@ -19,6 +19,7 @@
 
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { dirname, relative, resolve, sep } from 'node:path'
+import { sandboxRoot } from '@meng/config'
 import { defineInvariant, type Ctx, type Disposer } from '@meng/core'
 
 export const name = 'meng-fs'
@@ -216,10 +217,11 @@ export const invariant = defineInvariant('@meng/fs', [
   },
   {
     id: 'fence-blocks-escape',
-    run() {
+    run(ctx) {
       // 围栏必须真的拦得住, 不能只是"代码里写了"。
-      // root 的取值要和 kit 清单里的表达式保持一致 —— 改那边记得改这里
-      const root = resolve(process.env.MENG_WORKSPACE || process.cwd())
+      // root 走统一入口取 —— 围栏的基准和真正读写用的必须是同一个值,
+      // 否则"测试里拦住了、运行时没拦住"这种最坏的情况就会发生
+      const root = sandboxRoot(ctx)
       if (isWithin(root, '/etc/passwd')) throw new Error('路径围栏失效: 绝对路径竟算作工作区内')
       if (isWithin(root, '../../etc/passwd')) throw new Error('路径围栏失效: ../ 逃逸竟算作工作区内')
       if (!isWithin(root, 'README.md')) throw new Error('路径围栏误伤: 工作区内文件竟被判越界')

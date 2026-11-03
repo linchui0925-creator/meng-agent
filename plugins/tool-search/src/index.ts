@@ -19,6 +19,7 @@
 
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
+import { sandboxRoot } from '@meng/config'
 import { defineInvariant, type Ctx, type Disposer } from '@meng/core'
 import type { ToolDef, ToolResult, ToolService } from '@meng/tools'
 
@@ -26,7 +27,7 @@ export const name = 'meng-plugin-tool-search'
 export const inject = ['tools']
 
 export interface Config {
-  root?: string
+  // 工作区根由 @meng/config 统一给, 见 sandboxRoot()
   globMaxResults?: number
   grepMaxMatches?: number
   grepMaxLineBytes?: number
@@ -48,7 +49,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
   const tools = ctx.get<ToolService>('tools')
   if (!tools) throw new Error('能力面 tools 未装载')
 
-  const root = resolve((config.root ?? process.env.MENG_WORKSPACE) || process.cwd())
+  const root = sandboxRoot(ctx)
   const globMaxResults = config.globMaxResults ?? 100
   const grepMaxMatches = config.grepMaxMatches ?? 250
   const grepMaxLineBytes = config.grepMaxLineBytes ?? 2000

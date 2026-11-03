@@ -26,7 +26,7 @@ if (!arg) {
 const ctx = createContext('outline-demo')
 toolsApply(ctx)
 fsApply(ctx, { root: process.cwd() })
-netApply(ctx, { root: process.cwd(), timeoutMs: 30000 })
+netApply(ctx, { timeoutMs: 30000 })
 fetchApply(ctx, { displayChars: 200 })
 outlineApply(ctx)
 

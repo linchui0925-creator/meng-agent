@@ -21,6 +21,7 @@ import { mkdir, readdir, readFile, rm, stat, unlink, writeFile } from 'node:fs/p
 import { tmpdir } from 'node:os'
 import { basename, join, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { sandboxRoot } from '@meng/config'
 import { defineInvariant, type Ctx, type Disposer } from '@meng/core'
 
 export const name = 'meng-spill'
@@ -74,7 +75,7 @@ export interface SpillService {
 }
 
 export interface Config {
-  root?: string
+  // 落盘根由 @meng/config 统一给, 见 sandboxRoot()
   /** 相对 root 的落盘目录。必须在 glob/grep 的 IGNORE 里, 否则模型会搜到自己的输出 */
   relDir?: string
 }
@@ -207,7 +208,7 @@ export function createSpill(dir: string, relDir: string, emit?: (ref: SpillRef) 
 }
 
 export function apply(ctx: Ctx, config: Config = {}): Disposer {
-  const root = resolve((config.root ?? process.env.MENG_WORKSPACE) || process.cwd())
+  const root = sandboxRoot(ctx)
   const relDir = config.relDir ?? '.meng/spill'
   const service = createSpill(join(root, relDir), relDir, (ref) => {
     ctx.emit('spill/written', ref)

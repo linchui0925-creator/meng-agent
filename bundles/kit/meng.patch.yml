@@ -15,15 +15,12 @@
     # 换托管版只读 fs 提供方时, 下面四个工具插件一行都不用改
     - id: fs
       name: '@meng/fs'
-      config:
-        root: !!js process.env.MENG_WORKSPACE || process.cwd()
 
     # 工具输出溢出落盘。不经过 fs —— 它是临时产物, 不该被 glob 搜到、
     # 不该计入"已观察"。目录必须在 tool-search 的 IGNORE 里 (.meng 已经是)
     - id: spill
       name: '@meng/spill'
       config:
-        root: !!js process.env.MENG_WORKSPACE || process.cwd()
         relDir: .meng/spill
 
     # 抓网页的能力面 (@meng/net) 只有类型, 实现在这里。
@@ -32,7 +29,6 @@
     - id: net-local
       name: '@meng/plugin-net-local'
       config:
-        root: !!js process.env.MENG_WORKSPACE || process.cwd()
         relDir: .meng/web
         timeoutMs: 30000
         maxBytes: 5000000
@@ -44,7 +40,6 @@
     - id: bash-local
       name: '@meng/plugin-bash-local'
       config:
-        cwd: !!js process.env.MENG_WORKSPACE || process.cwd()
         timeoutMs: 120000
         maxTimeoutMs: 600000
         maxOutputBytes: 64000
@@ -74,7 +69,6 @@
     - id: policy-fs
       name: '@meng/plugin-policy-fs'
       config:
-        root: !!js process.env.MENG_WORKSPACE || process.cwd()
         noWrite: ['.git/', '.env', '.ssh/', 'id_rsa', '.npmrc']
         requireRead: true
 
@@ -114,14 +108,10 @@
     # glob / grep。上限抄 dsh: glob 100 条, grep 250 命中, 单行 2000 字节
     - id: tool-search
       name: '@meng/plugin-tool-search'
-      config:
-        root: !!js process.env.MENG_WORKSPACE || process.cwd()
 
     # bash。默认注册 (和 dsh 一致); 危险控制在 policy-bash, 不在工具里
     - id: tool-bash
       name: '@meng/plugin-tool-bash'
-      config:
-        root: !!js process.env.MENG_WORKSPACE || process.cwd()
 
     # web_fetch。返回"去噪声的开头 + 原文路径", **不做摘要**:
     # 摘要不可核对 (Claude Code 的 WebFetch 自己写着 lossy by design),

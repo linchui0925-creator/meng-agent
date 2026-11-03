@@ -38,6 +38,7 @@
  */
 
 import { resolve } from 'node:path'
+import { sandboxRoot } from '@meng/config'
 import { defineInvariant, type Ctx, type Disposer } from '@meng/core'
 import {
   ExecError,
@@ -56,8 +57,7 @@ export const name = 'meng-plugin-tool-bash'
 export const inject = ['tools', 'exec']
 
 export interface Config {
-  /** 工作区根。workdir 的围栏基准 */
-  root?: string
+  // 工作区根 (workdir 的围栏基准) 由 @meng/config 统一给, 见 sandboxRoot()
   /** 缺省超时。上限不在这里配 —— 那是 executor 的事, 问它要 */
   timeoutMs?: number
 }
@@ -107,7 +107,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
   const exec = getExec(ctx)
   if (!exec) throw new Error('能力面 exec 未装载 —— bash 需要一个执行器')
 
-  const root = resolveRoot((config.root ?? process.env.MENG_WORKSPACE) || process.cwd())
+  const root = sandboxRoot(ctx)
   const defaultTimeoutMs = config.timeoutMs ?? 30_000
   // 上限问 executor 要, 不在这里再配一份。两处都写迟早漂移,
   // 而且"工具说能 600s、执行器只给 60s"是最难查的一类问题

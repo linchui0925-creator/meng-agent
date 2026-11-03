@@ -1,0 +1,11 @@
+{
+  "name": "@meng/plugin-config-local",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "@meng/config": "workspace:*",
+    "@meng/core": "workspace:*"
+  }
+}

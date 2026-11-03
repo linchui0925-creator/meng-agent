@@ -11,6 +11,14 @@
 # 装载器只看依赖 (inject), 不看这个顺序。
 
 - insert:
+    # 配置能力面。**放在最前**不是为了加载顺序 (装载器只看 inject), 是为了读者:
+    # 下面每一行的 config 值, 取值规则都由它定义 (界面 > env > 默认)。
+    # 它不装, 内核照样跑 —— 只是所有共享配置退回"各自读 env"的老样子
+    - id: config
+      name: '@meng/plugin-config-local'
+      config:
+        dir: !!js process.env.MENG_DATA_DIR || '.meng'
+
     # 模型访问。provider 不在这里配 —— provider 是插件, 见 plugins/provider-*
     - id: llm
       name: '@meng/llm'

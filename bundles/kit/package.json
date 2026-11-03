@@ -10,6 +10,7 @@
     "@meng/jobs": "workspace:*",
     "@meng/net": "workspace:*",
     "@meng/plugin-bash-local": "workspace:*",
+    "@meng/plugin-config-local": "workspace:*",
     "@meng/plugin-jobs-local": "workspace:*",
     "@meng/plugin-net-local": "workspace:*",
     "@meng/plugin-policy-bash": "workspace:*",

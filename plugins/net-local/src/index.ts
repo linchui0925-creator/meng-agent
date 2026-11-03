@@ -20,6 +20,7 @@
 import { createHash } from 'node:crypto'
 import { mkdir, open, readdir, stat, unlink } from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
+import { sandboxRoot } from '@meng/config'
 import { defineInvariant, type Ctx, type Disposer } from '@meng/core'
 import {
   NET_CODE,
@@ -34,8 +35,8 @@ export const name = 'meng-plugin-net-local'
 export const inject: string[] = []
 
 export interface Config {
-  /** 落盘根目录。rel 是相对它的路径, 模型看到的也是这个 */
-  root?: string
+  // 落盘根目录**不在这里配**: 工作区只有一个, 由 @meng/config 统一给。
+  // 各插件留一份 root 配置的后果是七处各解析各的, 已经吃过一次亏。
   /** 落盘子目录 */
   relDir?: string
   /** 单次抓取时间上限 */
@@ -117,7 +118,7 @@ function classify(err: unknown, timedOut: boolean, aborted: boolean): NetError {
 }
 
 export function apply(ctx: Ctx, config: Config = {}): Disposer {
-  const root = resolve(config.root ?? process.env.MENG_WORKSPACE ?? process.cwd())
+  const root = sandboxRoot(ctx)
   const relDir = config.relDir ?? '.meng/web'
   const dir = resolve(root, relDir)
   const timeoutMs = config.timeoutMs ?? 30_000

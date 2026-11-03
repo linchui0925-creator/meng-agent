@@ -22,7 +22,7 @@ if (!url) {
 
 const ctx = createContext('fetch-demo')
 toolsApply(ctx)
-netApply(ctx, { root: process.cwd(), timeoutMs: 30000 })
+netApply(ctx, { timeoutMs: 30000 })
 fetchApply(ctx, { displayChars: Number(process.env.DISPLAY_CHARS ?? 1200) })
 
 const tools = ctx.get<ToolService>('tools')

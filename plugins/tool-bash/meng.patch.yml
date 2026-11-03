@@ -1,7 +1,8 @@
 # tool-bash —— shell 执行 (单独使用时的参考清单)
+#
+# 不配 root: 工作区根由 @meng/config 统一给 (sandbox.root)。
+# 这里再写一份的话, 就又变成"同一件事两处解析" —— 正是这一层要消灭的东西。
 
 - insert:
     - id: tool-bash
       name: '@meng/plugin-tool-bash'
-      config:
-        root: !!js process.env.MENG_WORKSPACE || process.cwd()

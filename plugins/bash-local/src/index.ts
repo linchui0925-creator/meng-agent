@@ -24,6 +24,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { closeSync, mkdirSync, openSync, unlinkSync, writeSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { join, resolve } from 'node:path'
+import { sandboxRoot } from '@meng/config'
 import { defineInvariant, type Ctx, type Disposer } from '@meng/core'
 import {
   ExecError,
@@ -43,7 +44,10 @@ export const name = 'meng-plugin-bash-local'
 export const inject: string[] = []
 
 export interface Config {
-  /** 缺省工作目录。workdir 的缺省值, 也是相对路径的基准 */
+  /**
+   * 显式覆盖缺省工作目录。不写就用工作区根 (`@meng/config` 的 sandbox.root) ——
+   * 所以正常情况下不需要配它, 它是给测试和特殊部署留的出口
+   */
   cwd?: string
   timeoutMs?: number
   maxTimeoutMs?: number
@@ -302,7 +306,9 @@ class LocalBashExecutor implements ExecService {
 
   constructor(config: Config, spill: SpillSink | undefined) {
     this.spill = spill
-    this.cwd = resolve((config.cwd ?? process.env.MENG_WORKSPACE) || process.cwd())
+    // cwd 由外部传进来 (apply 里用 sandboxRoot 取), 这里不再自己读 env ——
+    // 一个执行器实例一个 cwd, 但"工作区在哪"是全进程一个事实
+    this.cwd = resolve(config.cwd ?? process.cwd())
     this.timeoutMs = config.timeoutMs ?? 120_000
     this.maxOutputBytes = config.maxOutputBytes ?? 64_000
     this.maxSpillBytes = config.maxSpillBytes ?? 1_000_000
@@ -553,7 +559,11 @@ class BackgroundProc implements ExecProcess {
 export function apply(ctx: Ctx, config: Config = {}): Disposer {
   // 落盘仓库可选: 有就用, 没有就只截断。不在这一层写死 @meng/spill
   const spill = ctx.get<SpillSink>('spill')
-  const executor = new LocalBashExecutor(config, spill)
+  // 缺省 cwd 就是工作区根 —— 走统一入口取, 不在这里读 env
+  const executor = new LocalBashExecutor(
+    { ...config, cwd: config.cwd ?? sandboxRoot(ctx) },
+    spill,
+  )
   const off = provideExec(ctx, executor)
   return () => {
     executor.dispose()

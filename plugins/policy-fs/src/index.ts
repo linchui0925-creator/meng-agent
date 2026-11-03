@@ -20,6 +20,7 @@
  */
 
 import { relative, resolve } from 'node:path'
+import { sandboxRoot } from '@meng/config'
 import { defineInvariant, type Ctx, type Disposer } from '@meng/core'
 import { FsError, isWithin, type FsIntent } from '@meng/fs'
 
@@ -28,7 +29,7 @@ export const name = 'meng-plugin-policy-fs'
 export const inject: string[] = []
 
 export interface Config {
-  root?: string
+  // 工作区根由 @meng/config 统一给, 见 sandboxRoot()
   noWrite?: string[]
   requireRead?: boolean
 }
@@ -36,7 +37,7 @@ export interface Config {
 const DEFAULT_NO_WRITE = ['.git/', '.env', '.ssh/', 'id_rsa', '.npmrc']
 
 export function apply(ctx: Ctx, config: Config = {}): Disposer {
-  const root = resolve((config.root ?? process.env.MENG_WORKSPACE) || process.cwd())
+  const root = sandboxRoot(ctx)
   const noWrite = config.noWrite ?? DEFAULT_NO_WRITE
   const requireRead = config.requireRead ?? true
 
@@ -85,7 +86,7 @@ export const invariant = defineInvariant('@meng/plugin-policy-fs', [
   {
     id: 'intent-slot-vetoes',
     async run(ctx) {
-      const root = resolve(process.env.MENG_WORKSPACE || process.cwd())
+      const root = sandboxRoot(ctx)
       const rel = (p: string) => relative(root, p) || '.'
 
       // 1) 敏感路径: 未读、也不存在, 单独验证 noWrite 命中

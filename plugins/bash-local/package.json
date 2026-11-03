@@ -5,6 +5,7 @@
   "type": "module",
   "main": "./src/index.ts",
   "dependencies": {
+    "@meng/config": "workspace:*",
     "@meng/core": "workspace:*",
     "@meng/exec": "workspace:*"
   }

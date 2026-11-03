@@ -8,6 +8,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@meng/config": "workspace:*",
     "@meng/core": "workspace:*"
   }
 }

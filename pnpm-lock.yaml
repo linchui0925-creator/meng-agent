@@ -137,6 +137,9 @@ importers:
 
   bundles/base:
     dependencies:
+      '@meng/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@meng/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -146,6 +149,9 @@ importers:
       '@meng/loop':
         specifier: workspace:*
         version: link:../../packages/loop
+      '@meng/plugin-config-local':
+        specifier: workspace:*
+        version: link:../../plugins/config-local
       '@meng/plugin-loop-basic':
         specifier: workspace:*
         version: link:../../plugins/loop-basic
@@ -176,6 +182,9 @@ importers:
       '@meng/plugin-bash-local':
         specifier: workspace:*
         version: link:../../plugins/bash-local
+      '@meng/plugin-config-local':
+        specifier: workspace:*
+        version: link:../../plugins/config-local
       '@meng/plugin-jobs-local':
         specifier: workspace:*
         version: link:../../plugins/jobs-local
@@ -234,6 +243,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/web
 
+  packages/config:
+    dependencies:
+      '@meng/core':
+        specifier: workspace:*
+        version: link:../core
+
   packages/core:
     dependencies:
       yaml:
@@ -248,6 +263,9 @@ importers:
 
   packages/fs:
     dependencies:
+      '@meng/config':
+        specifier: workspace:*
+        version: link:../config
       '@meng/core':
         specifier: workspace:*
         version: link:../core
@@ -340,6 +358,9 @@ importers:
 
   packages/spill:
     dependencies:
+      '@meng/config':
+        specifier: workspace:*
+        version: link:../config
       '@meng/core':
         specifier: workspace:*
         version: link:../core
@@ -411,12 +432,24 @@ importers:
 
   plugins/bash-local:
     dependencies:
+      '@meng/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@meng/core':
         specifier: workspace:*
         version: link:../../packages/core
       '@meng/exec':
         specifier: workspace:*
         version: link:../../packages/exec
+
+  plugins/config-local:
+    dependencies:
+      '@meng/config':
+        specifier: workspace:*
+        version: link:../../packages/config
+      '@meng/core':
+        specifier: workspace:*
+        version: link:../../packages/core
 
   plugins/demo-ui: {}
 
@@ -458,6 +491,9 @@ importers:
 
   plugins/net-local:
     dependencies:
+      '@meng/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@meng/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -476,6 +512,9 @@ importers:
 
   plugins/policy-fs:
     dependencies:
+      '@meng/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@meng/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -554,6 +593,9 @@ importers:
 
   plugins/tool-bash:
     dependencies:
+      '@meng/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@meng/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -629,6 +671,9 @@ importers:
 
   plugins/tool-search:
     dependencies:
+      '@meng/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@meng/core':
         specifier: workspace:*
         version: link:../../packages/core
