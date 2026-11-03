@@ -22,6 +22,7 @@ import { connectionText, type ComposerApi, type LayoutApi } from './layout.ts'
 import { listSessions, type SessionSummary } from './sessions.ts'
 import { createConversationStore } from './store.ts'
 import { applyTheme, saveThemeMode, toggleTheme, type ResolvedTheme } from '../theme.ts'
+import { readPrefs } from '../prefs.ts'
 
 export interface AppProps {
   transport: Transport
@@ -101,6 +102,24 @@ export function App({ transport, slots, fixture, auto }: AppProps) {
   useEffect(() => {
     sessionIdRef.current = sessionId
   }, [sessionId])
+
+  /**
+   * 「跟随系统」不是启动时算一次就完事的东西 ——
+   * 用户在系统设置里切深浅(或到点自动切换), 界面要**当场**跟着变。
+   *
+   * 为什么判断用 readPrefs 而不是某个 state: 真相只有一份, 就在存储里。
+   * 再引一个 themeMode state 就有了第二处真相, 迟早不同步。
+   * 手动选过深浅的人不该被系统改回来 —— 所以偏好不是 system 时直接忽略这个事件。
+   */
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    const onChange = () => {
+      if (readPrefs().theme !== 'system') return
+      setTheme(applyTheme('system'))
+    }
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
 
   // 进页面就建会话: 事件流需要 sessionId 才能归组
   useEffect(() => {
