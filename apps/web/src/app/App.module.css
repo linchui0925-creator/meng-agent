@@ -680,7 +680,7 @@
   right: var(--meng-specific-space-4);
   bottom: calc(100% + var(--meng-specific-space-2));
   z-index: 2;
-  max-width: min(320px, calc(100% - 2 * var(--meng-specific-space-4)));
+  max-width: min(340px, calc(100% - 2 * var(--meng-specific-space-4)));
   padding: var(--meng-specific-space-2) var(--meng-specific-space-3);
   border: 1px solid var(--meng-alias-border-l1);
   border-radius: var(--meng-specific-radius-lg);
@@ -691,24 +691,115 @@
   line-height: var(--meng-specific-leading-normal);
   pointer-events: none;
   opacity: 0;
-  transform: translateY(6px);
-  transition:
-    opacity var(--meng-specific-dur-slow) var(--meng-specific-ease),
-    transform var(--meng-specific-dur-slow) var(--meng-specific-ease);
+  /* 从右下角长出来 —— 那一侧正是输入框 */
+  transform-origin: 100% 100%;
+}
+
+/* 小尾巴: 让"它从输入框里冒出来"这件事成立, 而不是一个飘在空中的框 */
+.whisper::after {
+  content: '';
+  position: absolute;
+  right: 16px;
+  bottom: -5px;
+  width: 8px;
+  height: 8px;
+  border-right: 1px solid var(--meng-alias-border-l1);
+  border-bottom: 1px solid var(--meng-alias-border-l1);
+  border-bottom-right-radius: 2px;
+  background: var(--meng-alias-bg-raised);
+  transform: rotate(45deg);
+}
+
+/*
+  脸: 和句子在同一层, 不换等宽字体 ——
+  系统字体的回退链比赛道字体全, 颜文字里的韩文/假名/数学符号才不会缺字变方块。
+*/
+.whisperFace {
+  display: inline-block;
+  margin-left: 2px;
+  color: var(--meng-alias-fg-muted);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+/* 探头: 起点在输入框那一侧, 过冲 4px 再落定。整块淡入没有这个"从哪儿来" */
+@keyframes whisperIn {
+  0% {
+    opacity: 0;
+    transform: translateY(14px) scale(0.9);
+  }
+  62% {
+    opacity: 1;
+    transform: translateY(-4px) scale(1.025);
+  }
+  82% {
+    transform: translateY(1px) scale(0.998);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes whisperFaceIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.3) rotate(-16deg);
+  }
+  70% {
+    opacity: 1;
+    transform: scale(1.16) rotate(6deg);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes whisperOut {
+  0% {
+    opacity: 1;
+    transform: none;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
 }
 
 .whisper[data-phase='in'] {
-  opacity: 1;
-  transform: none;
-  transition-duration: var(--meng-specific-dur-base);
+  animation: whisperIn 460ms cubic-bezier(0.34, 1.32, 0.64, 1) both;
 }
 
-/* 系统说"别动"就别动: 只留透明度的瞬时切换, 不上移动画 */
+/* 比气泡晚 220ms: 先探出来一个人, 再露出表情。一起弹就像按钮抖了一下 */
+.whisper[data-phase='in'] .whisperFace {
+  animation: whisperFaceIn 340ms 220ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.whisper[data-phase='out'] {
+  animation: whisperOut 300ms var(--meng-specific-ease) both;
+}
+
+/*
+  系统说"别动"就别动。这里必须显式写 opacity ——
+  基础态是 0, animation:none 之后没有 keyframes 兜着, 气泡会直接看不见。
+*/
 @media (prefers-reduced-motion: reduce) {
   .whisper,
-  .whisper[data-phase='in'] {
+  .whisper[data-phase='in'],
+  .whisper[data-phase='in'] .whisperFace,
+  .whisper[data-phase='out'] {
+    animation: none;
     transform: none;
-    transition: none;
+  }
+
+  .whisper[data-phase='in'],
+  .whisper[data-phase='in'] .whisperFace {
+    opacity: 1;
+  }
+
+  .whisper[data-phase='out'] {
+    opacity: 0;
   }
 }
 
