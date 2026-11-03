@@ -4,10 +4,12 @@ dist/
 .meng/
 .DS_Store
 *.tsbuildinfo
+# 本地工作记忆 / 会话产物, 不进库
+.workbuddy/
 
-# 仓库根的 .gitignore 有一条 *.md，会把本项目的设计文档全挡在库外。
-# 这里的文档是前后端唯一的契约（docs/06）与交接看板（docs/HANDOFF.md），
-# 必须入库 —— 嵌套 .gitignore 的规则优先于上一级，所以这条能盖过根那条
+# 本仓库 2026-11-03 已从 tongyong 迁出独立, 上层不再有 `*.md` 规则, docs/ 默认全部入库。
+# 下面两条 negation 是保险: 万一将来这个仓库又被嵌进某个带 `*.md` 忽略规则的仓库,
+# 契约（docs/06）与交接看板（docs/HANDOFF.md）也不会被静默挡在库外。
 !docs/*.md
 # 子目录也要放行: `docs/*.md` 只匹配 docs 下一层, 盖不住 docs/decisions/*.md。
 # 决策档案和契约同等重要 —— 它们是"为什么这么写"的唯一记录
