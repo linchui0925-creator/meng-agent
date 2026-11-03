@@ -10,7 +10,7 @@ import type { Ctx, Disposer } from '@meng/core'
 import type { SessionService } from '@meng/session'
 import type { LLMService } from '@meng/llm'
 import type { ToolService } from '@meng/tools'
-import type { AgentService } from '@meng/agent'
+import type { LoopService } from '@meng/loop'
 import { HttpError, type OpHandler, type WebService } from './index.ts'
 
 interface RunRegistry {
@@ -28,14 +28,14 @@ export function registerBuiltinOps(
   const session = () => need<SessionService>(ctx, 'session')
   const llm = () => need<LLMService>(ctx, 'llm')
   const tools = () => need<ToolService>(ctx, 'tools')
-  const agent = () => need<AgentService>(ctx, 'agent')
+  const loop = () => need<LoopService>(ctx, 'loop')
 
   // ── 内核 ──────────────────────────────────────────────
   // 与 ws hello 帧同一份 manifest, 给"用不了长连接"的环境 (HTTP 轮询) 兜底
   op('kernel.hello', () => web.manifest())
 
   op('kernel.status', () => ({
-    capabilities: ['llm', 'session', 'tools', 'prompt', 'agent', 'questions', 'web'].filter((n) => ctx.get(n)),
+    capabilities: ['llm', 'session', 'tools', 'prompt', 'loop', 'questions', 'web'].filter((n) => ctx.get(n)),
     ops: web.ops(),
     connections: web.connections,
     uptimeMs: Math.round(process.uptime() * 1000),
@@ -77,7 +77,7 @@ export function registerBuiltinOps(
 
     void (async () => {
       try {
-        for await (const ev of agent().run({ sessionId, text, model, runId, signal: ctrl.signal })) {
+        for await (const ev of loop().run({ sessionId, text, model, runId, signal: ctrl.signal })) {
           if (ev.type === 'text') {
             // chunk 不落库: 一轮几千个, 落进去事件流会爆炸。
             // 代价是断线重放没有 chunk, 前端用 llm/completed 的整段补齐

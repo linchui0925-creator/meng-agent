@@ -207,7 +207,7 @@ function buildManifest(ctx: Ctx, web: WebService): BootManifest {
     protocol: PROTOCOL_VERSION,
     serverId: SERVER_ID,
     startedAt: STARTED_AT,
-    capabilities: ['llm', 'session', 'tools', 'prompt', 'agent', 'questions', 'web'].filter((n) => ctx.get(n)),
+    capabilities: ['llm', 'session', 'tools', 'prompt', 'loop', 'questions', 'web'].filter((n) => ctx.get(n)),
     ops: web.ops(),
     events: [...EVENT_TYPES],
     models: (ctx.get<{ models(): string[] }>('llm')?.models() ?? []),

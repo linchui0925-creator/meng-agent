@@ -137,15 +137,18 @@ importers:
 
   bundles/base:
     dependencies:
-      '@meng/agent':
-        specifier: workspace:*
-        version: link:../../packages/agent
       '@meng/core':
         specifier: workspace:*
         version: link:../../packages/core
       '@meng/llm':
         specifier: workspace:*
         version: link:../../packages/llm
+      '@meng/loop':
+        specifier: workspace:*
+        version: link:../../packages/loop
+      '@meng/plugin-loop-basic':
+        specifier: workspace:*
+        version: link:../../plugins/loop-basic
       '@meng/prompt':
         specifier: workspace:*
         version: link:../../packages/prompt
@@ -231,24 +234,6 @@ importers:
         specifier: workspace:*
         version: link:../../packages/web
 
-  packages/agent:
-    dependencies:
-      '@meng/core':
-        specifier: workspace:*
-        version: link:../core
-      '@meng/llm':
-        specifier: workspace:*
-        version: link:../llm
-      '@meng/prompt':
-        specifier: workspace:*
-        version: link:../prompt
-      '@meng/session':
-        specifier: workspace:*
-        version: link:../session
-      '@meng/tools':
-        specifier: workspace:*
-        version: link:../tools
-
   packages/core:
     dependencies:
       yaml:
@@ -278,6 +263,15 @@ importers:
       '@meng/core':
         specifier: workspace:*
         version: link:../core
+
+  packages/loop:
+    dependencies:
+      '@meng/core':
+        specifier: workspace:*
+        version: link:../core
+      '@meng/tools':
+        specifier: workspace:*
+        version: link:../tools
 
   packages/modules: {}
 
@@ -440,6 +434,27 @@ importers:
       '@meng/jobs':
         specifier: workspace:*
         version: link:../../packages/jobs
+
+  plugins/loop-basic:
+    dependencies:
+      '@meng/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@meng/llm':
+        specifier: workspace:*
+        version: link:../../packages/llm
+      '@meng/loop':
+        specifier: workspace:*
+        version: link:../../packages/loop
+      '@meng/prompt':
+        specifier: workspace:*
+        version: link:../../packages/prompt
+      '@meng/session':
+        specifier: workspace:*
+        version: link:../../packages/session
+      '@meng/tools':
+        specifier: workspace:*
+        version: link:../../packages/tools
 
   plugins/net-local:
     dependencies:

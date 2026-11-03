@@ -38,9 +38,11 @@
       config:
         persona: ''
 
-    # 一轮对话的循环。依赖上面四个, 缺一个就保持 pending 而不是崩
-    - id: agent
-      name: '@meng/agent'
+    # 对话循环。**这是插件, 不是内核** —— 换一种循环策略 (先规划再执行、
+    # 单轮不循环) 就是换这一行, 内核一行不用动。缝在 @meng/loop, 这里只是
+    # 它的一种填法 (最基本的 ReAct)。依赖上面四个, 缺一个就保持 pending 而不是崩
+    - id: loop-basic
+      name: '@meng/plugin-loop-basic'
       config:
         maxTurns: 24
 

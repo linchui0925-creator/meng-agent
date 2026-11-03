@@ -9,7 +9,7 @@
  */
 
 import { fileURLToPath } from 'node:url'
-import type { AgentService } from '@meng/agent'
+import type { LoopService } from '@meng/loop'
 import type { ToolService } from '@meng/tools'
 import { bootKernel, providerPatch } from './boot.ts'
 
@@ -48,13 +48,13 @@ async function chat(prompt: string): Promise<void> {
   // 带上 hello 插件: mock 脚本第一步就是调它, 这样一次 chat 同时验证
   // 「工具循环」和「文本流式」两条路径
   const kernel = await bootKernel({ patches: [providerPatch(), helloPatch()], quiet: true })
-  // 用真类型而不是手抄一份结构: 手抄的那份不会随 AgentEvent 一起改,
+  // 用真类型而不是手抄一份结构: 手抄的那份不会随 LoopEvent 一起改,
   // 于是"新增一个 error 字段"在这里静默变成"读不到" (类型检查当场红)
-  const agent = kernel.ctx.get<AgentService>('agent')
-  if (!agent) throw new Error('agent 未就绪')
+  const loop = kernel.ctx.get<LoopService>('loop')
+  if (!loop) throw new Error('loop 未就绪 (没装 plugins/loop-* 插件?)')
 
   const sessionId = 'cli'
-  for await (const ev of agent.run({ sessionId, text: prompt })) {
+  for await (const ev of loop.run({ sessionId, text: prompt })) {
     if (ev.type === 'text' && ev.text) process.stdout.write(ev.text)
     if (ev.type === 'tool' && ev.call) {
       process.stdout.write(`\n[工具 ${ev.call.name}] ${ev.result ?? ''}\n`)

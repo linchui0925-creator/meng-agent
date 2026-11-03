@@ -13,7 +13,7 @@ export const CAPABILITIES = [
   'session', // 会话事件流 (真相源)
   'tools', // 工具注册 + 执行管线
   'prompt', // 系统提示分区
-  'agent', // agent 循环与生命周期
+  'loop', // 对话循环 (策略层: 由 plugins/loop-* 填, 不在内核)
   'web', // HTTP / SSE 对外面
   'skill', // 技能发现与注入
   'sandbox', // 文件系统 / 子进程边界

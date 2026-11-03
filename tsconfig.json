@@ -22,7 +22,7 @@
       "@meng/tools": ["packages/tools/src/index.ts"],
       "@meng/net": ["packages/net/src/index.ts"],
       "@meng/prompt": ["packages/prompt/src/index.ts"],
-      "@meng/agent": ["packages/agent/src/index.ts"],
+      "@meng/loop": ["packages/loop/src/index.ts"],
       "@meng/slots": ["packages/slots/src/index.ts"],
       "@meng/modules": ["packages/modules/src/index.ts"],
       "@meng/modules/client": ["packages/modules/src/client.ts"],

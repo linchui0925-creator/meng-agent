@@ -2,15 +2,16 @@
 
 万物即插件的 agent 平台。TypeScript 重写版。
 
-> 状态: **M1–M4 完成 + M5 后端七项已通（审批通道 / LLM 词汇表对齐 / 工具输出硬闸 / 执行缝 / 后台任务 / 上网 / 长材料索引）** —— 内核、HTTP 上行 12 个 op、WS 下行、
+> 状态: **M1–M4 完成 + M5 后端八项已通（审批通道 / LLM 词汇表对齐 / 工具输出硬闸 / 执行缝 / 后台任务 / 上网 / 长材料索引 / 循环插件化）** —— 内核、HTTP 上行 12 个 op、WS 下行、
 > 会话持久化、工具拦截、**内置工具层（对齐 dsh: read/write/edit/glob/grep/bash/ask_user_question/web_fetch/outline）
-> + fs/spill/exec/jobs/net 五条 seam + 三个策略插件 + 审批通道（question/asked → 用户回答 → 继续或拦）
+> + fs/spill/exec/jobs/net **五条 seam** + loop 一条循环缝（实现是 plugins/loop-basic） + 三个策略插件
+> + 审批通道（question/asked → 用户回答 → 继续或拦）
 > + 块式词汇表（ContentBlock / 7 种 StreamChunk / 中立层 assemble / 稳定错误码）
 > + 输出硬闸（超 50KB 落盘回 locator, 用 read 分段取回）
 > + 后台任务（job_output/job_list/job_kill + job/started / job/completed, 会话围栏, 只通知"没人等"的那次）
 > + 上网（web_fetch: 原文落盘 + 去噪开头 + 路径, **不做摘要** —— 摘要不可核对）
 > + 长材料索引（outline: 建**位置地图**不是摘要; 有结构用代码切, 无结构才轮到小模型）**
-> 全部跑通并有一键冒烟（72 项断言）+ `meng graph` 77 项不变量 + 装载顺序回归;
+> 全部跑通并有一键冒烟（74 项断言）+ `meng graph` 78 项不变量 + 装载顺序回归;
 > `pnpm typecheck`（内核侧）与 `pnpm typecheck:web`（前端侧）**双绿**;
 > 一个**真** provider（OpenAI 兼容）已就位但默认禁用（沙箱连不上, 用 mock 验证）。
 >

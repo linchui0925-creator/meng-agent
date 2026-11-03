@@ -1,7 +1,11 @@
 /**
- * @meng/agent — 一轮对话的循环。
+ * @meng/plugin-loop-basic —— 最基本的 ReAct 循环: 要回答 → 要工具 → 再要回答。
  *
- * 刻意写得短 (不到 120 行)。Python 版 agent.py 是 2926 行, 因为它同时干了:
+ * 这个包是从 @meng/agent 原样搬过来的实现。搬家的理由不是"更优雅", 是
+ * **循环是一种策略**: 想换成"先规划再执行"、或者单轮不循环, 应该是换一个
+ * 插件, 而不是改内核。缝在 @meng/loop, 这里只是它的一种填法。
+ *
+ * 刻意写得短。Python 版 agent.py 是 2926 行, 因为它同时干了:
  * 循环 / 上下文压缩 / 审批 / 记忆 / 工具结果格式化 / 厂商怪癖兼容 / 落库。
  * 这里只保留循环本身, 其余全部是插件:
  *   压缩    → compaction 插件, 监听 turn/ended
@@ -17,38 +21,21 @@ import type { LLMService, LlmFailure, Message, StreamRequest, TokenUsage } from 
 import type { SessionService } from '@meng/session'
 import type { PromptService } from '@meng/prompt'
 import type { ToolCall, ToolService } from '@meng/tools'
+import { provideLoop, type LoopService } from '@meng/loop'
 
-export const name = 'meng-agent'
+export const name = 'meng-loop-basic'
 export const inject = ['llm', 'session', 'tools', 'prompt']
-
-export interface RunInput {
-  sessionId: string
-  text: string
-  model?: string
-  /** 由调用方分配, 会写进每条事件的 data.runId —— 前端靠它给并发 run 分组 */
-  runId?: string
-  signal?: AbortSignal
-}
-
-export type AgentEvent =
-  | { type: 'text'; text: string }
-  | { type: 'tool'; call: ToolCall; result: string }
-  | { type: 'done'; reason: 'stop' | 'max-turns' | 'error' | 'aborted'; error?: string }
-
-export interface AgentService {
-  run(input: RunInput): AsyncIterable<AgentEvent>
-}
 
 export function apply(ctx: Ctx, config: { maxTurns?: number; defaultModel?: string }): Disposer {
   const maxTurns = config.maxTurns ?? 24
 
-  const service: AgentService = {
+  const service: LoopService = {
     async *run(input) {
       const llm = ctx.get<LLMService>('llm')
       const session = ctx.get<SessionService>('session')
       const tools = ctx.get<ToolService>('tools')
       const prompt = ctx.get<PromptService>('prompt')
-      if (!llm || !session || !tools || !prompt) throw new Error('agent 依赖的能力面缺失')
+      if (!llm || !session || !tools || !prompt) throw new Error('loop 依赖的能力面缺失')
 
       const runId = input.runId ?? ''
       const meta = (extra: Record<string, unknown> = {}) => ({ ...(runId ? { runId } : {}), ...extra })
@@ -157,8 +144,7 @@ export function apply(ctx: Ctx, config: { maxTurns?: number; defaultModel?: stri
     },
   }
 
-  ctx.set('agent', service)
-  return () => undefined
+  return provideLoop(ctx, service)
 }
 
 /**
@@ -176,13 +162,21 @@ function parseArgs(raw: string): Record<string, unknown> {
   }
 }
 
-export const invariant = defineInvariant('@meng/agent', [
+export const invariant = defineInvariant('@meng/plugin-loop-basic', [
   {
     id: 'deps-are-live',
     run(ctx) {
       for (const dep of ['llm', 'session', 'tools', 'prompt']) {
-        if (!ctx.get(dep)) throw new Error(`agent 依赖 ${dep} 未就绪`)
+        if (!ctx.get(dep)) throw new Error(`loop-basic 依赖 ${dep} 未就绪`)
       }
+    },
+  },
+  {
+    id: 'registers-itself-as-loop',
+    run(ctx) {
+      // 这条防的是最蠢的错: 插件装上了、也 active 了, 但注册成了别的名字,
+      // 于是 session.send 永远 503 而状态图一片绿
+      if (!ctx.get('loop')) throw new Error('loop-basic 装上了但没注册 loop 能力面')
     },
   },
 ])

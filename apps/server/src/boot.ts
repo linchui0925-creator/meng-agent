@@ -113,7 +113,7 @@ async function collectInvariants(mounted: MountedRow[]): Promise<Invariant[]> {
 }
 
 function describeCapabilities(ctx: Ctx): string {
-  return ['llm', 'session', 'persistence', 'tools', 'prompt', 'agent', 'fs', 'spill', 'questions', 'exec', 'jobs', 'web']
+  return ['llm', 'session', 'persistence', 'tools', 'prompt', 'loop', 'fs', 'spill', 'questions', 'exec', 'jobs', 'web']
     .filter((n) => ctx.get(n))
     .join(', ') || '无'
 }

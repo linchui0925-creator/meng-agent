@@ -10,7 +10,8 @@
     "@meng/session": "workspace:*",
     "@meng/tools": "workspace:*",
     "@meng/prompt": "workspace:*",
-    "@meng/agent": "workspace:*"
+    "@meng/loop": "workspace:*",
+    "@meng/plugin-loop-basic": "workspace:*"
   },
   "meng": {
     "bundle": {

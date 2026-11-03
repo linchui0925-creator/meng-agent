@@ -1,5 +1,5 @@
 {
-  "name": "@meng/agent",
+  "name": "@meng/plugin-loop-basic",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -7,8 +7,9 @@
   "dependencies": {
     "@meng/core": "workspace:*",
     "@meng/llm": "workspace:*",
+    "@meng/loop": "workspace:*",
+    "@meng/prompt": "workspace:*",
     "@meng/session": "workspace:*",
-    "@meng/tools": "workspace:*",
-    "@meng/prompt": "workspace:*"
+    "@meng/tools": "workspace:*"
   }
 }
