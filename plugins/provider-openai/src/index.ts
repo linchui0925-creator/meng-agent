@@ -84,8 +84,15 @@ export function apply(ctx: Ctx, config: OpenAIConfig = {}): Disposer {
         throw wireError(id, res.status, text, res.headers)
       }
 
-      // wire 里的 tool_calls 索引 +1 就是我们的块号: 文本块永远占 0,
-      // 这样同一条回复里"文本 + 多个工具调用"能共存而不撞号
+      // 块号按**出现顺序**分配, 不是"正文固定 0 号"。
+      // 旧写法在"先思考再说话"的模型上是错的: reasoning 和正文都往 0 号块塞,
+      // assemble() 以先开的类型为准 (reasoning), 于是回答被并进思考块 ——
+      // 而思考不上行广播, 界面上就只剩思考、没有回答。
+      // 同一条规矩见 provider-deepseek/src/translate.ts
+      let nextIndex = 0
+      let textIndex: number | undefined
+      let reasoningIndex: number | undefined
+      const toolIndex = new Map<number, number>()
       let sawToolCall = false
 
       for await (const line of sseLines(res.body)) {
@@ -104,14 +111,21 @@ export function apply(ctx: Ctx, config: OpenAIConfig = {}): Disposer {
           const delta = choice.delta
 
           if (delta?.reasoning_content) {
-            yield { type: 'reasoning-delta', index: 0, text: delta.reasoning_content }
+            reasoningIndex ??= nextIndex++
+            yield { type: 'reasoning-delta', index: reasoningIndex, text: delta.reasoning_content }
           }
           if (delta?.content) {
-            yield { type: 'text-delta', index: 0, text: delta.content }
+            textIndex ??= nextIndex++
+            yield { type: 'text-delta', index: textIndex, text: delta.content }
           }
           if (delta?.tool_calls?.length) {
             for (const call of delta.tool_calls) {
-              const index = 1 + (call.index ?? 0)
+              const wireIndex = call.index ?? 0
+              let index = toolIndex.get(wireIndex)
+              if (index === undefined) {
+                index = nextIndex++
+                toolIndex.set(wireIndex, index)
+              }
               // 第一个分片带 id/name, 后续只有 arguments 增量
               if (call.id || call.function?.name) sawToolCall = true
               yield {

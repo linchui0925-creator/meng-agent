@@ -7,6 +7,7 @@
  *   → 这些等 P2 有第二个 bundle 时再补, 现在补等于猜需求
  */
 
+import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
@@ -288,7 +289,42 @@ function toSpecifier(name: string, fromFile: string): string {
   try {
     return createRequire(fromFile).resolve(name)
   } catch {
-    return name
+    // 第二种失败: 清单就住在插件包自己的目录里 (plugins/x/meng.patch.yml)。
+    // 这时 node 解析不到自己 —— 包内自引用要求 package.json 有 exports,
+    // 而我们的插件只写 main; workspace 也不会给包建指向自己的软链。
+    // 于是这里直接按"清单属于哪个包"来找入口, 不要求每个 package.json 都加花招
+    return ownEntry(name, fromFile) ?? name
+  }
+}
+
+/**
+ * 若 `fromFile` 所属的包叫 `name`, 返回它的入口绝对路径。
+ *
+ * 判据是**最近的 package.json**: 往上找到的第一个 package.json 就决定了
+ * 这个目录属于哪个包。名字不匹配说明清单放错了包, 不该替它往上借一个。
+ */
+function ownEntry(name: string, fromFile: string): string | undefined {
+  let dir = dirname(fromFile)
+  for (let i = 0; i < 4; i++) {
+    const pkg = readPackageJson(dir)
+    if (pkg) {
+      if (pkg.name !== name) return undefined
+      return resolve(dir, pkg.main ?? './src/index.ts')
+    }
+    const up = dirname(dir)
+    if (up === dir) return undefined
+    dir = up
+  }
+  return undefined
+}
+
+function readPackageJson(dir: string): { name?: string; main?: string; meng?: { client?: ClientFace } } | undefined {
+  try {
+    return JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as
+      | { name?: string; main?: string; meng?: { client?: ClientFace } }
+      | undefined
+  } catch {
+    return undefined
   }
 }
 

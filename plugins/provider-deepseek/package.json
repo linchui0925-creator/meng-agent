@@ -12,8 +12,5 @@
   "dependencies": {
     "@meng/core": "workspace:*",
     "@meng/llm": "workspace:*"
-  },
-  "devDependencies": {
-    "@meng/provider-deepseek": "workspace:*"
   }
 }
