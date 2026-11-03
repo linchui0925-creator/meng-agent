@@ -136,6 +136,7 @@ export function providerPatch(): string {
   const map: Record<string, string> = {
     mock: MOCK,
     openai: '../../../plugins/provider-openai/meng.patch.yml',
+    deepseek: '../../../plugins/provider-deepseek/meng.patch.yml',
   }
   const rel = map[which] ?? MOCK
   return fileURLToPath(new URL(rel, import.meta.url))

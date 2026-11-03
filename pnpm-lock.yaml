@@ -501,6 +501,19 @@ importers:
         specifier: workspace:*
         version: link:../../packages/tools
 
+  plugins/provider-deepseek:
+    dependencies:
+      '@meng/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@meng/llm':
+        specifier: workspace:*
+        version: link:../../packages/llm
+    devDependencies:
+      '@meng/provider-deepseek':
+        specifier: workspace:*
+        version: 'link:'
+
   plugins/provider-mock:
     dependencies:
       '@meng/core':

@@ -16,7 +16,7 @@
     "test:slots": "node --experimental-strip-types packages/slots/test/registry.ts",
     "test:theme": "node --experimental-strip-types packages/ui/test/theme.ts",
     "test:chain": "node scripts/check-chain.mjs",
-    "test": "pnpm test:shell && pnpm test:slots && pnpm test:theme && pnpm test:contrast && pnpm test:modules && pnpm test:ws && pnpm test:fixture && pnpm test:projection && pnpm test:sessions && pnpm check:contrast && pnpm lint:tokens",
+    "test": "pnpm test:shell && pnpm test:slots && pnpm test:theme && pnpm test:contrast && pnpm test:modules && pnpm test:deepseek && pnpm test:ws && pnpm test:fixture && pnpm test:projection && pnpm test:sessions && pnpm test:whisper && pnpm check:contrast && pnpm lint:tokens",
     "check:contrast": "node scripts/check-contrast.mjs",
     "dev": "node --use-env-proxy --experimental-strip-types apps/server/src/main.ts",
     "graph": "node --experimental-strip-types apps/server/src/main.ts --graph",
@@ -25,6 +25,7 @@
     "test:sessions:browser": "node scripts/check-sessions.mjs",
     "lint:tokens": "node scripts/lint-tokens.mjs",
     "test:modules": "node --experimental-strip-types packages/modules/test/client.ts",
+    "test:deepseek": "node --experimental-strip-types plugins/provider-deepseek/test/payload.ts",
     "build:plugins": "cd apps/web && ./node_modules/.bin/vite build --config vite.plugin.config.ts",
     "test:modules:browser": "node scripts/check-modules.mjs",
     "test:ws": "node --experimental-strip-types packages/transport/test/ws.ts",
@@ -37,7 +38,9 @@
     "test:manifest": "node scripts/check-manifest.mjs",
     "test:slots:browser": "node scripts/check-slots.mjs",
     "test:contrast": "node --experimental-strip-types packages/ui/test/contrast.ts",
-    "test:audit:browser": "node scripts/check-theme-audit.mjs"
+    "test:audit:browser": "node scripts/check-theme-audit.mjs",
+    "test:whisper": "node --experimental-strip-types apps/web/src/app/whisper.test.ts",
+    "test:whisper:browser": "node scripts/check-whisper.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
