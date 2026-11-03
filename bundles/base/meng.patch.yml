@@ -1,0 +1,68 @@
+# 梦 · base 组合清单
+#
+# 规则 (与 dsh 一致的三条, 加我们自己的两条):
+#   1. profile 根恒为 []  —— base 是"第一层", 不是"特例"
+#   2. 行序不携带加载语义 —— 激活由依赖可用性决定, 不靠写的先后
+#   3. patch 替换整段 config, 不与下层合并 —— 所以"随模式变化"的行放 mode bundle
+#   4. 【我们】base 最多 12 行 —— 超过 12 行说明该拆 bundle 了
+#   5. 【我们】每行必须有 invariant —— 装了但半残, 要在 200ms 内说出来
+#
+# 顺序按"读者理解路径"排: 模型 → 记录 → 工具 → 提示 → 循环。
+# 装载器只看依赖 (inject), 不看这个顺序。
+
+- insert:
+    # 模型访问。provider 不在这里配 —— provider 是插件, 见 plugins/provider-*
+    - id: llm
+      name: '@meng/llm'
+      config:
+        defaultModel: ''
+
+    # 会话事件流: 唯一真相源
+    - id: session
+      name: '@meng/session'
+
+    # 会话落盘 (append-only JSONL)。紧跟 session: 回放必须在任何 run 之前完成,
+    # 否则新事件的 seq 会和历史的撞车
+    - id: persistence
+      name: '@meng/persistence'
+      config:
+        dir: !!js process.env.MENG_DATA_DIR || '.meng'
+
+    # 工具注册 + 四段执行管线
+    - id: tools
+      name: '@meng/tools'
+
+    # 系统提示分区
+    - id: prompt
+      name: '@meng/prompt'
+      config:
+        persona: ''
+
+    # 一轮对话的循环。依赖上面四个, 缺一个就保持 pending 而不是崩
+    - id: agent
+      name: '@meng/agent'
+      config:
+        maxTurns: 24
+
+    # ── 以下是 P1 建包后启用的策略行, 现在注释掉 ──────────────────
+    # 打开前记得先建对应包, 否则装载器会把它们记成 failed (这是对的:
+    # 声明了却不存在的包, 应该在状态图里红着, 而不是静默略过)
+    #
+    # - id: approval
+    #   name: '@meng/approval'
+    #   config:
+    #     policy: ask
+    #
+    # - id: sandbox
+    #   name: '@meng/sandbox'
+    #   config:
+    #     mode: workspace-write
+    #     workspaceRoot: !!js process.cwd()
+    #
+    # - id: timeout-policy
+    #   name: '@meng/timeout-policy'
+    #   config:
+    #     defaultMs: 30000
+    #
+    # - id: commands
+    #   name: '@meng/commands'

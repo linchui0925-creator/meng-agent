@@ -1,0 +1,50 @@
+/*
+ * demo-ui 的样式。
+ *
+ * 以 `?inline` 导入成字符串, 由 factory 在**物化时**注入 (docs/08 §1: 副作用锁在 factory 里),
+ * 并打上 `data-plugin="demo-ui"` (docs/08 §6: 显式标记, 运行期只回收带自己标记的)。
+ *
+ * 用变量时守住 §4.2 那条: 颜色一律取 `--meng-alias-*`(宿主换肤时这一块跟着变),
+ * 尺寸取 `--meng-specific-*`(结构层, 可以读, 不许改)。插件自己发明色值是绕过对比度审计。
+ */
+
+.demo-ui-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--meng-specific-space-2);
+  padding: var(--meng-specific-space-3);
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: var(--meng-specific-radius-md);
+  background: var(--meng-alias-bg-raised);
+  font-size: var(--meng-specific-text-sm);
+  color: var(--meng-alias-fg-secondary);
+}
+
+.demo-ui-card__title {
+  display: flex;
+  align-items: center;
+  gap: var(--meng-specific-space-2);
+  font-weight: var(--meng-specific-weight-strong);
+  color: var(--meng-alias-fg-primary);
+}
+
+.demo-ui-card__note {
+  color: var(--meng-alias-fg-muted);
+  font-size: var(--meng-specific-text-xs);
+  line-height: 1.5;
+}
+
+.demo-ui-card__button {
+  align-self: flex-start;
+  padding: var(--meng-specific-space-1) var(--meng-specific-space-3);
+  border: 1px solid var(--meng-alias-border-l2);
+  border-radius: var(--meng-specific-radius-sm);
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.demo-ui-card__button:hover {
+  background: var(--meng-alias-bg-hover);
+}

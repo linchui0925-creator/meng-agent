@@ -1,0 +1,7 @@
+# tool-bash —— shell 执行 (单独使用时的参考清单)
+
+- insert:
+    - id: tool-bash
+      name: '@meng/plugin-tool-bash'
+      config:
+        root: !!js process.env.MENG_WORKSPACE || process.cwd()

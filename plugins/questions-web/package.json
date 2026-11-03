@@ -1,0 +1,12 @@
+{
+  "name": "@meng/plugin-questions-web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "@meng/core": "workspace:*",
+    "@meng/questions": "workspace:*",
+    "@meng/web": "workspace:*"
+  }
+}

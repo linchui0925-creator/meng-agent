@@ -1,0 +1,1075 @@
+/* 界面骨架样式。只许引用 alias / specific token —— 由 scripts/lint-tokens.mjs 强制。 */
+
+.shell {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+  background: var(--meng-alias-bg-canvas);
+  color: var(--meng-alias-fg-primary);
+  /* 面板是常驻还是抽屉由 @container 决定 —— 查的是**壳的宽度**而不是视口宽度:
+   * 壳被嵌进别的容器时, 视口宽度会骗人。position: relative 是给窄屏抽屉做锚点。 */
+  position: relative;
+  container-type: inline-size;
+  container-name: shell;
+}
+
+/* ── 侧栏 ── */
+
+.sidebar {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  width: var(--meng-specific-sidebar-w);
+  border-right: 1px solid var(--meng-alias-border-l1);
+  background: var(--meng-alias-bg-surface);
+}
+
+.sidebarHead {
+  display: flex;
+  flex-direction: column;
+  gap: var(--meng-specific-space-2);
+  padding: var(--meng-specific-space-3);
+}
+
+.brand {
+  font-size: var(--meng-specific-text-lg);
+  font-weight: var(--meng-specific-weight-strong);
+  letter-spacing: 0.08em;
+  line-height: 1.2;
+}
+
+.badgeRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--meng-specific-space-1);
+  margin-bottom: var(--meng-specific-space-1);
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: var(--meng-specific-space-1);
+}
+
+/* 插件动作与「新会话」按钮之间: slot 空着时按钮仍然贴右, 不留空档 */
+.headerActions > :global(*) {
+  flex: none;
+}
+
+.sessions {
+  flex: 1;
+  min-height: 0;
+  padding: var(--meng-specific-space-2);
+}
+
+.sectionLabel {
+  padding: var(--meng-specific-space-1) var(--meng-specific-space-2);
+  color: var(--meng-alias-fg-muted);
+  font-size: var(--meng-specific-text-xs);
+  letter-spacing: 0.04em;
+}
+
+/* 会话项: **列布局, 高度由内容决定**。
+ * 不能写死 row-h: 有 preview 时是两行, 后端还没给 preview 时是一行 ——
+ * 写死高度会让"还没有预览"的那些会话下面空一块, 看起来像加载失败。 */
+.sessionItem {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-height: var(--meng-specific-row-h);
+  padding: var(--meng-specific-space-1) var(--meng-specific-space-2);
+  border-radius: var(--meng-specific-radius-md);
+  color: var(--meng-alias-fg-secondary);
+  font-size: var(--meng-specific-text-md);
+  cursor: pointer;
+}
+
+.sessionItem:focus-visible {
+  outline: 2px solid var(--meng-alias-focus-ring);
+  outline-offset: -2px;
+}
+
+/* 第一行: 标题占满, 时间固定宽度右对齐 —— 时间对不齐列表会显得很乱 */
+.sessionRow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--meng-specific-space-2);
+  min-width: 0;
+}
+
+/* 预览行: 比标题小一档、比时间亮一档。
+ * 它是"帮你认出这是哪段对话"的线索, 不该比标题更抢眼。 */
+.sessionPreview {
+  overflow: hidden;
+  color: var(--meng-alias-fg-muted);
+  font-size: var(--meng-specific-text-xs);
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 插件操作位: 常驻但透明, 悬停/聚焦时才显形。
+ * 用它而不是"悬停才插入 DOM": 后者会让布局在鼠标扫过时抖动一下。 */
+.sessionSlot {
+  position: absolute;
+  right: var(--meng-specific-space-1);
+  bottom: var(--meng-specific-space-1);
+  display: flex;
+  align-items: center;
+  gap: var(--meng-specific-space-1);
+  opacity: 0;
+  transition: opacity 120ms var(--meng-specific-ease);
+}
+
+.sessionItem:hover .sessionSlot,
+.sessionItem:focus-within .sessionSlot {
+  opacity: 1;
+}
+
+.sessionEmpty {
+  padding: var(--meng-specific-space-4) var(--meng-specific-space-2);
+  color: var(--meng-alias-fg-muted);
+  font-size: var(--meng-specific-text-xs);
+  text-align: center;
+}
+
+.sessionItem:hover {
+  background: var(--meng-alias-bg-hover);
+}
+
+.sessionItemActive {
+  background: var(--meng-alias-bg-selected);
+  color: var(--meng-alias-fg-primary);
+  font-weight: var(--meng-specific-weight-medium);
+}
+
+.sessionItemActive:hover {
+  background: var(--meng-alias-bg-selected);
+}
+
+.sessionTitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sessionMeta {
+  flex: none;
+  color: var(--meng-alias-fg-muted);
+  font-size: var(--meng-specific-text-xs);
+}
+
+.sidebarFoot {
+  padding: var(--meng-specific-space-3);
+  border-top: 1px solid var(--meng-alias-border-l1);
+}
+
+/* ── 主区 ── */
+
+.main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.topbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--meng-specific-space-3);
+  height: 48px;
+  padding: 0 var(--meng-specific-space-4);
+  border-bottom: 1px solid var(--meng-alias-border-l1);
+  background: var(--meng-alias-bg-canvas);
+}
+
+.topbarTitle {
+  display: flex;
+  align-items: baseline;
+  gap: var(--meng-specific-space-2);
+  min-width: 0;
+}
+
+.title {
+  font-size: var(--meng-specific-text-md);
+  font-weight: var(--meng-specific-weight-medium);
+}
+
+.sessionId {
+  overflow: hidden;
+  color: var(--meng-alias-fg-muted);
+  font-family: var(--meng-specific-font-mono);
+  font-size: var(--meng-specific-text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbarRight {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--meng-specific-space-2);
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--meng-specific-space-1);
+  color: var(--meng-alias-fg-muted);
+  font-size: var(--meng-specific-text-xs);
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--meng-specific-radius-full);
+  background: var(--meng-alias-fg-muted);
+}
+
+.online {
+  background: var(--meng-alias-live);
+  /* 连上是「正在活着」而不是「操作成功」, 所以用 live 而不是 positive。
+   * positive 留给一次性结果 (校验通过 / 保存成功), 两者不该共用一种绿。 */
+}
+
+.connecting,
+.reconnecting {
+  background: var(--meng-alias-warning);
+}
+
+.offline {
+  background: var(--meng-alias-danger);
+}
+
+.messages {
+  flex: 1;
+  min-height: 0;
+  padding: var(--meng-specific-space-5) var(--meng-specific-space-4);
+}
+
+.thread {
+  display: flex;
+  flex-direction: column;
+  gap: var(--meng-specific-space-5);
+  max-width: var(--meng-specific-content-max);
+  margin: 0 auto;
+  padding-bottom: var(--meng-specific-space-4);
+}
+
+/* ── 空状态 ── */
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--meng-specific-space-2);
+  height: 100%;
+  min-height: 320px;
+  text-align: center;
+}
+
+.emptyTitle {
+  font-size: var(--meng-specific-text-xl);
+  font-weight: var(--meng-specific-weight-medium);
+}
+
+.emptyHint {
+  color: var(--meng-alias-fg-muted);
+  font-size: var(--meng-specific-text-md);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--meng-specific-space-2);
+  margin-top: var(--meng-specific-space-3);
+}
+
+.chip {
+  padding: var(--meng-specific-space-1) var(--meng-specific-space-3);
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: var(--meng-specific-radius-full);
+  background: var(--meng-alias-bg-surface);
+  color: var(--meng-alias-fg-secondary);
+  font: inherit;
+  font-size: var(--meng-specific-text-sm);
+  cursor: pointer;
+}
+
+.chip:hover {
+  border-color: var(--meng-alias-border-l2);
+  background: var(--meng-alias-bg-hover);
+  color: var(--meng-alias-fg-primary);
+}
+
+/* ── 消息 ──
+   通栏流, 没有气泡。角色靠「名字 + 标记」区分, 不靠画框 —— 理由见 BuiltinLayout.MessageRow 注释。
+   用户正文用一条 2px 竖线压在左缘: 那是引用原文的排版惯例, 且不占可读宽度。 */
+
+.msg {
+  display: flex;
+  flex-direction: column;
+  gap: var(--meng-specific-space-2);
+}
+
+.body,
+.bodyUser {
+  font-size: var(--meng-specific-text-base);
+  line-height: 1.75;
+  color: var(--meng-alias-fg-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.bodyUser {
+  padding-left: var(--meng-specific-space-3);
+  border-left: 2px solid var(--meng-alias-border-l2);
+}
+
+.meta {
+  color: var(--meng-alias-fg-muted);
+  font-size: var(--meng-specific-text-xs);
+}
+
+.role {
+  display: flex;
+  align-items: center;
+  gap: var(--meng-specific-space-2);
+}
+
+.avatar,
+.avatarUser {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--meng-specific-radius-sm);
+  background: var(--meng-alias-accent-subtle);
+  color: var(--meng-alias-accent);
+  font-size: var(--meng-specific-text-xs);
+  font-weight: var(--meng-specific-weight-strong);
+}
+
+/* 用户的标记用中性色: 强调色在这套系统里代表「可点」, 而角色标记不可点。
+   用 accent 画头像会让人以为能按。 */
+.avatarUser {
+  background: var(--meng-alias-bg-active);
+  color: var(--meng-alias-fg-secondary);
+}
+
+.roleName {
+  font-size: var(--meng-specific-text-sm);
+  font-weight: var(--meng-specific-weight-medium);
+  color: var(--meng-alias-fg-secondary);
+}
+
+.caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  /* 流式光标是 live 的典型用法: 它在「动」, 不属于「可点」也不属于「成功」 */
+  background: var(--meng-alias-live);
+  vertical-align: text-bottom;
+  animation: blink 1s steps(2, start) infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* ── 工具调用 ──
+   这一层带 data-density="compact": 间距与行高从 4/8/12 收到 3/6/9。
+   工具输出是机器产物, 一屏能多看两行比多两像素呼吸更值。 */
+
+/*
+  时间线: 工具调用不是一排"盒子", 是助手动手的轨迹 ——
+  一条竖轨串起每个调用的节点章, 内容悬在节点右侧。
+  去掉边框和底色之后, 容器不再和正文抢视觉重量, 正文重新是主角。
+*/
+.tools {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--meng-specific-space-2);
+}
+
+/* 主轨。上下各留一段不画: 线在第一个和最后一个节点之间, 不穿出分组 */
+.tools::before {
+  content: '';
+  position: absolute;
+  left: 10px;
+  top: 14px;
+  bottom: 14px;
+  width: 1px;
+  background: var(--meng-alias-border-l2);
+}
+
+.tool {
+  position: relative;
+  display: grid;
+  grid-template-columns: 21px minmax(0, 1fr);
+  column-gap: var(--meng-specific-space-2);
+  align-items: start;
+  font-family: var(--meng-specific-font-mono);
+  font-size: var(--meng-specific-text-sm);
+}
+
+/* 节点章: 首字母 (read→R, bash→B)。底色必须不透明 —— 它要盖住身后的主轨 */
+.toolNode {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 21px;
+  height: 21px;
+  border: 1px solid var(--meng-alias-border-l2);
+  border-radius: 50%;
+  background: var(--meng-alias-bg-surface);
+  color: var(--meng-alias-fg-secondary);
+  font-size: var(--meng-specific-text-xs);
+  font-weight: var(--meng-specific-weight-medium);
+  z-index: 1;
+}
+
+/* 状态染在**节点**上而不是整张卡: 状态是数据不是"另一种卡片",
+   将来加第四态这里加一条规则就行, 不必回 JSX 里加 if */
+.tool[data-status='running'] .toolNode {
+  border-color: var(--meng-alias-accent);
+  color: var(--meng-alias-accent);
+}
+
+.tool[data-status='blocked'] .toolNode {
+  background: var(--meng-alias-danger-subtle);
+  border-color: var(--meng-alias-danger);
+  color: var(--meng-alias-danger);
+}
+
+/* exit != 0 / 带 stderr: 节点提前说"这次结果不对劲", 不用读到摘要才发现 */
+.tool[data-warn] .toolNode {
+  background: var(--meng-alias-warning-subtle);
+  border-color: var(--meng-alias-warning);
+  color: var(--meng-alias-warning);
+}
+
+/* min-width:0 让长命令在 grid 里换行, 而不是把卡片撑出容器 */
+.toolBody {
+  min-width: 0;
+}
+
+.toolHead {
+  display: flex;
+  align-items: center;
+  gap: var(--meng-specific-space-2);
+  color: var(--meng-alias-fg-secondary);
+}
+
+.toolName {
+  font-weight: var(--meng-specific-weight-medium);
+  color: var(--meng-alias-fg-primary);
+}
+
+.toolArgs {
+  margin: var(--meng-specific-space-2) 0 0;
+  padding: var(--meng-specific-space-2) var(--meng-specific-space-3);
+  border-radius: var(--meng-specific-radius-sm);
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-code);
+  font-size: var(--meng-specific-text-sm);
+  line-height: var(--meng-specific-leading-tight);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.toolReason {
+  margin-top: var(--meng-specific-space-1);
+  color: var(--meng-alias-danger);
+}
+
+/* 摘要是"一句话结果", 不能跟工具名抢注意力 —— 用 muted, 不用 primary。
+   它和工具名之间只有间距, 没有分隔符: 加了竖线这一行就有了四个视觉层次 */
+.toolSummary {
+  color: var(--meng-alias-fg-muted);
+  font-size: var(--meng-specific-text-sm);
+}
+
+/* warn 只染色, **不换成"失败"两个字**: 非零退出到底算好算坏只有用户知道
+   (grep 没匹配到就是 exit 1, 那可能正是他要的答案) */
+.toolSummaryWarn {
+  color: var(--meng-alias-warning);
+  font-size: var(--meng-specific-text-sm);
+}
+
+/* 靠右。head 是 flex: 左边是"干了什么+结果如何", 动作永远在最右 ——
+   和顶栏把「插件状态」放最右是同一条规矩 */
+.toolToggle {
+  margin-left: auto;
+  padding: 0 var(--meng-specific-space-1);
+  border: 0;
+  background: none;
+  color: var(--meng-alias-accent);
+  font: inherit;
+  font-size: var(--meng-specific-text-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.toolToggle:hover {
+  color: var(--meng-alias-accent-hover);
+}
+
+.toolToggle:focus-visible {
+  outline: 2px solid var(--meng-alias-focus-ring);
+  outline-offset: 1px;
+}
+
+/* 展开之后也要有个顶: 2000 行的输出展开一次, 滚动条要花很久才找得到。
+   这里是卡片内部滚, 不是把整页撑长 —— 工具输出不该改变会话的滚动位置 */
+.toolOutput {
+  margin: var(--meng-specific-space-2) 0 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: var(--meng-specific-space-2) var(--meng-specific-space-3);
+  border-radius: var(--meng-specific-radius-sm);
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-code);
+  font-family: var(--meng-specific-font-mono);
+  font-size: var(--meng-specific-text-sm);
+  line-height: var(--meng-specific-leading-tight);
+  /* tool-fs 用 \t 分隔行号与内容 (1\tconst a = 1), 不设 tab-size 各浏览器默认 8,
+     行号一长就顶到内容上去了 */
+  tab-size: 4;
+}
+
+/* 一段输出。段之间是"语义"不是"装饰": 同色连排就是同一段 */
+.toolSeg {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* stderr 是"工具抱怨了", 染警示色 —— 它和 stdout 混在一起时最容易漏看 */
+.toolSeg[data-kind='stderr'] {
+  color: var(--meng-alias-warning);
+}
+
+/* 标记行是工具在**跟人说话**(`[exit code: 1]` / `[已截断]` / `[stderr]`),
+   不是产出内容 —— 弱化成注解, 别跟真内容抢注意力 */
+.toolSeg[data-kind='meta'] {
+  color: var(--meng-alias-fg-muted);
+}
+
+/* 计时用等宽 + 弱化色: 它是个**读数**, 不是文案, 不该和工具名抢注意力。
+   等宽是必须的 —— 比例字体下秒数每跳一次宽度就变, 旁边的 spinner 会被推着抖 */
+.toolElapsed {
+  color: var(--meng-alias-fg-muted);
+  font-family: var(--meng-specific-font-mono);
+  font-size: var(--meng-specific-text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+  done 的那一瞬是界面上唯一"值得动一下"的地方:
+  spinner 没了, 结果从它的位置长出来。
+
+  只动 opacity 与 transform —— 这两个走 GPU 合成, 不触发 layout, 滚动时不会掉帧。
+  逐字动画不做: 2000 字 = 2000 个 span, 且流式期间每帧增删, 滚动必卡。
+*/
+@keyframes toolSummaryIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.toolSummary,
+.toolSummaryWarn {
+  animation: toolSummaryIn 160ms ease-out;
+}
+
+/* 系统说"别动"就别动 —— 这条不是可选项 */
+@media (prefers-reduced-motion: reduce) {
+  .toolSummary,
+  .toolSummaryWarn {
+    animation: none;
+  }
+}
+
+/* ── 错误 ── */
+
+.errorBox {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--meng-specific-space-2);
+  padding: var(--meng-specific-space-2) var(--meng-specific-space-3);
+  border-left: 2px solid var(--meng-alias-danger);
+  border-radius: var(--meng-specific-radius-sm);
+  background: var(--meng-alias-danger-subtle);
+  color: var(--meng-alias-danger);
+  font-size: var(--meng-specific-text-sm);
+}
+
+.errorCode {
+  font-family: var(--meng-specific-font-mono);
+  opacity: 0.85;
+}
+
+.errorText {
+  flex: 1;
+  min-width: 12ch;
+}
+
+/* 复制按钮自己撑住右端, 不参与换行 —— 错误文案再长, 按钮都停在同一列 */
+.errorActions {
+  display: flex;
+  flex: none;
+  margin-left: auto;
+}
+
+/* ── 操作条 ── */
+
+.actions {
+  display: flex;
+  gap: var(--meng-specific-space-1);
+  margin-top: calc(-1 * var(--meng-specific-space-1));
+  opacity: 0;
+  transition: opacity var(--meng-specific-dur-fast) var(--meng-specific-ease);
+}
+
+.msg:hover .actions,
+.actions:focus-within {
+  opacity: 1;
+}
+
+/* ── 输入区 ── */
+
+.composerWrap {
+  flex: none;
+  padding: var(--meng-specific-space-3) var(--meng-specific-space-4) var(--meng-specific-space-4);
+  border-top: 1px solid var(--meng-alias-border-l1);
+  background: var(--meng-alias-bg-canvas);
+}
+
+.composer {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--meng-specific-space-2);
+  max-width: var(--meng-specific-composer-max);
+  margin: 0 auto;
+  padding: var(--meng-specific-space-2);
+  border: 1px solid var(--meng-alias-border-l2);
+  border-radius: var(--meng-specific-radius-lg);
+  background: var(--meng-alias-bg-surface);
+  box-shadow: var(--meng-alias-shadow-sm);
+  transition: border-color var(--meng-specific-dur-fast) var(--meng-specific-ease);
+}
+
+/* 输入框工具条。插件没占位时整块消失 —— 不是变透明, 是不占宽,
+ * 否则输入框左边会凭空多出一段空白, 看起来像排版坏了。 */
+.composerActions {
+  display: flex;
+  flex: none;
+  align-self: flex-end;
+  align-items: center;
+  gap: var(--meng-specific-space-1);
+}
+
+.composerActions:empty {
+  display: none;
+}
+
+.composer:focus-within {
+  border-color: var(--meng-alias-accent);
+  box-shadow: 0 0 0 1px var(--meng-alias-focus-ring);
+}
+
+.sendError {
+  max-width: var(--meng-specific-composer-max);
+  margin: var(--meng-specific-space-2) auto 0;
+  color: var(--meng-alias-danger);
+  font-size: var(--meng-specific-text-sm);
+}
+
+.hintRow {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--meng-specific-space-3);
+  max-width: var(--meng-specific-composer-max);
+  margin: var(--meng-specific-space-2) auto 0;
+  color: var(--meng-alias-fg-muted);
+  font-size: var(--meng-specific-text-xs);
+}
+
+/* ── 底部状态条 ── */
+
+/* 常驻但不抢注意力: 22px 高、xs 字号、只用弱化色。
+ * 位置在 composer 之下 —— 输入框和窗口底边之间需要一条"结束线",
+ * 否则输入框会像悬空浮着。 */
+.statusbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--meng-specific-space-2);
+  height: 22px;
+  padding: 0 var(--meng-specific-space-4);
+  border-top: 1px solid var(--meng-alias-border-l1);
+  color: var(--meng-alias-fg-muted);
+  font-size: var(--meng-specific-text-xs);
+  letter-spacing: 0.02em;
+}
+
+.statusbarDim {
+  color: var(--meng-alias-fg-disabled);
+}
+
+/* 插件塞进来的状态项: 与宿主项同排, 自动靠右, 互不挤压 */
+.statusbar > :global(*) {
+  flex: none;
+}
+
+/* ── 插件状态面板 ──
+   宽屏常驻右栏, 窄屏抽屉。**同一份 DOM, 只切定位** —— 见 BuiltinLayout 注释。 */
+
+.panelSlot {
+  flex: none;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  border-left: 1px solid var(--meng-alias-border-l1);
+  background: var(--meng-alias-bg-surface);
+  /* 面板天生该紧: 一屏要塞下十几个节点, 呼吸感留给正文 */
+  font-size: var(--meng-specific-text-xs);
+}
+
+.panelHead {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--meng-specific-space-1);
+  min-height: 36px;
+  padding: 0 var(--meng-specific-space-2) 0 var(--meng-specific-space-3);
+  border-bottom: 1px solid var(--meng-alias-border-l1);
+}
+
+.panelTitle {
+  font-size: var(--meng-specific-text-sm);
+  font-weight: var(--meng-specific-weight-medium);
+}
+
+/* 计数用等宽: 刷新时数字位置不跳 */
+.panelCount {
+  color: var(--meng-alias-fg-muted);
+  font-family: var(--meng-specific-font-mono);
+}
+
+.panelSpacer {
+  flex: 1;
+}
+
+.panelBody {
+  flex: 1;
+  min-height: 0;
+  padding: var(--meng-specific-space-1);
+}
+
+.panelFoot {
+  flex: none;
+  padding: var(--meng-specific-space-1) var(--meng-specific-space-3);
+  border-top: 1px solid var(--meng-alias-border-l1);
+  color: var(--meng-alias-fg-muted);
+  font-size: var(--meng-specific-text-xs);
+}
+
+.panelEmpty,
+.panelError {
+  padding: var(--meng-specific-space-4) var(--meng-specific-space-3);
+  color: var(--meng-alias-fg-muted);
+  text-align: center;
+}
+
+.panelError {
+  text-align: left;
+}
+
+.panelErrorTitle {
+  margin-bottom: var(--meng-specific-space-1);
+  color: var(--meng-alias-danger);
+  font-weight: var(--meng-specific-weight-medium);
+}
+
+.panelErrorBody {
+  color: var(--meng-alias-fg-secondary);
+  font-family: var(--meng-specific-font-mono);
+  overflow-wrap: anywhere;
+}
+
+.nodeList {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nodeRow {
+  border-radius: var(--meng-specific-radius-sm);
+}
+
+.nodeMain {
+  display: flex;
+  align-items: center;
+  gap: var(--meng-specific-space-2);
+  width: 100%;
+  padding: var(--meng-specific-space-1) var(--meng-specific-space-2);
+  border: 0;
+  border-radius: var(--meng-specific-radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nodeMain:hover {
+  background: var(--meng-alias-bg-hover);
+}
+
+.nodeMain:focus-visible {
+  outline: 2px solid var(--meng-alias-focus-ring);
+  outline-offset: -2px;
+}
+
+.nodeDot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--meng-specific-radius-full);
+  background: var(--meng-alias-fg-disabled);
+}
+
+/* 状态点四色。语义与 tokens 对齐, 不在这里发明第五种绿:
+ * 运行中用 live (它在"动"), positive 留给一次性结果。 */
+.dot-live {
+  background: var(--meng-alias-live);
+}
+
+.dot-warning {
+  background: var(--meng-alias-warning);
+}
+
+.dot-danger {
+  background: var(--meng-alias-danger);
+}
+
+.dot-idle {
+  background: var(--meng-alias-fg-disabled);
+}
+
+.nodeId {
+  flex: 1;
+  overflow: hidden;
+  color: var(--meng-alias-fg-primary);
+  font-family: var(--meng-specific-font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nodeStatus {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--meng-specific-space-1);
+  color: var(--meng-alias-fg-muted);
+}
+
+.nodeDetail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 var(--meng-specific-space-2) var(--meng-specific-space-2) calc(var(--meng-specific-space-2) * 2 + 6px);
+}
+
+.detailRow {
+  display: flex;
+  gap: var(--meng-specific-space-2);
+  font-size: var(--meng-specific-text-xs);
+  line-height: 1.5;
+}
+
+.detailLabel {
+  flex: none;
+  width: 4.5em;
+  color: var(--meng-alias-fg-muted);
+}
+
+.detailValue {
+  color: var(--meng-alias-fg-secondary);
+  overflow-wrap: anywhere;
+}
+
+.detailWarn {
+  color: var(--meng-alias-warning);
+  overflow-wrap: anywhere;
+}
+
+.detailError {
+  color: var(--meng-alias-danger);
+  font-family: var(--meng-specific-font-mono);
+  overflow-wrap: anywhere;
+}
+
+/* ── 三栏: container query 决定面板是「常驻」还是「抽屉」 ──
+   查的是壳的宽度 (container 定义在 .shell 上)。 */
+
+@container shell (max-width: 1079px) {
+  .panelSlot[data-open='true'] {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    width: min(300px, 86vw);
+    box-shadow: var(--meng-alias-shadow-lg);
+  }
+}
+
+@container shell (min-width: 1080px) {
+  .panelSlot {
+    width: var(--meng-specific-panel-w);
+  }
+}
+
+/* 更早消息的展开入口。做成"细线上的一个词"而不是按钮:
+ * 它是低频动作, 视觉重量应该比一条普通消息轻。 */
+.loadEarlier {
+  align-self: center;
+  padding: var(--meng-specific-space-1) var(--meng-specific-space-3);
+  border: 0;
+  border-radius: var(--meng-specific-radius-full);
+  background: none;
+  color: var(--meng-alias-fg-muted);
+  font: inherit;
+  font-size: var(--meng-specific-text-xs);
+  cursor: pointer;
+}
+
+.loadEarlier:hover {
+  background: var(--meng-alias-bg-hover);
+  color: var(--meng-alias-fg-secondary);
+}
+
+.loadEarlier:focus-visible {
+  outline: 2px solid var(--meng-alias-focus-ring);
+  outline-offset: 2px;
+}
+
+/* ── 后台任务条 ──
+   横切状态: 夹在消息区和输入框之间, 不属于任何一条消息。 */
+
+.jobbar {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 1px;
+  max-width: var(--meng-specific-content-max);
+  margin: 0 auto;
+  padding: 0 var(--meng-specific-space-4) var(--meng-specific-space-1);
+  width: 100%;
+}
+
+.jobRow {
+  display: flex;
+  align-items: center;
+  gap: var(--meng-specific-space-2);
+  padding: var(--meng-specific-space-1) var(--meng-specific-space-2);
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: var(--meng-specific-radius-md);
+  background: var(--meng-alias-bg-surface);
+  font-size: var(--meng-specific-text-xs);
+}
+
+/* 失败的那条用左边框表态, 而不是整块变红 —— 整块红会把旁边的正文压得看不见 */
+.jobRow[data-status='failed'] {
+  border-left: 2px solid var(--meng-alias-danger);
+}
+
+.jobRow[data-status='killed'] {
+  border-left: 2px solid var(--meng-alias-warning);
+}
+
+.jobDot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--meng-specific-radius-full);
+  background: var(--meng-alias-fg-disabled);
+}
+
+/* 在跑 = live (它在动), 不是 positive (那是一次性结果) */
+.jobDotLive {
+  background: var(--meng-alias-live);
+  animation: pulse 1.6s var(--meng-specific-ease) infinite;
+}
+
+.jobDot-completed {
+  background: var(--meng-alias-live);
+}
+
+.jobDot-killed {
+  background: var(--meng-alias-warning);
+}
+
+.jobDot-failed {
+  background: var(--meng-alias-danger);
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.jobKind {
+  flex: none;
+  padding: 0 var(--meng-specific-space-1);
+  border-radius: var(--meng-specific-radius-sm);
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-secondary);
+  font-family: var(--meng-specific-font-mono);
+}
+
+.jobLabel {
+  flex: 1;
+  overflow: hidden;
+  color: var(--meng-alias-fg-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jobStatus {
+  flex: none;
+  color: var(--meng-alias-fg-muted);
+}
+
+.jobTime {
+  flex: none;
+  color: var(--meng-alias-fg-muted);
+  font-family: var(--meng-specific-font-mono);
+}

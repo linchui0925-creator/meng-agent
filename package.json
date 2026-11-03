@@ -1,0 +1,48 @@
+{
+  "name": "meng",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "梦 — 万物即插件的 agent 平台 (TypeScript 重写)",
+  "packageManager": "pnpm@11.0.8",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:web": "tsc -p tsconfig.web.json --noEmit",
+    "test:shell": "node --experimental-strip-types packages/shell/test/boot.ts",
+    "test:fixture": "node --experimental-strip-types apps/web/src/dev/fixture-kernel.ts --smoke",
+    "test:slots": "node --experimental-strip-types packages/slots/test/registry.ts",
+    "test:theme": "node --experimental-strip-types packages/ui/test/theme.ts",
+    "test:chain": "node scripts/check-chain.mjs",
+    "test": "pnpm test:shell && pnpm test:slots && pnpm test:theme && pnpm test:contrast && pnpm test:modules && pnpm test:ws && pnpm test:fixture && pnpm test:projection && pnpm test:sessions && pnpm check:contrast && pnpm lint:tokens",
+    "check:contrast": "node scripts/check-contrast.mjs",
+    "dev": "node --use-env-proxy --experimental-strip-types apps/server/src/main.ts",
+    "graph": "node --experimental-strip-types apps/server/src/main.ts --graph",
+    "test:projection": "node --experimental-strip-types apps/web/src/app/conversation.test.ts",
+    "test:sessions": "node --experimental-strip-types apps/web/src/app/sessions.test.ts",
+    "test:sessions:browser": "node scripts/check-sessions.mjs",
+    "lint:tokens": "node scripts/lint-tokens.mjs",
+    "test:modules": "node --experimental-strip-types packages/modules/test/client.ts",
+    "build:plugins": "cd apps/web && ./node_modules/.bin/vite build --config vite.plugin.config.ts",
+    "test:modules:browser": "node scripts/check-modules.mjs",
+    "test:ws": "node --experimental-strip-types packages/transport/test/ws.ts",
+    "test:e2e": "node scripts/check-ws.mjs",
+    "test:thread": "node scripts/check-thread.mjs",
+    "test:fallback": "node scripts/check-fallback.mjs",
+    "test:panel": "node scripts/check-panel.mjs",
+    "test:jobs": "node scripts/check-jobs.mjs",
+    "test:tools": "node scripts/check-tools.mjs",
+    "test:manifest": "node scripts/check-manifest.mjs",
+    "test:slots:browser": "node scripts/check-slots.mjs",
+    "test:contrast": "node --experimental-strip-types packages/ui/test/contrast.ts",
+    "test:audit:browser": "node scripts/check-theme-audit.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "typescript": "^5.9.3"
+  }
+}

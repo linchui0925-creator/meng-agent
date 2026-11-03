@@ -1,0 +1,8 @@
+# questions-web —— 把 questions seam 接到 HTTP 上行 (单独使用时的参考清单)
+#
+# 下行不需要这个插件: question/asked、question/answered 走会话事件流,
+# web 的 session/event 订阅会自动广播到 WS。这里只贡献两个回答入口 op。
+
+- insert:
+    - id: questions-web
+      name: '@meng/plugin-questions-web'

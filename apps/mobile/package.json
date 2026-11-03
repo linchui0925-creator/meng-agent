@@ -1,0 +1,26 @@
+{
+  "name": "@meng/app-mobile",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "移动端外壳 (Capacitor)。复用 apps/web 的产物, 原生能力以梦插件形式暴露。",
+  "scripts": {
+    "sync": "cap sync",
+    "open:ios": "cap open ios",
+    "open:android": "cap open android"
+  },
+  "dependencies": {
+    "@capacitor/core": "^7.0.0",
+    "@capacitor/dialog": "^7.0.0",
+    "@capacitor/filesystem": "^7.0.0",
+    "@capacitor/haptics": "^7.0.0",
+    "@capacitor/local-notifications": "^7.0.0",
+    "@capacitor/preferences": "^7.0.0",
+    "@meng/platform": "workspace:*"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^7.0.0",
+    "@capacitor/cli": "^7.0.0",
+    "@capacitor/ios": "^7.0.0"
+  }
+}

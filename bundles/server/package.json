@@ -1,0 +1,12 @@
+{
+  "name": "@meng/bundle-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "@meng/core": "workspace:*",
+    "@meng/plugin-questions-web": "workspace:*",
+    "@meng/web": "workspace:*"
+  }
+}

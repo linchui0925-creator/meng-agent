@@ -1,0 +1,14 @@
+node_modules/
+dist/
+*.log
+.meng/
+.DS_Store
+*.tsbuildinfo
+
+# 仓库根的 .gitignore 有一条 *.md，会把本项目的设计文档全挡在库外。
+# 这里的文档是前后端唯一的契约（docs/06）与交接看板（docs/HANDOFF.md），
+# 必须入库 —— 嵌套 .gitignore 的规则优先于上一级，所以这条能盖过根那条
+!docs/*.md
+# 子目录也要放行: `docs/*.md` 只匹配 docs 下一层, 盖不住 docs/decisions/*.md。
+# 决策档案和契约同等重要 —— 它们是"为什么这么写"的唯一记录
+!docs/**/*.md

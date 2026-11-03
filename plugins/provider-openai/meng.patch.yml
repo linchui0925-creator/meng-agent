@@ -1,0 +1,16 @@
+# OpenAI 兼容 provider (edgefn / 智谱 / minimax / 任何 /v1/chat/completions)。
+#
+# 默认 disabled: 没有 apiKey 时装载它会让默认模型变成 openai 的模型名,
+# 而调用时才报"未配置 apiKey" —— 晚失败比早失败难查。要用就显式打开:
+#   MENG_PROVIDER=openai MENG_LLM_API_KEY=sk-xxx meng
+
+- insert:
+    - id: provider-openai
+      name: '@meng/provider-openai'
+      disabled: !!js process.env.MENG_PROVIDER !== 'openai'
+      config:
+        id: openai
+        baseURL: !!js process.env.MENG_LLM_BASE_URL || 'https://api.openai.com/v1'
+        apiKey: !!js process.env.MENG_LLM_API_KEY || process.env.OPENAI_API_KEY || ''
+        models:
+          - gpt-4o-mini

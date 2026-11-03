@@ -1,0 +1,5 @@
+# tool-search —— glob / grep (单独使用时的参考清单)
+
+- insert:
+    - id: tool-search
+      name: '@meng/plugin-tool-search'

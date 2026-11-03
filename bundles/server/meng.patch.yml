@@ -1,0 +1,22 @@
+# 梦 · server 组合清单
+#
+# base 是"内核", 这一层是"怎么把内核接到世界上"。
+# 桌面端不要装这一层 —— 它自己有 ipc transport 和主进程生命周期。
+# 这正是 base 与 server 分开的理由: 内核不该知道自己是 CLI 还是 HTTP 服务。
+
+- insert:
+    # HTTP 上行 / WebSocket 下行。port 单一事实源在这里, 不散落在代码里
+    - id: web
+      name: '@meng/web'
+      config:
+        port: !!js Number(process.env.MENG_PORT || 4721)
+        host: !!js process.env.MENG_HOST || '127.0.0.1'
+        # 前端产物目录。M4 之前不存在, 空字符串即跳过挂载
+        webRoot: !!js process.env.MENG_WEB_ROOT || ''
+        pluginRoot: !!js process.env.MENG_PLUGIN_ROOT || ''
+
+    # questions seam 的 HTTP 桥: question.answer / question.list 两个 op。
+    # 下行不需要桥 —— question/* 走会话事件流, web 自动广播。
+    # 桌面端不装这层, 换 ipc 桥即可, seam 不动
+    - id: questions-web
+      name: '@meng/plugin-questions-web'

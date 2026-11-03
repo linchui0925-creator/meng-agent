@@ -1,0 +1,8 @@
+# policy-bash —— bash 的声明式审批 + 止血带 (单独使用时的参考清单)
+
+- insert:
+    - id: policy-bash
+      name: '@meng/plugin-policy-bash'
+      config:
+        # 真沙箱 (dsh-bash-sandbox 同款 OS 级约束) 落地前, danger-full-access 一律不开
+        allowDanger: false

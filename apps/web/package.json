@@ -1,0 +1,30 @@
+{
+  "name": "@meng/app-web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "网页端入口。Vite 8 (Rolldown)。同一份产物被 Capacitor 复用为移动端 web assets。",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@meng/core": "workspace:*",
+    "@meng/modules": "workspace:*",
+    "@meng/platform": "workspace:*",
+    "@meng/shell": "workspace:*",
+    "@meng/slots": "workspace:*",
+    "@meng/transport": "workspace:*",
+    "@meng/ui": "workspace:*",
+    "@meng/web-react": "workspace:*",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "vite": "^8.0.0"
+  }
+}

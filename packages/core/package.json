@@ -1,0 +1,15 @@
+{
+  "name": "@meng/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "梦的内核契约: 上下文、生命周期、事件、状态图。不依赖具体容器实现。",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./loader": "./src/loader.ts"
+  },
+  "dependencies": {
+    "yaml": "^2.6.1"
+  }
+}

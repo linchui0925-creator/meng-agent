@@ -1,0 +1,19 @@
+{
+  "name": "@meng/web-react",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "React 渲染后端: AppRoot 两态闸门 · Slot 渲染器 · uSES 快照桥 · useInvoke",
+  "main": "./src/index.tsx",
+  "exports": {
+    ".": "./src/index.tsx"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0"
+  },
+  "dependencies": {
+    "@meng/core": "workspace:*",
+    "@meng/slots": "workspace:*",
+    "@meng/shell": "workspace:*"
+  }
+}

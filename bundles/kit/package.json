@@ -1,0 +1,29 @@
+{
+  "name": "@meng/bundle-kit",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "@meng/core": "workspace:*",
+    "@meng/exec": "workspace:*",
+    "@meng/jobs": "workspace:*",
+    "@meng/net": "workspace:*",
+    "@meng/plugin-bash-local": "workspace:*",
+    "@meng/plugin-jobs-local": "workspace:*",
+    "@meng/plugin-net-local": "workspace:*",
+    "@meng/plugin-policy-bash": "workspace:*",
+    "@meng/plugin-policy-fs": "workspace:*",
+    "@meng/plugin-policy-spill": "workspace:*",
+    "@meng/plugin-policy-timeout": "workspace:*",
+    "@meng/plugin-tool-ask": "workspace:*",
+    "@meng/plugin-tool-bash": "workspace:*",
+    "@meng/plugin-tool-fetch": "workspace:*",
+    "@meng/plugin-tool-fs": "workspace:*",
+    "@meng/plugin-tool-jobs": "workspace:*",
+    "@meng/plugin-tool-outline": "workspace:*",
+    "@meng/plugin-tool-search": "workspace:*",
+    "@meng/questions": "workspace:*",
+    "@meng/spill": "workspace:*"
+  }
+}

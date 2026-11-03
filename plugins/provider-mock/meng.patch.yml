@@ -1,0 +1,35 @@
+# 离线验收 provider —— 沙箱/CI 里连不上真模型时用这个跑通全链路。
+# 默认启用: 它可以和真 provider 共存, agent 不指定 model 时按 llm.resolve 的顺序选。
+#
+# 脚本顺序 = 第几个"模型调用"(含工具循环里的每一轮), 用完停在最后一步。
+# 注意: 下面的顺序和 apps/server/src/smoke.ts 的断言是配套的, 改动要同步。
+
+- insert:
+    - id: provider-mock
+      name: '@meng/provider-mock'
+      config:
+        models:
+          - mock-1
+        chunkDelayMs: 12
+        steps:
+          # 1) 冒烟主链路的工具轮
+          - tool:
+              name: hello
+              args:
+                name: 梦
+          # 2) 冒烟主链路的文本轮
+          - text: '工具已调用完成。你说的是: {{echo}}'
+          # 3) 正常结束但零内容块 —— 必须判成 EMPTY_RESPONSE, 不能当成功的空消息
+          - empty: true
+          # 4) 交错轮: 一条回复里同时有文本块和工具块。
+          #    扁平 content 的时代做不到这件事, 这是 P1 词汇表的核心验收点
+          - blocks:
+              - text: '我先看一眼, 然后调用工具'
+              - tool:
+                  name: hello
+                  args:
+                    name: 交错
+          # 5) 交错轮的工具循环收尾
+          - text: '交错之后收尾'
+          # 6) 停在能用的最后一步, 否则手工 meng chat 会一直撞上面的脚本
+          - text: '(mock) 恢复正常'

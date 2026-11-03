@@ -1,0 +1,9 @@
+# policy-fs —— 占住 fs 的两个 intent 单决策槽 (单独使用时的参考清单)
+
+- insert:
+    - id: policy-fs
+      name: '@meng/plugin-policy-fs'
+      config:
+        root: !!js process.env.MENG_WORKSPACE || process.cwd()
+        noWrite: ['.git/', '.env', '.ssh/', 'id_rsa', '.npmrc']
+        requireRead: true

@@ -1,0 +1,5 @@
+# tool-fs —— 文件三件套 (单独使用时的参考清单; 组合进 kit 时以 kit 的配置为准)
+
+- insert:
+    - id: tool-fs
+      name: '@meng/plugin-tool-fs'

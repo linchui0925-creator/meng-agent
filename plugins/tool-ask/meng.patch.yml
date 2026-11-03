@@ -1,0 +1,5 @@
+# tool-ask —— ask_user_question (单独使用时的参考清单)
+
+- insert:
+    - id: tool-ask
+      name: '@meng/plugin-tool-ask'

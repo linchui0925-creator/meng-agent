@@ -1,0 +1,15 @@
+{
+  "name": "@meng/shell",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "启动内核: manifest → 模块系统 → entries → sweep → settled。零 DOM 依赖, 可在 node 下测。",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@meng/core": "workspace:*",
+    "@meng/modules": "workspace:*"
+  }
+}

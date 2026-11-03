@@ -1,0 +1,298 @@
+/**
+ * token 双层表 (docs/07 §F2 定稿)。
+ *
+ * 两层分工:
+ *   --meng-specific-*  结构固定。字体、圆角、间距、动效、层级。主题**不许**改这一层。
+ *   --meng-alias-*     主题可变。颜色。组件**只许**引用这一层。
+ *
+ * 为什么必须分两层: 组件若直接写 specific 色值, 换主题就得改组件; 组件若直接写 hex,
+ * 连换主题的入口都没有。分层的唯一目的就是让「换肤」变成一组赋值。
+ *
+ * 【F2b 定稿 2026-11-02】四条决策, 每条都写在这里因为它们改的是**结构**不是色值:
+ *
+ *   1. 主色降级为信号色。accent 不承担品牌, 只标「可点/已选」, 不做大面积填充。
+ *      界面主体是内容, 不是品牌 —— 大面积色块会把注意力从对话上拽走。
+ *   2. 新增 live 活跃相位。见下方注释: 「在跑」和「可点」必须能一眼分开。
+ *   3. 密度就近继承, 不再全局一个值。正文 comfortable, 导航/列表 compact。
+ *   4. 深色 3 级明度, 与浅色对齐。深色分层靠 border 不靠亮度差。
+ *
+ * 定稿只改了本文件下半部分的赋值与上面两条结构定义, **一行组件代码都没动** ——
+ * 这正是两层表存在的意义。
+ *
+ * 硬规矩 (由 scripts/lint-tokens.mjs 在 F3 末尾兜住):
+ *   *.module.css 里出现 hex / rgb() / hsl() 一律报错, 必须走 var(--meng-alias-*)。
+ */
+
+/* ══════════════════════════ specific 层: 结构 ══════════════════════════ */
+
+:root {
+  color-scheme: light dark;
+
+  /* 字体: 中文优先落到系统黑体, 等宽用于代码与工具输出 */
+  --meng-specific-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Source Han Sans SC', sans-serif;
+  --meng-specific-font-mono: 'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, Consolas,
+    'Liberation Mono', monospace;
+
+  /* 字号: 15px 基准, 界面上大片是正文而非仪表盘 */
+  --meng-specific-text-xs: 11px;
+  --meng-specific-text-sm: 12px;
+  --meng-specific-text-md: 13px;
+  --meng-specific-text-base: 15px;
+  --meng-specific-text-lg: 17px;
+  --meng-specific-text-xl: 21px;
+
+  --meng-specific-leading-tight: 1.3;
+  --meng-specific-leading-normal: 1.65;
+
+  --meng-specific-weight-normal: 400;
+  --meng-specific-weight-medium: 500;
+  --meng-specific-weight-strong: 600;
+
+  /* 间距: 4 的倍数, 只有 1/2/3 会被密度覆盖 */
+  --meng-specific-space-0: 0px;
+  --meng-specific-space-1: 4px;
+  --meng-specific-space-2: 8px;
+  --meng-specific-space-3: 12px;
+  --meng-specific-space-4: 16px;
+  --meng-specific-space-5: 24px;
+  --meng-specific-space-6: 32px;
+  --meng-specific-space-7: 48px;
+
+  /* 圆角: 四级, 语义是「越大越浮」——
+   *   sm 4 标记/徽章, md 6 控件, lg 8 卡片, xl 12 浮层(弹层/工具提示/命令面板)
+   * 不设 16+: 信息密度高的界面太圆显胖, 而且会让相邻卡片的间距看起来变小 */
+  --meng-specific-radius-sm: 4px;
+  --meng-specific-radius-md: 6px;
+  --meng-specific-radius-lg: 8px;
+  --meng-specific-radius-xl: 12px;
+  --meng-specific-radius-full: 999px;
+
+  /* 控件尺寸: 会被密度覆盖 */
+  --meng-specific-control-h: 32px;
+  --meng-specific-control-h-sm: 26px;
+  --meng-specific-row-h: 30px;
+
+  /* 布局 */
+  --meng-specific-sidebar-w: 248px;
+  --meng-specific-content-max: 744px;
+  --meng-specific-composer-max: 744px;
+  /* 状态面板宽。比侧栏窄一点: 它装的是等宽的 id 与状态词, 不需要 248。
+   * 268 = 12 个等宽字符 + 两侧内边距, 刚好装下 "meng-plugin-xx 等依赖" 这一类最长组合 */
+  --meng-specific-panel-w: 268px;
+
+  /* 动效: 只做「有状态变化」的地方, 不做装饰性动画 */
+  --meng-specific-dur-fast: 90ms;
+  --meng-specific-dur-base: 160ms;
+  --meng-specific-dur-slow: 240ms;
+  --meng-specific-ease: cubic-bezier(0.2, 0, 0.2, 1);
+
+  /* 层级 */
+  --meng-specific-z-sticky: 10;
+  --meng-specific-z-overlay: 100;
+  --meng-specific-z-toast: 200;
+}
+
+/* 紧凑密度: 只压控件高度与间距, 不动字号 —— 字号一动排版全部要重调。
+ *
+ * 选择器**故意不带 `:root`**: 变量是继承的, 所以写在 html 上就是全站,
+ * 写在侧栏容器上就只有侧栏。这正是需要的粒度 —— 聊天正文要 15px/1.65 的呼吸感,
+ * 而会话列表、状态条、工具输出天生该紧。全局一个值会逼你在「正文太挤」和
+ * 「列表太松」之间二选一。
+ *
+ * 用法: <aside data-density="compact">  /  <html data-density="compact"> 都可。 */
+[data-density='compact'] {
+  --meng-specific-space-1: 3px;
+  --meng-specific-space-2: 6px;
+  --meng-specific-space-3: 9px;
+  --meng-specific-control-h: 28px;
+  --meng-specific-control-h-sm: 22px;
+  --meng-specific-row-h: 26px;
+}
+
+/* ══════════════════════════ alias 层: 颜色 (light) ══════════════════════════ */
+
+:root,
+:root[data-theme='light'] {
+  /* 表面层级: canvas 最底, inset 用于代码块与工具输出 */
+  --meng-alias-bg-canvas: #f6f6f7;
+  --meng-alias-bg-surface: #ffffff;
+  --meng-alias-bg-raised: #ffffff;
+  --meng-alias-bg-overlay: #ffffff;
+  --meng-alias-bg-inset: #f1f2f4;
+  --meng-alias-bg-hover: #eeeef1;
+  --meng-alias-bg-active: #e6e7ea;
+  --meng-alias-bg-selected: #e8effc;
+
+  /* 文字 */
+  --meng-alias-fg-primary: #17181a;
+  --meng-alias-fg-secondary: #54575d;
+  --meng-alias-fg-muted: #6b6f76;
+  --meng-alias-fg-disabled: #a3a7ae;
+  --meng-alias-fg-on-accent: #ffffff;
+  --meng-alias-fg-code: #2b2d31;
+
+  /* 描边: 按层级而不是按颜色命名, 深浅主题各自取值 */
+  --meng-alias-border-l1: #e3e4e8;
+  --meng-alias-border-l2: #d2d4d9;
+  --meng-alias-border-l3: #b7bac0;
+
+  /* 语义色: 单一高饱和 accent, 其余只做状态提示。
+   * accent 取 #2a63e0 而不是更亮的蓝: 它要同时当「链接文字」用在 bg-canvas 上,
+   * 更亮一档在 #f6f6f7 上只有 4.35, 差 AA 一点点 —— 这条是对比度脚本抓出来的。 */
+  --meng-alias-accent: #2a63e0;
+  --meng-alias-accent-hover: #2354c6;
+  --meng-alias-accent-active: #1c46a8;
+  --meng-alias-accent-subtle: #e8effc;
+  --meng-alias-focus-ring: #2a63e0;
+
+  /* 活跃相位: **只用于「正在动」的东西** —— 流式光标、运行中光点、进度条、连接心跳。
+   * 不做文字色, 也不做大面积填充。
+   *
+   * 为什么必须和 accent 分开: agent 界面有个其它产品没有的状态 —— 「正在生成」。
+   * 若借 accent 表达, 界面上「可点的链接」和「还在跑的流」长得一模一样,
+   * 用户没法一眼分出「这里能点」和「这里还没完」。
+   * 为什么不新开暖色相: 暖区已经被 warning / danger 占了 (琥珀 / 红),
+   * 再插一个暖色会让「橙色」在界面里有三种含义。青绿与 positive 的草绿差约 30°,
+   * 又只在动态处出现, 冲突窗口很小。 */
+  --meng-alias-live: #0a6f63;
+  --meng-alias-live-subtle: #e0f3f0;
+
+  --meng-alias-positive: #157347;
+  --meng-alias-positive-subtle: #e6f4ec;
+  --meng-alias-warning: #9a6100;
+  --meng-alias-warning-subtle: #fdf1dc;
+  --meng-alias-danger: #c02b2b;
+  --meng-alias-danger-subtle: #fdecec;
+
+  /* 选择与滚动条 */
+  --meng-alias-selection: #cfe0ff;
+  --meng-alias-scrollbar: #c9ccd2;
+  --meng-alias-scrollbar-hover: #adb1b8;
+
+  /* 阴影: 浅色主题靠投影分层 */
+  --meng-alias-shadow-sm: 0 1px 2px rgb(17 18 20 / 6%);
+  --meng-alias-shadow-md: 0 4px 12px rgb(17 18 20 / 8%), 0 1px 3px rgb(17 18 20 / 6%);
+  --meng-alias-shadow-lg: 0 16px 40px rgb(17 18 20 / 14%), 0 2px 8px rgb(17 18 20 / 8%);
+
+  /* 代码语法: 第一版只给四类, 等真接上高亮再扩 */
+  --meng-alias-syn-keyword: #a626a4;
+  --meng-alias-syn-string: #157347;
+  --meng-alias-syn-number: #9a6100;
+  --meng-alias-syn-comment: #8a8d94;
+}
+
+/* ══════════════════════════ alias 层: 颜色 (dark, 重调而非反色) ══════════════════════════ */
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* 深色只留 **3 级明度**: 画布 / 平面 / 浮层。
+   * 浅色是 3 级 (canvas #f6f6f7 → surface=raised=overlay #fff), 深色原先却有 4 级
+   * (0f1012 / 17181b / 1d1f23 / 22252a) —— 四级在深色底上层次分不开, 只显得脏,
+   * 而且卡片之间的 4% 亮度差人眼几乎读不出来, 真正干活的是 border。
+   * 所以 raised 与 surface 同值: 卡片靠 border-l1 立起来, 不靠亮度。
+   * 这不是「少一个变量」, 是对齐两个主题的层级数量, 换主题时结构才一致。 */
+  --meng-alias-bg-canvas: #0f1012;
+  --meng-alias-bg-surface: #17181b;
+  --meng-alias-bg-raised: #17181b;
+  --meng-alias-bg-overlay: #22252a;
+  --meng-alias-bg-inset: #0a0b0d;
+  --meng-alias-bg-hover: #212328;
+  --meng-alias-bg-active: #2a2d33;
+  --meng-alias-bg-selected: #1e2a44;
+
+  /* 不是把浅色反过来的 #eee: 纯反色会让文字发灰、accent 发脏 */
+  --meng-alias-fg-primary: #eceef1;
+  --meng-alias-fg-secondary: #b4b8bf;
+  --meng-alias-fg-muted: #8f949c;
+  --meng-alias-fg-disabled: #61656d;
+  --meng-alias-fg-on-accent: #0b0d10;
+  --meng-alias-fg-code: #d8dbe0;
+
+  --meng-alias-border-l1: #2a2c31;
+  --meng-alias-border-l2: #3a3d43;
+  --meng-alias-border-l3: #4e525a;
+
+  /* 深色下的 accent 必须提亮, 否则在 #17181b 上对比度不足 */
+  --meng-alias-accent: #7aa2ff;
+  --meng-alias-accent-hover: #94b4ff;
+  --meng-alias-accent-active: #b0c8ff;
+  --meng-alias-accent-subtle: #1e2a44;
+  --meng-alias-focus-ring: #7aa2ff;
+
+  /* 活跃相位在深色下要提到接近霓虹, 否则在 #17181b 上「动」不起来 */
+  --meng-alias-live: #2dd4bf;
+  --meng-alias-live-subtle: #10312e;
+
+  --meng-alias-positive: #5cc98d;
+  --meng-alias-positive-subtle: #13291e;
+  --meng-alias-warning: #e0aa4a;
+  --meng-alias-warning-subtle: #2a2113;
+  --meng-alias-danger: #f07a7a;
+  --meng-alias-danger-subtle: #2c1618;
+
+  --meng-alias-selection: #2c3f63;
+  --meng-alias-scrollbar: #3a3d43;
+  --meng-alias-scrollbar-hover: #4e525a;
+
+  /* 深色下投影几乎看不见, 分层靠描边; 这里只留极轻的压暗 */
+  --meng-alias-shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
+  --meng-alias-shadow-md: 0 6px 18px rgb(0 0 0 / 46%);
+  --meng-alias-shadow-lg: 0 20px 48px rgb(0 0 0 / 56%);
+
+  --meng-alias-syn-keyword: #d3a0f0;
+  --meng-alias-syn-string: #7fd6a2;
+  --meng-alias-syn-number: #e0aa4a;
+  --meng-alias-syn-comment: #7b8088;
+}
+
+/* ══════════════════════════ 全局基线 ══════════════════════════ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--meng-alias-bg-canvas);
+  color: var(--meng-alias-fg-primary);
+  font-family: var(--meng-specific-font-sans);
+  font-size: var(--meng-specific-text-base);
+  line-height: var(--meng-specific-leading-normal);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+#root {
+  height: 100%;
+}
+
+::selection {
+  background: var(--meng-alias-selection);
+}
+
+:focus-visible {
+  outline: 2px solid var(--meng-alias-focus-ring);
+  outline-offset: 1px;
+}
+
+/* 主题由入口在首帧前写死到 <html data-theme>, 不在这里用媒体查询兜底 ——
+ * 半套兜底比没有更糟: 只切 color-scheme 不换 alias, 会得到浅色底 + 深色控件。
+ * 系统偏好由 apps/web 的 resolveTheme() 读一次, 与用户选择合并后再落 data-theme。 */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

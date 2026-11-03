@@ -1,0 +1,14 @@
+{
+  "name": "@meng/transport",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "通信契约: invoke(上行) + subscribe(下行)。实现: ws / ipc / inproc。",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./ws": "./src/ws.ts",
+    "./ipc": "./src/ipc.ts",
+    "./inproc": "./src/inproc.ts"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "@meng/platform",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "平台能力面契约: fs / dialog / notify / window / clipboard / haptics / secure-store。三端各一份实现。",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./web": "./src/web.ts",
+    "./desktop": "./src/desktop.ts",
+    "./mobile": "./src/mobile.ts"
+  },
+  "dependencies": {
+    "@meng/core": "workspace:*",
+    "@meng/slots": "workspace:*"
+  }
+}

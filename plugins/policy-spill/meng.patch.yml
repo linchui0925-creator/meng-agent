@@ -1,0 +1,10 @@
+# 单独使用这份插件时的参考配置。
+# 真正生效的是 bundles/kit/meng.patch.yml —— 配置只有一处, 不两写。
+- insert:
+    - id: policy-spill
+      name: '@meng/plugin-policy-spill'
+      config:
+        maxInlineBytes: 50000
+        headBytes: 2000
+        exclude: ['read']
+        maxFiles: 200

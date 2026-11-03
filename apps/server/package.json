@@ -1,0 +1,11 @@
+{
+  "name": "@meng/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@meng/core": "workspace:*",
+    "@meng/web": "workspace:*",
+    "@meng/tools": "workspace:*"
+  }
+}

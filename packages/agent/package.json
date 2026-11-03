@@ -1,0 +1,14 @@
+{
+  "name": "@meng/agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "@meng/core": "workspace:*",
+    "@meng/llm": "workspace:*",
+    "@meng/session": "workspace:*",
+    "@meng/tools": "workspace:*",
+    "@meng/prompt": "workspace:*"
+  }
+}

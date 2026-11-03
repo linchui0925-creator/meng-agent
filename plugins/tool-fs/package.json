@@ -1,0 +1,12 @@
+{
+  "name": "@meng/plugin-tool-fs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "@meng/core": "workspace:*",
+    "@meng/fs": "workspace:*",
+    "@meng/tools": "workspace:*"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["node"]
+  },
+  "include": [
+    "types/**/*.d.ts",
+    "apps/web/src/**/*.ts",
+    "apps/web/src/**/*.tsx",
+    "packages/core/src/**/*.ts",
+    "packages/modules/src/**/*.ts",
+    "packages/shell/src/**/*.ts",
+    "packages/shell/test/**/*.ts",
+    "packages/slots/src/**/*.ts",
+    "packages/slots/test/**/*.ts",
+    "packages/ui/src/**/*.ts",
+    "packages/ui/src/**/*.tsx",
+    "packages/web-react/src/**/*.ts",
+    "packages/web-react/src/**/*.tsx",
+    "packages/transport/src/**/*.ts",
+    "packages/platform/src/**/*.ts"
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "name": "@meng/modules",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "模块系统: server 半扫描 meng.client 产出 BootManifest, 浏览器半按需加载插件 bundle。零依赖。",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts"
+  }
+}

@@ -1,0 +1,26 @@
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--meng-specific-space-2);
+}
+
+.line {
+  height: 10px;
+  border-radius: var(--meng-specific-radius-sm);
+  background: var(--meng-alias-bg-inset);
+  animation: breathe 1.4s var(--meng-specific-ease) infinite;
+}
+
+.short {
+  width: 62%;
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}

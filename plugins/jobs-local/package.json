@@ -1,0 +1,10 @@
+{
+  "name": "@meng/plugin-jobs-local",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "@meng/core": "workspace:*",
+    "@meng/jobs": "workspace:*"
+  }
+}

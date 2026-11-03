@@ -1,0 +1,87 @@
+.base {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--meng-specific-space-2);
+  height: var(--meng-specific-control-h);
+  padding: 0 var(--meng-specific-space-3);
+  border: 1px solid transparent;
+  border-radius: var(--meng-specific-radius-md);
+  font-family: inherit;
+  font-size: var(--meng-specific-text-md);
+  font-weight: var(--meng-specific-weight-medium);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--meng-specific-dur-fast) var(--meng-specific-ease),
+    border-color var(--meng-specific-dur-fast) var(--meng-specific-ease),
+    color var(--meng-specific-dur-fast) var(--meng-specific-ease);
+}
+
+.base:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.base:focus-visible {
+  outline: 2px solid var(--meng-alias-focus-ring);
+  outline-offset: 1px;
+}
+
+.md {
+  height: var(--meng-specific-control-h);
+  padding: 0 var(--meng-specific-space-3);
+}
+
+.sm {
+  height: var(--meng-specific-control-h-sm);
+  padding: 0 var(--meng-specific-space-2);
+  font-size: var(--meng-specific-text-sm);
+}
+
+.primary {
+  background: var(--meng-alias-accent);
+  color: var(--meng-alias-fg-on-accent);
+}
+
+.primary:hover:not(:disabled) {
+  background: var(--meng-alias-accent-hover);
+}
+
+.primary:active:not(:disabled) {
+  background: var(--meng-alias-accent-active);
+}
+
+.secondary {
+  border-color: var(--meng-alias-border-l2);
+  background: var(--meng-alias-bg-surface);
+  color: var(--meng-alias-fg-primary);
+}
+
+.secondary:hover:not(:disabled) {
+  background: var(--meng-alias-bg-hover);
+}
+
+.secondary:active:not(:disabled) {
+  background: var(--meng-alias-bg-active);
+}
+
+.ghost {
+  background: transparent;
+  color: var(--meng-alias-fg-secondary);
+}
+
+.ghost:hover:not(:disabled) {
+  background: var(--meng-alias-bg-hover);
+  color: var(--meng-alias-fg-primary);
+}
+
+.danger {
+  border-color: var(--meng-alias-danger);
+  background: transparent;
+  color: var(--meng-alias-danger);
+}
+
+.danger:hover:not(:disabled) {
+  background: var(--meng-alias-danger-subtle);
+}

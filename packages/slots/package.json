@@ -1,0 +1,14 @@
+{
+  "name": "@meng/slots",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Slot 契约 + 注册表 + 快照 store。零 React 依赖, 渲染后端可替换。",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@meng/core": "workspace:*"
+  }
+}

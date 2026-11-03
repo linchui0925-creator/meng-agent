@@ -1,0 +1,58 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": false,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@meng/core": ["packages/core/src/index.ts"],
+      "@meng/core/loader": ["packages/core/src/loader.ts"],
+      "@meng/llm": ["packages/llm/src/index.ts"],
+      "@meng/session": ["packages/session/src/index.ts"],
+      "@meng/persistence": ["packages/persistence/src/index.ts"],
+      "@meng/web": ["packages/web/src/index.ts"],
+      "@meng/tools": ["packages/tools/src/index.ts"],
+      "@meng/net": ["packages/net/src/index.ts"],
+      "@meng/prompt": ["packages/prompt/src/index.ts"],
+      "@meng/agent": ["packages/agent/src/index.ts"],
+      "@meng/slots": ["packages/slots/src/index.ts"],
+      "@meng/modules": ["packages/modules/src/index.ts"],
+      "@meng/modules/client": ["packages/modules/src/client.ts"],
+      "@meng/shell": ["packages/shell/src/index.ts"],
+      "@meng/web-react": ["packages/web-react/src/index.tsx"],
+      "@meng/ui": ["packages/ui/src/index.ts"],
+      "@meng/platform": ["packages/platform/src/index.ts"],
+      "@meng/platform/web": ["packages/platform/src/web.ts"],
+      "@meng/platform/desktop": ["packages/platform/src/desktop.ts"],
+      "@meng/platform/mobile": ["packages/platform/src/mobile.ts"],
+      "@meng/transport": ["packages/transport/src/index.ts"],
+      "@meng/transport/ws": ["packages/transport/src/ws.ts"],
+      "@meng/transport/ipc": ["packages/transport/src/ipc.ts"],
+      "@meng/transport/inproc": ["packages/transport/src/inproc.ts"]
+    }
+  },
+  "include": [
+    "packages/*/src/**/*.ts",
+    "apps/*/src/**/*.ts",
+    "plugins/*/src/**/*.ts"
+  ],
+  // 只装 .ts, 且没有 DOM lib / jsx —— 这套配置是**内核侧**的检查。
+  // 前端那半边由 tsconfig.web.json (typecheck:web) 负责, 它带 DOM + jsx。
+  // 两份配置的边界必须切开: 否则 apps/web 里一句 window 就会让
+  // 全仓 typecheck 变红, 而它其实只在前端配置下合法 (反之亦然)
+  "exclude": [
+    "packages/ui",
+    "packages/web-react",
+    "packages/slots",
+    "packages/modules",
+    "apps/web"
+  ]
+}

@@ -1,0 +1,12 @@
+# 示例插件 —— 第三方插件照这个抄就是对的
+#
+# 三件事: 声明依赖 (inject) / 声明配置 (config) / 什么也不假设。
+# 注意这里没有 "order" / "priority" / "loadAfter" 之类的字段:
+# 顺序由依赖决定, 不由人写。
+
+- insert:
+    - id: hello
+      name: '@meng/plugin-hello'
+      config:
+        greeting: '你好'
+        loud: false

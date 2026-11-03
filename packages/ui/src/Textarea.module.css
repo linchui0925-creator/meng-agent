@@ -1,0 +1,55 @@
+.textarea {
+  display: block;
+  width: 100%;
+  padding: var(--meng-specific-space-2) var(--meng-specific-space-3);
+  border: 1px solid var(--meng-alias-border-l2);
+  border-radius: var(--meng-specific-radius-md);
+  background: var(--meng-alias-bg-surface);
+  color: var(--meng-alias-fg-primary);
+  font-family: inherit;
+  font-size: var(--meng-specific-text-md);
+  line-height: var(--meng-specific-leading-normal);
+  resize: vertical;
+  transition: border-color var(--meng-specific-dur-fast) var(--meng-specific-ease);
+}
+
+.autoGrow {
+  resize: none;
+  overflow-y: auto;
+  max-height: 220px;
+}
+
+/* 嵌入型: 容器负责描边, 自己只负责打字 */
+.bare {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* 提高一级特异性, 否则会被后面同特异性的 .textarea:focus 覆盖掉 */
+.bare.bare:hover,
+.bare.bare:focus {
+  border: 0;
+  box-shadow: none;
+}
+
+.textarea:hover {
+  border-color: var(--meng-alias-border-l3);
+}
+
+.textarea:focus {
+  outline: none;
+  border-color: var(--meng-alias-accent);
+  box-shadow: 0 0 0 1px var(--meng-alias-focus-ring);
+}
+
+.textarea::placeholder {
+  color: var(--meng-alias-fg-muted);
+}
+
+.textarea:disabled {
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-disabled);
+  cursor: not-allowed;
+}

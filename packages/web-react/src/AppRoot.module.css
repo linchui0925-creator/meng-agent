@@ -1,0 +1,128 @@
+/* 加载页样式。只许用 alias token —— 换主题时这里也要跟着变, 不能是死色。 */
+
+.boot {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: var(--meng-specific-space-5);
+  background: var(--meng-alias-bg-canvas);
+  color: var(--meng-alias-fg-primary);
+}
+
+.card {
+  width: 100%;
+  max-width: 340px;
+  padding: var(--meng-specific-space-5);
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: var(--meng-specific-radius-lg);
+  background: var(--meng-alias-bg-surface);
+  box-shadow: var(--meng-alias-shadow-sm);
+}
+
+.brand {
+  font-size: var(--meng-specific-text-xl);
+  font-weight: var(--meng-specific-weight-strong);
+  letter-spacing: 0.02em;
+  margin-bottom: var(--meng-specific-space-1);
+}
+
+.hint {
+  font-size: var(--meng-specific-text-md);
+  color: var(--meng-alias-fg-muted);
+}
+
+.bar {
+  position: relative;
+  overflow: hidden;
+  height: 2px;
+  margin: var(--meng-specific-space-3) 0 var(--meng-specific-space-4);
+  border-radius: var(--meng-specific-radius-full);
+  background: var(--meng-alias-bg-inset);
+}
+
+.barFill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 40%;
+  border-radius: inherit;
+  background: var(--meng-alias-accent);
+  animation: slide 1.1s var(--meng-specific-ease) infinite;
+}
+
+@keyframes slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+.entries {
+  display: flex;
+  flex-direction: column;
+  gap: var(--meng-specific-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.entry {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--meng-specific-space-2);
+  font-size: var(--meng-specific-text-sm);
+}
+
+.entryId {
+  color: var(--meng-alias-fg-secondary);
+  font-family: var(--meng-specific-font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phase {
+  flex: none;
+  color: var(--meng-alias-fg-muted);
+}
+
+.phaseBad {
+  flex: none;
+  color: var(--meng-alias-danger);
+}
+
+.failedTitle {
+  margin-top: var(--meng-specific-space-2);
+  font-size: var(--meng-specific-text-base);
+  font-weight: var(--meng-specific-weight-medium);
+  color: var(--meng-alias-danger);
+}
+
+.failedBody {
+  margin: var(--meng-specific-space-2) 0 var(--meng-specific-space-4);
+  padding: var(--meng-specific-space-2);
+  border-radius: var(--meng-specific-radius-md);
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-secondary);
+  font-family: var(--meng-specific-font-mono);
+  font-size: var(--meng-specific-text-sm);
+  line-height: var(--meng-specific-leading-tight);
+  word-break: break-word;
+}
+
+.retry {
+  padding: var(--meng-specific-space-2) var(--meng-specific-space-3);
+  border: 1px solid var(--meng-alias-border-l2);
+  border-radius: var(--meng-specific-radius-md);
+  background: var(--meng-alias-bg-surface);
+  color: var(--meng-alias-fg-primary);
+  font: inherit;
+  font-size: var(--meng-specific-text-md);
+  cursor: pointer;
+}
+
+.retry:hover {
+  background: var(--meng-alias-bg-hover);
+}

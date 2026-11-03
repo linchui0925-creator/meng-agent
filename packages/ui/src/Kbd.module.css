@@ -1,0 +1,16 @@
+.root {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 var(--meng-specific-space-1);
+  border: 1px solid var(--meng-alias-border-l2);
+  border-bottom-width: 2px;
+  border-radius: var(--meng-specific-radius-sm);
+  background: var(--meng-alias-bg-surface);
+  color: var(--meng-alias-fg-secondary);
+  font-family: var(--meng-specific-font-sans);
+  font-size: var(--meng-specific-text-xs);
+  line-height: 1;
+}

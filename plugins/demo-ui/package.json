@@ -1,0 +1,12 @@
+{
+  "name": "@meng/plugin-demo-ui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "第一个前端 UI 插件: 证明「宿主不认识的包」能在运行时挂进 slot。产物是 /plugins/demo-ui/client.js",
+  "main": "./src/client-entry.tsx",
+  "exports": {
+    ".": "./src/client-entry.tsx",
+    "./client": "../web/public/plugins/demo-ui/client.js"
+  }
+}

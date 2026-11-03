@@ -1,0 +1,167 @@
+# 梦 · kit 组合清单 —— "让 agent 真能干活"的那一层
+#
+# base = 内核能力, server = 怎么接世界, kit = 能干什么活。
+# 三分是为了让"不接 HTTP 的桌面端"和"不许碰文件只读的托管版"
+# 各取所需, 而不是让一个 base 越装越胖。
+#
+# 分层抄 dsh: 先有 seam, 再有薄壳, 最后策略占槽。
+# 行序不携带加载语义 —— tool-fs 写在 fs 前面也照样能装 (inject 驱动)。
+# 配置集中在这里: 插件自带的那份清单只是"单独使用时的参考",
+# 两个地方都写配置迟早会漂移, 那是 Python 版 36 个 include_router 的老毛病。
+
+- insert:
+    # ── seam: 能力面 ──────────────────────────────────────────
+    # 文件读写都走它。工具不许 import node:fs (将来进 lint)。
+    # 换托管版只读 fs 提供方时, 下面四个工具插件一行都不用改
+    - id: fs
+      name: '@meng/fs'
+      config:
+        root: !!js process.env.MENG_WORKSPACE || process.cwd()
+
+    # 工具输出溢出落盘。不经过 fs —— 它是临时产物, 不该被 glob 搜到、
+    # 不该计入"已观察"。目录必须在 tool-search 的 IGNORE 里 (.meng 已经是)
+    - id: spill
+      name: '@meng/spill'
+      config:
+        root: !!js process.env.MENG_WORKSPACE || process.cwd()
+        relDir: .meng/spill
+
+    # 抓网页的能力面 (@meng/net) 只有类型, 实现在这里。
+    # 落盘到 .meng/web —— 和 spill 同理: 临时产物不该被 glob 搜到、不该计入"已观察"。
+    # 存**原始字节**, 解码交给上层: 老站点还有 gbk, 落盘时统一转码错了就修不回来
+    - id: net-local
+      name: '@meng/plugin-net-local'
+      config:
+        root: !!js process.env.MENG_WORKSPACE || process.cwd()
+        relDir: .meng/web
+        timeoutMs: 30000
+        maxBytes: 5000000
+        maxFiles: 100
+
+    # 执行外部命令的缝 (@meng/exec) 是**库**不是插件 —— 它只有类型, 没有 apply,
+    # 挂不进清单, 也不该挂。能力面由下面的执行器注册, 谁实现谁 provide。
+    # tool-bash 只认 ctx.exec, 不认 bash-local: 换执行器不用改工具
+    - id: bash-local
+      name: '@meng/plugin-bash-local'
+      config:
+        cwd: !!js process.env.MENG_WORKSPACE || process.cwd()
+        timeoutMs: 120000
+        maxTimeoutMs: 600000
+        maxOutputBytes: 64000
+        maxSpillBytes: 1000000
+        graceMs: 3000
+
+    # 后台任务的缝是 @meng/jobs (库, 只有类型), 这里装的是它的进程内实现。
+    # **必须排在 tool-bash / tool-jobs 前面**: 它们对 jobs 是**可选**依赖
+    # (没有 jobs 就不暴露 run_in_background), 而 loader 不会重试 pending ——
+    # 排在后面的话, bash 会静默地失去后台能力, 且看不出原因
+    - id: jobs-local
+      name: '@meng/plugin-jobs-local'
+      config:
+        maxConcurrentJobsPerOwner: 10
+
+    # 问用户 / 审批的 seam。ask_user_question 工具和 tools 管线的
+    # 'ask' 分支都汇到这里; 回答入口的 op 由 questions-web (server) 提供
+    - id: questions
+      name: '@meng/questions'
+      config:
+        timeoutMs: 300000
+
+    # ── 策略: 零能力面, 只占槽/挂钩子 ────────────────────────
+    # 占 fs/write-intent、fs/edit-intent 单决策槽:
+    # 先读后写 (FS_NOT_OBSERVED) / 敏感路径 / 越界。
+    # 卸掉它 = 裸提供方 = 无条件写 —— 这是部署决策, 不是硬编码
+    - id: policy-fs
+      name: '@meng/plugin-policy-fs'
+      config:
+        root: !!js process.env.MENG_WORKSPACE || process.cwd()
+        noWrite: ['.git/', '.env', '.ssh/', 'id_rsa', '.npmrc']
+        requireRead: true
+
+    # 挂 tools/pre-execute: danger-full-access 默认不授权 +
+    # 真沙箱落地前的灾难命令止血带 (沙箱包落地后删)
+    - id: policy-bash
+      name: '@meng/plugin-policy-bash'
+      config:
+        allowDanger: false
+
+    # 工具输出硬闸: 超 50KB 落盘 + 回 locator, 而不是把尾部丢掉。
+    # 瞬时产物 (bash stdout / grep 命中) 不落盘就永远没了
+    #
+    # bash 不在这一层: 它的输出**已经**被 executor 按流窗口 (64KB, 保留尾部)
+    # 裁过并落盘了。同一段文字上叠两道闸, 第二道会把第一道特意留下的尾部
+    # 再切掉一次 —— 两道闸的方向还相反 (这道留头), 结果是只留下最没用的部分。
+    # 一道输出只该有一道闸; bash 那道在 executor 里, 离数据源更近, 留全量也更便宜
+    - id: policy-spill
+      name: '@meng/plugin-policy-spill'
+      config:
+        maxInlineBytes: 50000
+        headBytes: 2000
+        exclude: ['read', 'bash']
+        maxFiles: 200
+
+    # 工具截止时间: 挂 tools/execute, 读工具自己声明的 timeoutMs。
+    # 零配置 —— 预算归声明方 (工具作者), 这一层只负责起表和到点改判。
+    # 没有声明的工具完全不经过它, 所以这个插件装了也不会改变别的工具的行为
+    - id: policy-timeout
+      name: '@meng/plugin-policy-timeout'
+
+    # ── 薄壳: 工具, 只认能力面 ────────────────────────────────
+    # read / write / edit。上限抄 dsh 默认: 2000 行 / 单行 2000 字符 / 51200 字节
+    - id: tool-fs
+      name: '@meng/plugin-tool-fs'
+
+    # glob / grep。上限抄 dsh: glob 100 条, grep 250 命中, 单行 2000 字节
+    - id: tool-search
+      name: '@meng/plugin-tool-search'
+      config:
+        root: !!js process.env.MENG_WORKSPACE || process.cwd()
+
+    # bash。默认注册 (和 dsh 一致); 危险控制在 policy-bash, 不在工具里
+    - id: tool-bash
+      name: '@meng/plugin-tool-bash'
+      config:
+        root: !!js process.env.MENG_WORKSPACE || process.cwd()
+
+    # web_fetch。返回"去噪声的开头 + 原文路径", **不做摘要**:
+    # 摘要不可核对 (Claude Code 的 WebFetch 自己写着 lossy by design),
+    # 而我们留了原文, 模型能用 grep/read 回去查原句
+    - id: tool-fetch
+      name: '@meng/plugin-tool-fetch'
+      config:
+        displayChars: 4000
+
+    # outline。给长材料建**位置地图**, 不返回内容:
+    # 模型知道东西在哪、每块大概是什么, 但要去读才算数。
+    # smallModel 留空 = 完全不调模型 (有结构的材料本来就用不上);
+    # 填了才会让小模型给"没标题的块"补一句描述, 且它拿不到工具
+    - id: tool-outline
+      name: '@meng/plugin-tool-outline'
+      config:
+        maxBlocks: 80
+        # smallModel: 'gpt-4o-mini'
+
+    # 模型中途向用户提问。没有它, 信息不足时模型只能猜
+    - id: tool-ask
+      name: '@meng/plugin-tool-ask'
+
+    # job_output / job_list / job_kill。挂上它, 后台任务才"可被收"
+    # (没人读的任务跑完就只是跑完了); run_in_background 参数在 tool-bash 里
+    - id: tool-jobs
+      name: '@meng/plugin-tool-jobs'
+      config:
+        waitTimeoutMs: 30000
+        maxWaitTimeoutMs: 600000
+
+    # ── 纯前端插件: 只有产物, 没有后端 apply ────────────────────
+    # 没有 name 的那一行是**故意**的: 它不需要被 import, 只要让前端知道
+    # "有个前端面要去下载"。它的 main 指向 client-entry.tsx (里面直接用
+    # __MENG_LOADER__), 在 node 里 import 必然炸 —— 所以后端只登记不执行。
+    #
+    # url 不发: 约定 /plugins/<id>/client.js, 两边各自按 id 推导 (docs/06 §3)。
+    # platforms 缺省 = 三端都要; immediately: false = 等 slot 被渲染再装载
+    - id: demo-ui
+      client:
+        platforms: [web]
+        immediately: false
+        slots: ['sidebar.footer']

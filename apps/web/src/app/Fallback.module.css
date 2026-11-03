@@ -1,0 +1,111 @@
+/* 宿主兜底界面 —— 刻意长得像正常界面: 侧栏还在, 只有内容区说一句人话。
+   全中性色, 不用 danger: 红色会把「某一块没起来」放大成「整个应用坏了」。 */
+
+.shell {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+  background: var(--meng-alias-bg-canvas);
+  color: var(--meng-alias-fg-primary);
+}
+
+.sidebar {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--meng-specific-space-3);
+  width: var(--meng-specific-sidebar-w);
+  padding: var(--meng-specific-space-4);
+  border-right: 1px solid var(--meng-alias-border-l1);
+  background: var(--meng-alias-bg-surface);
+}
+
+.brand {
+  font-size: var(--meng-specific-text-lg);
+  font-weight: var(--meng-specific-weight-strong);
+  letter-spacing: 0.08em;
+  line-height: 1.2;
+}
+
+.sideNote {
+  margin: 0;
+  color: var(--meng-alias-fg-muted);
+  font-size: var(--meng-specific-text-xs);
+  line-height: 1.6;
+}
+
+.main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.body {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: var(--meng-specific-space-5);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--meng-specific-space-2);
+  max-width: 30ch;
+  text-align: center;
+}
+
+.title {
+  margin: 0;
+  color: var(--meng-alias-fg-secondary);
+  font-size: var(--meng-specific-text-sm);
+}
+
+.hint {
+  margin: 0;
+  color: var(--meng-alias-fg-muted);
+  font-size: var(--meng-specific-text-xs);
+  line-height: 1.6;
+}
+
+/* 动作做得很轻: 它是"可以试一下", 不是"必须处理"。
+   一旦做成主按钮(实心强调色), 就等于在喊"出大事了"。 */
+.action {
+  margin-top: var(--meng-specific-space-1);
+  padding: var(--meng-specific-space-1) var(--meng-specific-space-3);
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: var(--meng-specific-radius-md);
+  background: var(--meng-alias-bg-surface);
+  color: var(--meng-alias-fg-secondary);
+  font: inherit;
+  font-size: var(--meng-specific-text-xs);
+  cursor: pointer;
+}
+
+.action:hover {
+  background: var(--meng-alias-bg-hover);
+}
+
+.action:focus-visible {
+  outline: 2px solid var(--meng-alias-focus-ring);
+  outline-offset: 2px;
+}
+
+.footer {
+  flex: none;
+  padding: var(--meng-specific-space-3) var(--meng-specific-space-4);
+  border-top: 1px solid var(--meng-alias-border-l1);
+  color: var(--meng-alias-fg-muted);
+  font-size: var(--meng-specific-text-xs);
+  text-align: center;
+}
+
+/* 窄屏隐藏侧栏: 兜底界面在小屏上优先保证"内容区这句话"看得清 */
+@media (max-width: 640px) {
+  .sidebar {
+    display: none;
+  }
+}
