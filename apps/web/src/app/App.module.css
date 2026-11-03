@@ -662,6 +662,56 @@
   background: var(--meng-alias-bg-canvas);
 }
 
+/* 等待气泡的定位容器: 只提供 position:relative, 自己不改变布局 */
+.composerArea {
+  position: relative;
+  flex: none;
+}
+
+/*
+  等待气泡。旁白, 不是控件 ——
+    - pointer-events:none: 绝不出现"气泡正好盖住发送按钮"
+    - absolute: 不占布局, 冒出来时不把会话顶一下
+    - 只动 opacity / transform: 走 GPU 合成, 流式输出时也不会掉帧
+  进入 160ms 干脆, 退出 240ms 柔和 —— 出现要快(否则像卡了), 消失要慢(别突然没掉)。
+*/
+.whisper {
+  position: absolute;
+  right: var(--meng-specific-space-4);
+  bottom: calc(100% + var(--meng-specific-space-2));
+  z-index: 2;
+  max-width: min(320px, calc(100% - 2 * var(--meng-specific-space-4)));
+  padding: var(--meng-specific-space-2) var(--meng-specific-space-3);
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: var(--meng-specific-radius-lg);
+  background: var(--meng-alias-bg-raised);
+  box-shadow: var(--meng-alias-shadow-sm);
+  color: var(--meng-alias-fg-secondary);
+  font-size: var(--meng-specific-text-sm);
+  line-height: var(--meng-specific-leading-normal);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(6px);
+  transition:
+    opacity var(--meng-specific-dur-slow) var(--meng-specific-ease),
+    transform var(--meng-specific-dur-slow) var(--meng-specific-ease);
+}
+
+.whisper[data-phase='in'] {
+  opacity: 1;
+  transform: none;
+  transition-duration: var(--meng-specific-dur-base);
+}
+
+/* 系统说"别动"就别动: 只留透明度的瞬时切换, 不上移动画 */
+@media (prefers-reduced-motion: reduce) {
+  .whisper,
+  .whisper[data-phase='in'] {
+    transform: none;
+    transition: none;
+  }
+}
+
 .composer {
   display: flex;
   align-items: flex-end;

@@ -506,6 +506,47 @@ export function countTools(messages: readonly Message[]): number {
 }
 
 /**
+ * 「现在在等什么」的投影。
+ *
+ * 界面要显示的等待态只有两种, 而它们都**已经在消息里了** —— 不需要新增状态:
+ *   - 有工具在跑 → 等工具 (since 取 tool.startedAt, 断线重放才不会把 40 秒说成 1 秒)
+ *   - 助手消息还在 streaming 且没有工具在跑 → 等模型说第一句/下一句
+ *   - 其它 → 没在等 (done / error / 空会话)
+ *
+ * 只看**最后一条助手消息**: 上一轮 if 有残留的 running 工具(极端情况: 丢事件),
+ * 不该让已经结束的这一轮永远显示"在等"。宁可漏一次, 不可永远挂着。
+ *
+ * `key` 是"这一次等待"的身份 —— 气泡靠它判断"同一次等待只出一条",
+ * 换工具/换轮次就是新的一次, 允许重新出。
+ */
+export type WaitScene = 'thinking' | 'tool'
+
+export interface WaitState {
+  scene: WaitScene
+  /** 这次等待开始的时刻 (毫秒) */
+  since: number
+  /** 这一次等待的身份 */
+  key: string
+}
+
+export function waitingState(messages: readonly Message[]): WaitState | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]
+    if (!message || message.role !== 'assistant') continue
+
+    const running = message.tools.find((t) => t.status === 'running')
+    if (running) {
+      return { scene: 'tool', since: running.startedAt ?? message.at, key: `tool:${running.callId}` }
+    }
+    if (message.status === 'streaming') {
+      return { scene: 'thinking', since: message.at, key: `turn:${message.id}` }
+    }
+    return null
+  }
+  return null
+}
+
+/**
  * 消息窗口: 只渲染最近 `size` 条, 更早的折叠成"显示更早"入口。
  *
  * 为什么**不是**虚拟化 (docs/07 F7 的验收项, 这是有意降级):

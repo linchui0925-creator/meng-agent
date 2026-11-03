@@ -9,13 +9,15 @@
  * 就等于把别人的插件全埋了, 所以渲染子 slot 是布局契约的一部分。
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import { Badge, Button, IconButton, ScrollArea, Separator, Spinner, Tooltip } from '@meng/ui'
 
 import { MoonIcon, PlusIcon, SunIcon, LayersIcon } from './icons.tsx'
 import type { LayoutApi } from './layout.ts'
-import { windowMessages, type Message } from './conversation.ts'
+import { waitingState, windowMessages, type Message } from './conversation.ts'
+import { WHISPER_DELAY_MS, WHISPER_HOLD_MS } from './whisper.ts'
+import { WaitBubble } from './WaitBubble.tsx'
 import { ToolCard } from './ToolCard.tsx'
 import { BuiltinComposer } from './BuiltinComposer.tsx'
 import { CopyButton } from './CopyButton.tsx'
@@ -58,6 +60,29 @@ export function BuiltinLayout(api: LayoutApi) {
   const [windowSize, setWindowSize] = useState(MESSAGE_WINDOW)
   useEffect(() => setWindowSize(MESSAGE_WINDOW), [sessionId])
   const { visible, hidden } = windowMessages(messages, windowSize)
+
+  /**
+   * 现在在等什么 —— 从消息投影里读, 不另存一份状态。
+   * 有工具在跑就知道在等工具, 助手还在 streaming 就知道在等模型。
+   */
+  const waiting = waitingState(messages)
+
+  /**
+   * 验收用的阈值覆盖 (`?whisper=600`), 生产默认 8 秒。
+   * 有它浏览器脚本才不用真等 8 秒; 没有它就得把 fixture 拉长到十几秒, 测试变慢变脆。
+   * `?whisperHold=` 同理, 用来在几秒内验完"停留 → 淡出 → 消失"。
+   */
+  const { whisperDelay, whisperHold } = useMemo(() => {
+    const num = (name: string, fallback: number): number => {
+      try {
+        const n = Number(new URLSearchParams(window.location.search).get(name))
+        return Number.isFinite(n) && n > 0 ? n : fallback
+      } catch {
+        return fallback
+      }
+    }
+    return { whisperDelay: num('whisper', WHISPER_DELAY_MS), whisperHold: num('whisperHold', WHISPER_HOLD_MS) }
+  }, [])
 
   return (
     <div className={styles.shell}>
@@ -206,20 +231,32 @@ export function BuiltinLayout(api: LayoutApi) {
           而输入框就是干活的入口。放到状态条那边会变成遥测, 用户不会去看。
           job/completed 一到就把它从「运行中」翻成终态, 5 秒后整条消失 (JobBar 注释有取舍)。
         */}
-        {jobs.length > 0 && <JobBar jobs={jobs} />}
-
         {/*
-          输入框是 **chain**, 不是 single。
-          它要能被「临时接管」: 审批条上来时内置输入框让位 —— overlay 让它只是被藏起来
-          而没有卸载, 所以草稿和光标都还活着, 审批完原样回来。
-          priority 大的先被问, 但真正决定谁上场的是候选自己的 select。
+          输入区一整块包起来, 只为了给等待气泡一个**定位锚点** ——
+          气泡 absolute 在它上方, 不占布局、不挡点击 (样式注释有取舍)。
         */}
-        <Slot.Chain
-          name="composer"
-          owner={composer}
-          fallback={<BuiltinComposer {...composer} />}
-          overlay
-        />
+        <div className={styles.composerArea}>
+          {jobs.length > 0 && <JobBar jobs={jobs} />}
+
+          {/*
+            输入框是 **chain**, 不是 single。
+            它要能被「临时接管」: 审批条上来时内置输入框让位 —— overlay 让它只是被藏起来
+            而没有卸载, 所以草稿和光标都还活着, 审批完原样回来。
+            priority 大的先被问, 但真正决定谁上场的是候选自己的 select。
+          */}
+          <Slot.Chain
+            name="composer"
+            owner={composer}
+            fallback={<BuiltinComposer {...composer} />}
+            overlay
+          />
+
+          {/*
+            等太久才说一句。它**不是**主状态: 主状态是工具卡上的真实进度 (read … 3s)。
+            只有超过阈值 (默认 8s) 才冒出来, 一次等待只出一条, 说完自己淡出。
+          */}
+          <WaitBubble state={waiting} delayMs={whisperDelay} holdMs={whisperHold} />
+        </div>
 
         {/*
           状态条: 常驻但不显眼。它的价值全在「插件能往里面塞东西」——
