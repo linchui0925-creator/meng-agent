@@ -15,7 +15,7 @@ import { Badge, Button, IconButton, ScrollArea, Separator, Spinner, Tooltip } fr
 
 import { MoonIcon, PlusIcon, SunIcon, LayersIcon } from './icons.tsx'
 import type { LayoutApi } from './layout.ts'
-import { waitingState, windowMessages, type Message } from './conversation.ts'
+import { waitingState, windowMessages, type Message, type WaitState } from './conversation.ts'
 import { WHISPER_DELAY_MS, WHISPER_HOLD_MS } from './whisper.ts'
 import { WaitBubble } from './WaitBubble.tsx'
 import { ToolCard } from './ToolCard.tsx'
@@ -66,6 +66,25 @@ export function BuiltinLayout(api: LayoutApi) {
    * 有工具在跑就知道在等工具, 助手还在 streaming 就知道在等模型。
    */
   const waiting = waitingState(messages)
+
+  /**
+   * 气泡挂在**最后一条助手消息的头像**上, 不挂输入框。
+   *
+   * 理由是语义: 说话的是小梦, 气泡就该长在小梦身边。挂在输入框上等于让旁白
+   * 离开了说话的人 —— 那条竖轴上一半是用户自己的话, 气泡待在那儿会像在替用户说话。
+   *
+   * 已知代价: 那条消息很长、头像已经滚出视口时, 气泡也跟着看不见。
+   * 我没有让它"找不到头像就飘到别处" —— 会跳位的东西比不显示更让人迷惑。
+   * 真到那天要做的是"跟随可视区", 那是另一件事。
+   */
+  const whisperAnchorId = (() => {
+    if (waiting === null) return null
+    for (let i = visible.length - 1; i >= 0; i--) {
+      const message = visible[i]
+      if (message?.role === 'assistant') return message.id
+    }
+    return null
+  })()
 
   /**
    * 验收用的阈值覆盖 (`?whisper=600`), 生产默认 8 秒。
@@ -211,7 +230,14 @@ export function BuiltinLayout(api: LayoutApi) {
                 </button>
               )}
               {visible.map((message) => (
-                <MessageRow key={message.id} message={message} Slot={Slot} />
+                <MessageRow
+                  key={message.id}
+                  message={message}
+                  Slot={Slot}
+                  whisper={message.id === whisperAnchorId ? waiting : null}
+                  whisperDelay={whisperDelay}
+                  whisperHold={whisperHold}
+                />
               ))}
             </div>
           )}
@@ -253,9 +279,12 @@ export function BuiltinLayout(api: LayoutApi) {
 
           {/*
             等太久才说一句。它**不是**主状态: 主状态是工具卡上的真实进度 (read … 3s)。
-            只有超过阈值 (默认 8s) 才冒出来, 一次等待只出一条, 说完自己淡出。
+            气泡挂在助手头像上 (见 MessageRow); 只有消息流里还没有助手消息时才落这里 ——
+            刚发出去、模型还没开口, 没有头像可锚, 总比不说一句强。
           */}
-          <WaitBubble state={waiting} delayMs={whisperDelay} holdMs={whisperHold} />
+          {waiting !== null && whisperAnchorId === null && (
+            <WaitBubble state={waiting} anchor="composer" delayMs={whisperDelay} holdMs={whisperHold} />
+          )}
         </div>
 
         {/*
@@ -310,7 +339,20 @@ export function BuiltinLayout(api: LayoutApi) {
  *   - 移动端两侧留白纯属浪费, 而通栏在窄屏是唯一正确解。
  * 区分角色不需要画框: 一段文字 + 一个名字, 读者扫一眼就知道谁说的。
  */
-function MessageRow({ message, Slot }: { message: Message; Slot: LayoutApi['Slot'] }) {
+function MessageRow({
+  message,
+  Slot,
+  whisper = null,
+  whisperDelay,
+  whisperHold,
+}: {
+  message: Message
+  Slot: LayoutApi['Slot']
+  /** 等太久时挂在头像上的那一句; 只有最后一条助手消息拿得到 */
+  whisper?: WaitState | null
+  whisperDelay: number
+  whisperHold: number
+}) {
   const isUser = message.role === 'user'
 
   return (
@@ -319,6 +361,9 @@ function MessageRow({ message, Slot }: { message: Message; Slot: LayoutApi['Slot
         <span className={isUser ? styles.avatarUser : styles.avatar}>{isUser ? '你' : '梦'}</span>
         <span className={styles.roleName}>{isUser ? '你' : '助手'}</span>
         <span className={styles.meta}>{formatTime(message.at)}</span>
+        {whisper && (
+          <WaitBubble state={whisper} anchor="avatar" delayMs={whisperDelay} holdMs={whisperHold} />
+        )}
       </div>
 
       {(message.text || message.status === 'streaming') && (

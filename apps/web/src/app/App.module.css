@@ -337,6 +337,7 @@
 }
 
 .role {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--meng-specific-space-2);
@@ -677,10 +678,8 @@
 */
 .whisper {
   position: absolute;
-  right: var(--meng-specific-space-4);
-  bottom: calc(100% + var(--meng-specific-space-2));
   z-index: 2;
-  max-width: min(340px, calc(100% - 2 * var(--meng-specific-space-4)));
+  max-width: min(340px, calc(100% - var(--meng-specific-space-4)));
   padding: var(--meng-specific-space-2) var(--meng-specific-space-3);
   border: 1px solid var(--meng-alias-border-l1);
   border-radius: var(--meng-specific-radius-lg);
@@ -691,23 +690,50 @@
   line-height: var(--meng-specific-leading-normal);
   pointer-events: none;
   opacity: 0;
-  /* 从右下角长出来 —— 那一侧正是输入框 */
+}
+
+/*
+  主用法: 悬在助手头像上方 —— 说话的是小梦, 气泡就长在小梦身边。
+  left 与头像左缘对齐, 底边抬到角色行之上, 从下方探出来时方向正是头像那边。
+*/
+.whisper[data-anchor='avatar'] {
+  left: 0;
+  bottom: calc(100% + var(--meng-specific-space-1));
+  transform-origin: 0 100%;
+}
+
+/* 兜底: 消息流里还没有助手消息 (刚发出去、模型没开口), 没有头像可锚, 落在输入框上方偏右 */
+.whisper[data-anchor='composer'] {
+  right: var(--meng-specific-space-4);
+  bottom: calc(100% + var(--meng-specific-space-2));
   transform-origin: 100% 100%;
 }
 
-/* 小尾巴: 让"它从输入框里冒出来"这件事成立, 而不是一个飘在空中的框 */
+/* 小尾巴: 让"它从那儿冒出来"这件事成立, 而不是一个飘在空中的框。
+   锚在哪边, 尾巴就朝哪边 —— 方向错了比没有尾巴更糟 */
 .whisper::after {
   content: '';
   position: absolute;
-  right: 16px;
   bottom: -5px;
   width: 8px;
   height: 8px;
+  background: var(--meng-alias-bg-raised);
+  transform: rotate(45deg);
+}
+
+.whisper[data-anchor='avatar']::after {
+  /* 头像 20px 宽, 尾巴 8px: left 6px 让尾巴正好落在头像中心 */
+  left: 6px;
+  border-left: 1px solid var(--meng-alias-border-l1);
+  border-bottom: 1px solid var(--meng-alias-border-l1);
+  border-bottom-left-radius: 2px;
+}
+
+.whisper[data-anchor='composer']::after {
+  right: 16px;
   border-right: 1px solid var(--meng-alias-border-l1);
   border-bottom: 1px solid var(--meng-alias-border-l1);
   border-bottom-right-radius: 2px;
-  background: var(--meng-alias-bg-raised);
-  transform: rotate(45deg);
 }
 
 /*

@@ -30,12 +30,25 @@ import styles from './App.module.css'
 
 export interface WaitBubbleProps {
   state: WaitState | null
+  /**
+   * 挂在哪儿。
+   *   avatar   —— 最后一条助手消息的头像上方。**默认该用这个**:
+   *               说话的是小梦, 气泡就该长在小梦身边, 而不是挂到输入框上。
+   *   composer —— 兜底: 消息流里还没有助手消息 (刚发出去、模型还没开口) 时,
+   *               没有头像可锚, 只能落在输入框上方。
+   */
+  anchor?: 'avatar' | 'composer'
   /** 覆盖阈值, 只给验收用 (`?whisper=600` 让浏览器脚本不用真等 8 秒) */
   delayMs?: number
   holdMs?: number
 }
 
-export function WaitBubble({ state, delayMs = WHISPER_DELAY_MS, holdMs = WHISPER_HOLD_MS }: WaitBubbleProps) {
+export function WaitBubble({
+  state,
+  anchor = 'avatar',
+  delayMs = WHISPER_DELAY_MS,
+  holdMs = WHISPER_HOLD_MS,
+}: WaitBubbleProps) {
   const [now, setNow] = useState(() => Date.now())
   const active = state !== null
   const key = state?.key ?? ''
@@ -61,7 +74,14 @@ export function WaitBubble({ state, delayMs = WHISPER_DELAY_MS, holdMs = WHISPER
   if (line === null) return null
 
   return (
-    <div className={styles.whisper} data-phase={phase} data-scene={state.scene} role="status" aria-live="polite">
+    <div
+      className={styles.whisper}
+      data-phase={phase}
+      data-scene={state.scene}
+      data-anchor={anchor}
+      role="status"
+      aria-live="polite"
+    >
       {line.say}{' '}
       {/*
         脸 aria-hidden: 颜文字是一串符号, 读屏会逐字念成
