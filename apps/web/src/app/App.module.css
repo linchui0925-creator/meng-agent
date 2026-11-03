@@ -679,15 +679,31 @@
 .whisper {
   position: absolute;
   z-index: 2;
-  max-width: min(340px, calc(100% - var(--meng-specific-space-4)));
-  padding: var(--meng-specific-space-2) var(--meng-specific-space-3);
+  /*
+    240 不是拍的: 词库全部 28 条 (say+脸) 在 12px 手写体下最宽 217px,
+    加内边距和边框 18px = 235。留 5px 余量, 换来"任何一句都是单行" ——
+    脸被折到第二行孤零零挂着, 比宽 20px 更伤"小而轻"。
+  */
+  max-width: min(240px, calc(100% - var(--meng-specific-space-4)));
+  padding: var(--meng-specific-space-1) var(--meng-specific-space-2);
   border: 1px solid var(--meng-alias-border-l1);
-  border-radius: var(--meng-specific-radius-lg);
+  border-radius: var(--meng-specific-radius-md);
   background: var(--meng-alias-bg-raised);
   box-shadow: var(--meng-alias-shadow-sm);
   color: var(--meng-alias-fg-secondary);
+  /*
+    手写体是"小梦在说话"这件事在字形上的唯一线索 —— 正文用界面 sans, 旁边这句用笔迹。
+    栈里 Hanzipen(翩翩体) 是第一顺位, 后面几个是给装了其它中文字体的人用的;
+    都没有就落到界面 sans, 退化成"没用特殊字体", 但绝不留空。
+    (实测: 楷体/圆体/宋体这些名字在没装的机器上不报错, 只是**静默回退** ——
+     所以字体栈只能做加法, 不能指望它一定生效)
+  */
+  font-family: 'Hanzipen SC', 'Hannotate SC', 'LXGW WenKai', 'Yuanti SC', 'Kaiti SC',
+    var(--meng-specific-font-sans);
   font-size: var(--meng-specific-text-sm);
-  line-height: var(--meng-specific-leading-normal);
+  /* 手写体的字面比 sans 大一圈, 行高跟着收 —— 用 normal(1.65) 会显得松散 */
+  line-height: 1.45;
+  letter-spacing: 0.01em;
   pointer-events: none;
   opacity: 0;
 }
@@ -737,12 +753,14 @@
 }
 
 /*
-  脸: 和句子在同一层, 不换等宽字体 ——
-  系统字体的回退链比赛道字体全, 颜文字里的韩文/假名/数学符号才不会缺字变方块。
+  脸: 和句子在同一层, 但**不走句子的手写体** ——
+  翩翩体这类中文字体只有汉字字形, 颜文字里的韩文/假名/数学符号会逐字回退,
+  一行里混两种基线, 看着像错版。这里显式压回系统 sans: 它的回退链最长。
 */
 .whisperFace {
   display: inline-block;
   margin-left: 2px;
+  font-family: var(--meng-specific-font-sans);
   color: var(--meng-alias-fg-muted);
   letter-spacing: 0.02em;
   white-space: nowrap;
