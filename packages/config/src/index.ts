@@ -225,6 +225,24 @@ export interface ConfigScope {
 
   /** 这个键当前的值来自哪一层。排查"为什么我改了不生效"时唯一有用的信息 */
   sourceOf(key: string): ConfigSource | undefined
+
+  /**
+   * 订阅本 scope 的配置变化。`set` / `unset` 落到本 scope 之后调用。
+   *
+   * ## 为什么"每次请求重读"不够
+   *
+   * 重读只能让**值**变了立刻生效 (`baseURL` 改了, 下一个请求就用新的)。
+   * 但有些配置本身就是**结构**: `routes` 是一个字典, 加一个 key 就是多了
+   * 一条路由 —— 而路由是在 `apply` 时注册进 llm 的, 不是每次请求现算的。
+   * 没有这条通知, 用户加了一条供应商只能重启进程才看得见。
+   *
+   * 这条通道存在的**唯一理由**就是这个: 声明里含"会增删的键"的插件需要它。
+   * 只有标量配置的插件不必订阅 —— 重读更简单, 也不会漏掉"谁先谁后"的问题。
+   *
+   * 不保证顺序, 不保证只在写成功后调用 (写入前的校验已经抛了, 到这里的
+   * 都是已落盘的变化)。订阅者自己负责幂等: 回调可能连续来两次。
+   */
+  onChange(fn: () => void): Disposer
 }
 
 /**
@@ -434,7 +452,7 @@ export function fallbackScope(name: string): ConfigScope {
 
   const read = (
     key: string,
-  ): { value: string | number | boolean | undefined; source: ConfigSource | undefined } => {
+  ): { value: unknown; source: ConfigSource | undefined } => {
     const item = decls.get(key)
     if (!item) return { value: undefined, source: undefined }
     // 密钥不出值 —— 和 config-local 同一条规则, 兜底层也不能破
@@ -443,9 +461,18 @@ export function fallbackScope(name: string): ConfigScope {
     // 不需要知道是哪个库 —— 换库时这个函数不用改
     try {
       const v: unknown = item.parse(undefined)
-      // 组合配置 (object / array) 不是标量, 兜底 scope 不做值语义, 只报"有"
-      if (v !== null && typeof v === 'object') return { value: undefined, source: undefined }
-      return { value: v as string | number | boolean, source: 'default' }
+      /**
+       * **组合配置也返回值。**
+       *
+       * 这里曾经对 object/array 一律返回 undefined, 理由是"兜底 scope 不做
+       * 值语义"。那条规则在多路由之前没害处, 因为没有任何插件用对象/数组
+       * 声明默认值。`provider-openai` 的 `routes` 字典一来, 它变成了:
+       * 没装 config-local 时 `routes()` 恒为空 → 一条路由都不注册 →
+       * provider 静默消失。不是"功能少一点", 是根本跑不起来。
+       *
+       * 默认值本来就是 schema 自己 parse 出来的完整值, 没有"不敢给"的理由。
+       */
+      return { value: v, source: 'default' }
     } catch {
       return { value: undefined, source: undefined }
     }
@@ -507,6 +534,13 @@ export function fallbackScope(name: string): ConfigScope {
     },
     sourceOf(key) {
       return read(key).source
+    },
+    onChange() {
+      // 兜底 scope 没有可写的地方, 所以永远不会有变化可通知。
+      // 返回一个真 disposer 而不是空函数: 订阅方的 `ctx.effect` 需要一个能调的回收口,
+      // 给 undefined 会让所有调用点多一行判空 —— 而那一行在装了 config-local 的
+      // 生产路径上永远走不到。
+      return () => {}
     },
   }
 }

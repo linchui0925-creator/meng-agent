@@ -11,16 +11,20 @@
  * 输入是两个包各自吐出来的数据, 输出是普通 JSON。这样它可以被单测直接打,
  * 不用起内核、不用假装一个是配置层。
  *
- * ## 与 dsh 的差异 (刻意的)
+ * ## 与 dsh 的关系
  *
- * dsh 有一张 `configurable-provider` 目录, 因为它的一个 adapter 能挂多条路由,
- * 而且路由可以只存在于配置里 (用户自己加的网关) —— 目录的作用是"列出还没被
- * 激活的路由"。
+ * dsh 有一张 `configurable-provider` 目录, 记着"这个 adapter 现在有哪些路由"
+ * 以及"每条路由的配置在设置页的哪段路径上"。它是**设置页的路由索引** ——
+ * 因为 dsh 的一个 adapter 能挂多条路由, 而 `listProviders()` 只给活着的那些,
+ * 光靠它推不出"哪些配置还能被激活"。
  *
- * 我们一个插件一条路由, 且**装了就注册** (没 key 也算注册, 只是 available=false),
- * 所以注册表本身就是目录。再抄一张目录进来 = 第二份账本, 而两份账本要同步 ——
- * 那正是这个项目吃过亏的地方 (见 packages/config 的文件头)。
- * 等真要做"多账号 / 用户自加网关"时再补, 那时候它会带着明确的读者出现。
+ * 我们没抄那张表: 路由要么注册着、要么不在 (见 `provider-openai` 的
+ * `sync()` —— 配置即真相, 增删立刻落到注册表), 所以注册表本身就是索引。
+ * **但多路由这件事本身抄了**: `provider-openai` 的 `routes` 字典一个 key
+ * 一条路由, 用户自己加网关不需要我们写插件。
+ *
+ * 代价: 没有"路由存在但未激活"这个中间态。dsh 用它做"装好但没开"的开关,
+ * 我们这边"没 key"就是没激活, 界面上表现为 `available: false` + `missing`。
  */
 
 import type { ConfigEntry } from '@meng/config'
@@ -64,7 +68,10 @@ export function catalogOf(providers: readonly ProviderInfo[], entries: readonly 
       available: p.available,
       ...(p.configScope ? { configScope: p.configScope } : {}),
       config,
-      missing: p.available ? [] : missingOf(config),
+      // **provider 自己说的优先。** 它知道每条路由绑的是哪个变量名;
+      // 这层按配置项推只能推"哪一项缺了", 而多路由下缺的是**字典里某一条的某个字段**,
+      // 从扁平 entries 里看不出来。config 兜底那条路留给"没实现 missing() 的老 provider"
+      missing: p.available ? [] : p.missing && p.missing.length > 0 ? p.missing : missingOf(config),
     }
   })
 }

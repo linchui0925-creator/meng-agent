@@ -136,7 +136,11 @@ function normalize(schema: z.ZodType, full: string): Omit<Slot, 'scope'> {
 
   let json: Record<string, unknown> = {}
   try {
-    json = z.toJSONSchema(schema) as Record<string, unknown>
+    // **io: 'input'** —— 这份 JSON Schema 是给设置页**校验用户输入**的, 所以
+    // 要按"输入形状"算 required。按输出形状算的话, 带 `.default()` 的字段也会
+    // 被列进 required (输出类型非可选), 于是前端严格校验时会拦下一条本来能用的
+    // 配置 —— 而服务端 parse 一下就会补上默认值。required 说谎比 required 苛刻糟。
+    json = z.toJSONSchema(schema, { io: 'input' }) as Record<string, unknown>
   } catch {
     // 有些 zod 类型本来就无法表示成 JSON Schema (bigint / date / transform)。
     // **不阻断启动**: 取值照样能走, 只是设置页画不出控件 —— 那比整个内核起不来好
@@ -330,6 +334,22 @@ export async function apply(
         }
         return resolveOne(scope, key).source
       },
+      onChange(fn: () => void) {
+        let set = watchers.get(scope)
+        if (!set) {
+          set = new Set()
+          watchers.set(scope, set)
+        }
+        set.add(fn)
+        return () => {
+          const cur = watchers.get(scope)
+          if (!cur) return
+          cur.delete(fn)
+          // 最后一个订阅者走了就把这组删掉: 否则 watchers 会随着插件重载
+          // 一直长 (键是 scope 名, 而 scope 名是有限集合 —— 但空 Set 仍然留着)
+          if (cur.size === 0) watchers.delete(scope)
+        }
+      },
     }
 
     scopes.set(scope, self)
@@ -405,6 +425,30 @@ export async function apply(
       .sort()
       .map(entryOf)
 
+  /**
+   * 谁在等"这个 scope 变了"。
+   *
+   * 按 scope 名分组 (而不是挂在 scope 对象上): `scope(name)` 返回的是复用对象,
+   * 但调用方完全可能拿到两份不同的引用 —— 挂在对象上会让"我订阅了却收不到"。
+   * 名字是这个系统里唯一稳定的身份。
+   */
+  const watchers = new Map<string, Set<() => void>>()
+
+  /**
+   * 广播一次变化。**订阅者抛异常不能影响写入** —— 值已经落盘了, 这时候
+   * 让 set() 报错等于告诉用户"没写成功", 而磁盘上已经是新值。
+   * 插件那边重新注册失败也同理: 记一行日志, 保留上一组可用路由。
+   */
+  const notify = (scope: string): void => {
+    for (const fn of watchers.get(scope) ?? []) {
+      try {
+        fn()
+      } catch (err) {
+        console.error(`[meng] config ${scope} 的变化通知里出错 (值已落盘, 上一版状态保留):`, err)
+      }
+    }
+  }
+
   const write = async (scope: string, key: string, apply: (full: string) => void): Promise<ConfigWriteResult> => {
     const full = `${scope}.${key}`
     // 未声明的键直接拒绝: 设置页只画已声明的项, 写未声明的键等于往黑箱里塞
@@ -418,7 +462,10 @@ export async function apply(
     }
     apply(full)
     await persist()
-    return { entry: entryOf(full), scopeEntries: entriesIn(scope) }
+    const result = { entry: entryOf(full), scopeEntries: entriesIn(scope) }
+    // 落盘之后再通知: 订阅者读到的必须是新值 (它们会立刻 scope.get 一次)
+    notify(scope)
+    return result
   }
 
   const service: ConfigService = {

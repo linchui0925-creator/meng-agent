@@ -1,5 +1,9 @@
 # OpenAI 兼容 provider (edgefn / 智谱 / minimax / 任何 /v1/chat/completions)。
 #
+# **装了这一个插件 = 装了"任意多家 OpenAI 协议网关"。** 它的配置是一张
+# `routes` 字典, 一个 key 一条路由 —— 用户想接自己的网关, 在设置页加一行就行,
+# 不需要我们再写插件, 也不需要重启 (配置写完立刻落到注册表)。
+#
 # 平时不用这个文件: server 走 apps/server/providers.meng.patch.yml (全装)。
 #
 # 这里**故意没有 config 块** —— 理由同 provider-deepseek:

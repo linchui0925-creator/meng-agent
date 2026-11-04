@@ -424,6 +424,17 @@ export interface Provider {
    * 留空 = 恒可用。缺省不是"没实现", 而是"没有会缺失的前提"。
    */
   available?: () => boolean
+  /**
+   * **还差什么才能用**。人话, 直接显示在设置页上。
+   *
+   * 为什么不由出口层从"哪些配置项缺了"推: 配置项现在是 `routes` 一个字典,
+   * 缺的是**字典里某一条的某个字段**, 而那件事只有 provider 自己知道 ——
+   * 和 `available()` 是同一个问题的两半, 答案必须来自同一处。分开算,
+   * 就会出现"设置页说有 key、发请求却报没凭据"这种自相矛盾的界面。
+   *
+   * 只在 `available()` 为 false 时有意义; 可用时返回空数组, 别制造噪音。
+   */
+  missing?: () => string[]
   /** 原始流: block-start / delta / usage / finish。组装不由你做 */
   stream(req: StreamRequest): AsyncIterable<StreamChunk>
 }
@@ -435,6 +446,8 @@ export interface ProviderInfo {
   models: string[]
   /** 见 `Provider.available`。没实现 `available()` 的恒为 true */
   available: boolean
+  /** 见 `Provider.missing`。不可用时才有内容 */
+  missing?: string[]
   configScope?: string
 }
 
@@ -462,6 +475,9 @@ export function apply(ctx: Ctx, config: { defaultModel?: string }): Disposer {
     // ?? 只在 null/undefined 时回退, 空串会直接走到"找不到 provider" ——
     // 而且异常被 agent 的 try 吞掉后表现为"一句话也不说", 极难定位
     const wanted = model || defaultModel
+    // **调用方显式点名** vs **沿用了配置里的默认**。这两者失效时的处置必须不同:
+    // 前者是调用方的错, 要报; 后者说明那条路由被删了/改名了, 该回落。
+    const explicit = typeof model === 'string' && model !== ''
 
     if (wanted) {
       // 模型名优先, 其次 provider id —— 别要求插件记住 provider↔model 的映射。
@@ -470,7 +486,10 @@ export function apply(ctx: Ctx, config: { defaultModel?: string }): Disposer {
       for (const provider of providers.values()) {
         if (provider.models.includes(wanted) || provider.id === wanted) return provider
       }
-      throw new LlmError(`没有 provider 能提供模型 ${wanted}`, LLM_CODE.NO_ADAPTER)
+      if (explicit) throw new LlmError(`没有 provider 能提供模型 ${wanted}`, LLM_CODE.NO_ADAPTER)
+      // 默认模型指向的那条路由不在了 (用户删了一条供应商路由, 或改了模型名)。
+      // **回落到第一个可用的**, 而不是让整个 agent 瘫在一句"没有 provider"上 ——
+      // 默认值的语义本来就是这个: 没点名时用第一个能用的
     }
 
     // 没点名: 只挑能用的。装了但没配 key 的 provider 排在前面时,
@@ -488,13 +507,19 @@ export function apply(ctx: Ctx, config: { defaultModel?: string }): Disposer {
     )
   }
 
-  const infoOf = (p: Provider): ProviderInfo => ({
-    id: p.id,
-    name: p.displayName ?? p.id,
-    models: [...p.models],
-    available: usable(p),
-    ...(p.configScope ? { configScope: p.configScope } : {}),
-  })
+  const infoOf = (p: Provider): ProviderInfo => {
+    const available = usable(p)
+    // missing 只在不可用时算: 可用却报"缺东西"是最让人怀疑界面的那种矛盾
+    const missing = available ? [] : (p.missing?.() ?? [])
+    return {
+      id: p.id,
+      name: p.displayName ?? p.id,
+      models: [...p.models],
+      available,
+      ...(missing.length > 0 ? { missing } : {}),
+      ...(p.configScope ? { configScope: p.configScope } : {}),
+    }
+  }
 
   const service: LLMService = {
     register(provider) {

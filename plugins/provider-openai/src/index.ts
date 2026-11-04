@@ -12,7 +12,7 @@
 
 import * as z from 'zod'
 import type { Ctx, Disposer } from '@meng/core'
-import { openScope, probeSecret } from '@meng/config'
+import { openScope } from '@meng/config'
 import {
   LLM_CODE,
   LlmError,
@@ -22,6 +22,7 @@ import {
   type LLMService,
   type Message,
   type Provider,
+  type ProviderInfo,
   type StreamChunk,
   type StreamRequest,
   type ToolSpec,
@@ -31,40 +32,70 @@ import { parseLine, sseLines } from './sse.ts'
 export const name = 'provider-openai'
 export const inject = ['llm']
 
-/** 路由 id。一个插件实例一条路由 (多账号是另一件事, 见 provider-deepseek 的同名注释) */
-const ROUTE = 'openai'
 export const CONFIG_SCOPE = 'llm.openai'
 
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1'
 const DEFAULT_MODELS = ['gpt-4o-mini']
+const DEFAULT_API_KEY_ENV = 'MENG_LLM_API_KEY'
+const DEFAULT_TEMPERATURE = 0.7
 
 /**
- * 配置声明。**密钥那一行存的是环境变量名, 不是密钥本身**。
+ * 一条路由的 profile。**对应 dsh-llm-pi-ai 里 `providers` 字典的一个 value。**
  *
- * 老名字 `OPENAI_API_KEY` 不写进 `meta.env` 而是留在读取处当兜底 ——
- * `meta.env` 只能填一个, 而这里历史上认过两个名字。填哪个都会让另一个
- * 悄悄失效, 所以两个都认, 只是 MENG_LLM_API_KEY 优先 (它才是我们自己的名字)。
+ * 这个形状是"自由配置供应商"的全部秘密: 以前整个插件只有一份配置, 于是
+ * 它只能代表**一家**。改成字典之后, 键就是路由名, 一个 key 一家 ——
+ * 用户想接自己的网关, 不需要等我们写插件。
+ *
+ * `apiKeyEnv` 是**每条路由各自的**: 两家第三方网关两个 key 是常态,
+ * 共用一个环境变量名等于其中一家永远拿错凭据。
+ */
+const RouteSchema = z.object({
+  /** 给人看的名字。留空回落成路由名 (路由名是英文 id, 不该直接上界面) */
+  displayName: z.string().optional(),
+
+  baseURL: z.string().min(1),
+
+  /**
+   * **环境变量名, 不是密钥。** 值只从 `process.env` 读, 永不落盘 ——
+   * 这条来自 dsh: a literal key is not a configuration value。
+   */
+  apiKeyEnv: z.string().min(1).default(DEFAULT_API_KEY_ENV),
+
+  /** 这个路由能用的模型名。空数组回落成默认那一个 (见 `modelsOf`) */
+  models: z.array(z.string()).default([]),
+
+  temperature: z.number().min(0).max(2).optional(),
+})
+
+export type RouteProfile = z.infer<typeof RouteSchema>
+export type RouteMap = Record<string, RouteProfile>
+
+/**
+ * 配置声明。**只有一项**: 一张路由表。
+ *
+ * 为什么不是"每个字段一项" (baseURL / apiKey / models 各一条 entry):
+ * 那样只能描述一家。要做多供应商, 配置本身必须是**可增删键的结构**,
+ * 而"可增删键"在 JSON Schema 里就是 object + additionalProperties ——
+ * 正好也是设置页要画的那个东西。
+ *
+ * 默认值里带一条 `openai`: 升级后行为不变, 用户打开设置页就能看到一条
+ * 能直接填 key 的路由, 而不是一个空表 + 一句"请自行添加"。
  */
 export const CONFIG = {
-  baseURL: z.string().default(DEFAULT_BASE_URL).meta({
-    env: 'MENG_LLM_BASE_URL',
-    description: '接口地址 (/v1 结尾)。edgefn / 智谱 / minimax 都填自己的',
-  }),
-
-  apiKey: z.string().meta({
-    secret: true,
-    env: 'MENG_LLM_API_KEY',
-    required: true,
-    description: '密钥绑定的环境变量名。也认 OPENAI_API_KEY, 但这里绑定的是前者',
-  }),
-
-  models: z.array(z.string()).default(DEFAULT_MODELS).meta({
-    description: '这个路由能用的模型名。第三方厂商填它给的模型 id',
-  }),
-
-  temperature: z.number().min(0).max(2).default(0.7).meta({
-    description: '采样温度。0 = 稳定, 2 = 发散',
-  }),
+  routes: z
+    .record(z.string(), RouteSchema)
+    .default({
+      openai: {
+        displayName: 'OpenAI',
+        baseURL: DEFAULT_BASE_URL,
+        apiKeyEnv: DEFAULT_API_KEY_ENV,
+        models: DEFAULT_MODELS,
+      },
+    })
+    .meta({
+      description:
+        '一组 OpenAI 协议路由: 键是路由名, 值是它的地址 / 密钥变量名 / 模型。加一条就是多一家供应商, 立刻生效',
+    }),
 }
 
 export function apply(ctx: Ctx): Disposer {
@@ -74,52 +105,96 @@ export function apply(ctx: Ctx): Disposer {
   const { scope, dispose } = openScope(ctx, CONFIG_SCOPE, CONFIG)
   ctx.effect(() => dispose)
 
-  const read = () => {
-    const bound = (scope.secret('apiKey') ?? '').trim()
-    // 老名字兜底: 只在绑定的那个名字为空时才看 OPENAI_API_KEY。
-    // 这一行是"用户明明导出了 key 却报未配置"的唯一修复点
-    const legacy = bound ? '' : (process.env['OPENAI_API_KEY'] ?? '').trim()
-    return {
-      baseURL: stripSlash(scope.get<string>('baseURL') ?? DEFAULT_BASE_URL),
-      apiKey: bound || legacy,
-      keyEnv: scope.secretRef('apiKey') ?? 'MENG_LLM_API_KEY',
-      temperature: scope.get<number>('temperature') ?? 0.7,
-    }
+  /**
+   * 当前这一份路由表。**每次读 scope, 不缓存。**
+   *
+   * 于是"改了某条路由的地址/模型名"下一个请求就生效, 不需要重新注册 ——
+   * 重新注册会让在飞的请求拿到一个正在被卸掉的路由。只有**增删键**才要重注册。
+   */
+  const routes = (): RouteMap => {
+    const raw = scope.get<RouteMap>('routes')
+    return raw !== null && typeof raw === 'object' ? raw : {}
   }
 
-  const provider: Provider = {
-    id: ROUTE,
-    displayName: 'OpenAI 兼容',
+  const profileOf = (id: string): RouteProfile | undefined => routes()[id]
+
+  /**
+   * 一条路由能用的模型。空列表回落成默认那一个。
+   *
+   * 为什么不让它空着: 空 models 的路由会从"选模型"的列表里彻底消失 ——
+   * 用户刚加了一行却看不见它, 会以为没生效。
+   */
+  const modelsOf = (id: string): string[] => {
+    const list = profileOf(id)?.models ?? []
+    return list.length > 0 ? list : DEFAULT_MODELS
+  }
+
+  /** 一条路由的凭据**值**。路由里存的是变量名, 值只从 env 读 */
+  const apiKeyOf = (profile: RouteProfile | undefined): string => {
+    if (!profile) return ''
+    const envName = profile.apiKeyEnv || DEFAULT_API_KEY_ENV
+    const own = (process.env[envName] ?? '').trim()
+    if (own) return own
+    // 历史名字。**只在绑的是默认名时**才看它: 用户显式绑了 MY_KEY 却去读
+    // OPENAI_API_KEY, 会让"我明明绑了却没生效"变得毫无线索
+    if (envName === DEFAULT_API_KEY_ENV) return (process.env['OPENAI_API_KEY'] ?? '').trim()
+    return ''
+  }
+
+  /**
+   * 一条路由 → 一个 Provider。
+   *
+   * 读的全部是 getter / 现读 scope, 没有快照 —— 所以 `sync()` 只在增删键时
+   * 需要被调用, 值的变化天然实时。
+   */
+  const providerOf = (id: string): Provider => ({
+    id,
+
+    // getter 而不是常量: 改显示名不该要求重新注册一条路由
+    get displayName() {
+      return profileOf(id)?.displayName ?? id
+    },
+
     configScope: CONFIG_SCOPE,
 
     get models(): string[] {
-      const list = scope.get<string[]>('models')
-      return Array.isArray(list) && list.length > 0 ? list : DEFAULT_MODELS
+      return modelsOf(id)
     },
 
-    available: () => read().apiKey !== '',
+    available: () => apiKeyOf(profileOf(id)) !== '',
+
+    missing: () => {
+      const profile = profileOf(id)
+      if (!profile) return [`路由 ${id} 已经不在配置里, 但还挂在注册表上`]
+      if (apiKeyOf(profile)) return []
+      return [`环境变量 ${profile.apiKeyEnv} 里没有值`]
+    },
 
     async *stream(req: StreamRequest): AsyncIterable<StreamChunk> {
-      const cfg = read()
-      if (!cfg.apiKey) {
+      const profile = profileOf(id)
+      if (!profile) {
+        throw new LlmError(`路由 ${id} 已经从配置里删掉了`, LLM_CODE.NO_ADAPTER)
+      }
+      const apiKey = apiKeyOf(profile)
+      if (!apiKey) {
         throw new LlmError(
-          `provider ${ROUTE} 未配置 apiKey (环境变量 ${cfg.keyEnv})`,
+          `路由 ${id} 没拿到凭据: 环境变量 ${profile.apiKeyEnv} 是空的`,
           LLM_CODE.MISSING_CREDENTIAL,
         )
       }
 
-      const res = await fetch(`${cfg.baseURL}/chat/completions`, {
+      const res = await fetch(`${stripSlash(profile.baseURL)}/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${cfg.apiKey}`,
+          Authorization: `Bearer ${apiKey}`,
           // 不可关闭的自我标识: 上游统计/限流认这个, 也让请求一眼可分辨
           'User-Agent': 'meng-agent/0.1 (+https://github.com/linc/meng)',
         },
         body: JSON.stringify({
-          model: req.model || provider.models[0],
+          model: req.model || modelsOf(id)[0],
           messages: toOpenAI(req.messages),
-          temperature: cfg.temperature,
+          temperature: profile.temperature ?? DEFAULT_TEMPERATURE,
           stream: true,
           stream_options: { include_usage: true },
           ...(req.tools?.length ? { tools: toTools(req.tools) } : {}),
@@ -129,7 +204,7 @@ export function apply(ctx: Ctx): Disposer {
 
       if (!res.ok || !res.body) {
         const text = await res.text().catch(() => '')
-        throw wireError(ROUTE, res.status, text, res.headers)
+        throw wireError(id, res.status, text, res.headers)
       }
 
       // 块号按**出现顺序**分配, 不是"正文固定 0 号"。
@@ -148,7 +223,7 @@ export function apply(ctx: Ctx): Disposer {
         if (!chunk) continue
 
         if (chunk.error?.message) {
-          throw new LlmError(`provider ${ROUTE}: ${chunk.error.message}`, LLM_CODE.MALFORMED_RESPONSE)
+          throw new LlmError(`provider ${id}: ${chunk.error.message}`, LLM_CODE.MALFORMED_RESPONSE)
         }
 
         if (chunk.usage) {
@@ -195,16 +270,59 @@ export function apply(ctx: Ctx): Disposer {
       // 流断在 finish 之前 (连接掉了 / provider 忘了收尾): 交给 assemble() 补一个
       // error finish —— 这里补不出更多事实, 也不该伪装成成功
     },
+  })
+
+  /**
+   * 活着的路由: id → 卸装函数。**只有增删键时才动它。**
+   *
+   * 这张表和 `routes()` 的关系是"注册表 vs 配置": 配置是愿望, 注册表是现状。
+   * 两者只在 sync() 里对齐 —— 所以任何时刻都不会出现"配置里有、注册表里没有"
+   * 的中间态被别处看到 (sync 是同步的, 没有 await)。
+   */
+  const live = new Map<string, Disposer>()
+
+  const sync = (): void => {
+    const want = routes()
+
+    // 先删: 用户删掉一条路由, 它必须立刻从注册表消失,
+    // 否则它会继续出现在"选模型"的列表里, 点了却发不出去
+    for (const [id, off] of live) {
+      if (Object.hasOwn(want, id)) continue
+      off()
+      live.delete(id)
+    }
+
+    // 再加
+    for (const id of Object.keys(want)) {
+      if (live.has(id)) continue
+      try {
+        live.set(id, llm.register(providerOf(id)))
+      } catch (err) {
+        // 撞了别的插件占用的路由名 (用户把路由命名成 deepseek 就会这样)。
+        // 一条坏路由不能拖垮其余那些, 但**绝不能静默** —— 用户得知道它没生效
+        console.error(`[meng] provider-openai: 路由 "${id}" 注册失败, 已跳过:`, err)
+      }
+    }
   }
 
-  const off = llm.register(provider)
+  sync()
+
+  // 配置一变就对一遍。**订阅而不是轮询**: 没有变化就没有开销,
+  // 也没有"两次轮询之间加了路由看不见"的窗口
+  ctx.effect(() => scope.onChange(sync))
+
   if (!process.env.MENG_QUIET) {
-    const cfg = read()
-    const key = cfg.apiKey ? '' : ` · 未配置 (${cfg.keyEnv} 为空)`
-    console.log(`[meng] provider ${ROUTE} · ${provider.models.join(', ')} · ${cfg.baseURL}${key}`)
+    for (const id of Object.keys(routes())) {
+      const profile = profileOf(id)
+      if (!profile) continue
+      const key = apiKeyOf(profile) ? '' : ` · 未配置 (${profile.apiKeyEnv} 为空)`
+      console.log(`[meng] provider ${id} · ${modelsOf(id).join(', ')} · ${stripSlash(profile.baseURL)}${key}`)
+    }
   }
+
   return () => {
-    off()
+    for (const off of live.values()) off()
+    live.clear()
     dispose()
   }
 }
@@ -318,6 +436,10 @@ function stripSlash(url: string): string {
   return url.replace(/\/+$/, '')
 }
 
+/** 本插件注册的全部路由。现在不止一条, 所以按 configScope 认亲, 不按固定 id */
+const routesOf = (ctx: Ctx): ProviderInfo[] =>
+  ctx.get<LLMService>('llm')?.listProviders().filter((p) => p.configScope === CONFIG_SCOPE) ?? []
+
 export const invariant = {
   pkg: '@meng/provider-openai',
   checks: [
@@ -326,24 +448,28 @@ export const invariant = {
       run(ctx: Ctx) {
         const llm = ctx.get<LLMService>('llm')
         if (!llm) throw new Error('llm 未注册')
-        const info = llm.listProviders().find((p) => p.id === ROUTE)
-        if (!info) throw new Error(`路由 ${ROUTE} 没注册上`)
-        if (!info.configScope) throw new Error(`路由 ${ROUTE} 没挂 configScope, 设置页找不到它的配置`)
+        const mine = routesOf(ctx)
+        // 默认配置里有一条 openai, 所以"一条都没有"只可能是配置被清空成 {} 了 ——
+        // 那是用户能做出来的事, 说出来比默默没有供应商好
+        if (mine.length === 0) throw new Error(`${CONFIG_SCOPE} 下一条路由都没有 (routes 是空表)`)
+        for (const info of mine) {
+          if (!info.configScope) throw new Error(`路由 ${info.id} 没挂 configScope, 设置页找不到它的配置`)
+        }
       },
     },
     {
       /** 见 provider-deepseek 里同名检查的注释: 只在"没有别的可用 provider"时才算失败 */
       id: 'credential-present',
       run(ctx: Ctx) {
-        const { value, ref } = probeSecret(ctx, CONFIG_SCOPE, 'apiKey', CONFIG)
-        // OPENAI_API_KEY 是历史名字, 读取处也认它 —— 自检不认就成了"明明能跑却报没配"
-        const legacy = (process.env['OPENAI_API_KEY'] ?? '').trim()
-        if ((value ?? '').trim() || legacy) return
+        const mine = routesOf(ctx)
+        if (mine.some((p) => p.available)) return
         const llm = ctx.get<LLMService>('llm')
-        const others = llm?.listProviders().filter((p) => p.id !== ROUTE && p.available) ?? []
+        const others = llm?.listProviders().filter((p) => p.configScope !== CONFIG_SCOPE && p.available) ?? []
         if (others.length > 0) return
+        // 缺什么由 provider 自己说 (它知道每条路由绑的是哪个变量名)
+        const missing = mine.flatMap((p) => p.missing ?? [])
         throw new Error(
-          `${ref ?? 'MENG_LLM_API_KEY'} 为空 —— 这个 provider 现在发不出请求, 而也没有别的可用 provider`,
+          `provider-openai 没有一条可用路由${missing.length > 0 ? `: ${missing.join('; ')}` : ''} —— 而也没有别的可用 provider`,
         )
       },
     },
