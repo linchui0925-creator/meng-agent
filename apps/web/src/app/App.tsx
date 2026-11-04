@@ -8,7 +8,7 @@
  * 状态上移之后, 换一个布局插件, 消息、会话 id、连接状态一条都不会丢。
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType } from 'react'
 
 import type { ConnectionState, StreamEvent, Transport } from '@meng/transport'
 import type { SlotRegistry } from '@meng/slots'
@@ -19,9 +19,10 @@ import { BuiltinLayout } from './BuiltinLayout.tsx'
 import { countTools, project, projectJobs } from './conversation.ts'
 import type { GraphNode, PluginGraphState } from './PluginPanel.tsx'
 import { connectionText, type ComposerApi, type LayoutApi } from './layout.ts'
+import type { SectionEntry, SettingsViewApi } from './settings/api.ts'
 import { listSessions, type SessionSummary } from './sessions.ts'
 import { createConversationStore } from './store.ts'
-import { applyTheme, saveThemeMode, toggleTheme, type ResolvedTheme } from '../theme.ts'
+import { applyTheme, readThemeMode, saveThemeMode, toggleTheme, type ResolvedTheme, type ThemeMode } from '../theme.ts'
 import { readPrefs } from '../prefs.ts'
 
 export interface AppProps {
@@ -63,6 +64,20 @@ export function App({ transport, slots, fixture, auto }: AppProps) {
   const [approval, setApproval] = useState<{ command: string } | null>(null)
   const [theme, setTheme] = useState<ResolvedTheme>(() =>
     document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light',
+  )
+  /**
+   * 主题的**模式**（三态），和上面 resolve 后的深浅是两件事:
+   * 设置页要画「跟随系统 / 浅色 / 深色」的选中态, 那需要模式; 界面换色需要深浅。
+   * 真相仍只有一份 —— prefs。这里只是它的 state 镜像, 改动一律经过 changeThemeMode。
+   */
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => readThemeMode())
+  /**
+   * 设置页开没开。**归宿主**（view 状态）, 设置页壳只负责把「用户点了返回」抛上来。
+   * 打开时 `settings.view` 的 chain 选举上台, 会话流被 display:none 盖住但**不卸载**
+   * （B 方案: 返回时滚动位置原样）。
+   */
+  const [settingsOpen, setSettingsOpen] = useState(
+    () => new URLSearchParams(location.search).get('settings') === '1',
   )
   /**
    * 插件状态面板。默认关 —— 它是诊断工具, 不是主界面的一部分。
@@ -137,12 +152,14 @@ export function App({ transport, slots, fixture, auto }: AppProps) {
     }
   }, [transport])
 
-  // 自动贴底, 但用户往上翻的时候不许把他拽回来
+  // 自动贴底, 但用户往上翻的时候不许把他拽回来。
+  // 设置页盖住时**必须停手**: display:none 下 scrollHeight 是 0, 这时候写 scrollTop
+  // 会把用户翻到的位置清零 —— 返回时落点就丢了, 那正是 B 方案要保的东西。
   useEffect(() => {
     const el = scrollRef.current
-    if (!el || !stickToBottom.current) return
+    if (!el || settingsOpen || !stickToBottom.current) return
     el.scrollTop = el.scrollHeight
-  }, [messages])
+  }, [messages, settingsOpen])
 
   /**
    * 插件状态图。
@@ -266,10 +283,63 @@ export function App({ transport, slots, fixture, auto }: AppProps) {
     applyTheme(next)
     saveThemeMode(next)
     setTheme(next)
+    // 模式镜像一起走, 否则设置页的卡片选中态会和实际深浅对不上
+    setThemeMode(next)
+  }
+
+  /**
+   * 设置页选主题。和标题栏那个开关**同一条写路径**（都是 prefs + applyTheme）,
+   * 区别只是它接受三态里的 system —— 那是「跟随系统」唯一能设进来的地方。
+   */
+  function changeThemeMode(mode: ThemeMode) {
+    applyTheme(mode)
+    saveThemeMode(mode)
+    setThemeMode(mode)
+    setTheme(document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light')
   }
 
   const status = connectionText(connection)
   const online = connection === 'online'
+
+  /**
+   * 设置分区列表 —— 从注册表投影成壳能直接画的东西。
+   *
+   * `slots.getSnapshot()` 被读一次是刻意的: 分区插件可能晚于 App 挂载注册
+   * （运行时装进来的插件）, 不订阅的话壳会永远停在「没有任何分区」。
+   */
+  const slotVersion = useSyncExternalStore(
+    (fn) => slots.subscribe(fn),
+    () => slots.getSnapshot(),
+  )
+  const settingsSections: SectionEntry[] = useMemo(
+    () =>
+      slots.entries('settings.section').map((entry) => {
+        const meta = (entry.meta ?? {}) as {
+          label?: string
+          group?: string
+          origin?: 'local' | 'kernel'
+        }
+        return {
+          id: entry.pluginId,
+          label: meta.label ?? entry.pluginId,
+          group: meta.group ?? '其他',
+          origin: meta.origin === 'kernel' ? 'kernel' : 'local',
+          Component: entry.component as ComponentType<Record<string, unknown>>,
+        }
+      }),
+    // slotVersion 不在函数体里用 —— 它是「注册表变了」的触发器
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [slots, slotVersion],
+  )
+
+  /** `settings.view` 的 owner: 开不开归宿主, 关的动作也从这里给 */
+  const settingsView: SettingsViewApi = {
+    open: settingsOpen,
+    close: () => setSettingsOpen(false),
+    sections: settingsSections,
+    themeMode,
+    onThemeMode: changeThemeMode,
+  }
 
   const composer: ComposerApi = {
     value: input,
@@ -305,6 +375,8 @@ export function App({ transport, slots, fixture, auto }: AppProps) {
     online,
     onNewSession: () => void newSession(),
     onToggleTheme: switchTheme,
+    /** 打开设置页。入口在标题栏（齿轮）, 但「开了」这个状态归宿主 */
+    onOpenSettings: () => setSettingsOpen(true),
     composer,
     Slot,
     scrollRef,
@@ -326,10 +398,23 @@ export function App({ transport, slots, fixture, auto }: AppProps) {
       */}
       <SlotScopeProvider sessionId={sessionId}>
         {/*
-          整体布局也是一个洞: 空着用内置实现, 有插件占用就整块换掉。
-          fallback 不经注册表 —— 注册表炸了(或插件全挂), 界面照样画得出来。
+          ﹝1﹞设置页: 整窗层, 走 chain 选举。
+
+          - `overlay` 是 B 方案的全部实现: 设置页上台时 fallback **仍然挂载**,
+            只是 display:none —— 会话流的 DOM、滚动位置、草稿全活着, 返回即原样。
+            (不用 overlay 的话 fallback 会被卸载, 落点就丢了。)
+          - 为什么不做成 layout.root 的一个候选: layout.root 是 single, 被顶掉 =
+            内置布局卸载, 会话流跟着死, 正是上面要避免的事。
+          - fallback 不经注册表: 注册表炸了 / 设置插件全挂, 界面照样画得出来。
         */}
-        <Slot name="layout.root" props={api} fallback={<BuiltinLayout {...api} />} />
+        <Slot.Chain
+          name="settings.view"
+          owner={settingsView}
+          overlay
+          fallback={
+            <Slot name="layout.root" props={api} fallback={<BuiltinLayout {...api} />} />
+          }
+        />
       </SlotScopeProvider>
     </TooltipProvider>
   )

@@ -101,6 +101,8 @@ export type LayoutApi = {
   online: boolean
   onNewSession: () => void
   onToggleTheme: () => void
+  /** 打开设置页。整窗层由宿主渲染, 布局只负责给入口 */
+  onOpenSettings: () => void
   composer: ComposerApi
   Slot: SlotComponent
   scrollRef: RefObject<HTMLDivElement | null>

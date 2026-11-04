@@ -243,6 +243,20 @@ export interface SlotRegistration {
   name: string
   /** 占用者组件。类型由渲染后端决定, 这里只过路 */
   component: unknown
+  /**
+   * 占用者的元数据。**slot 自己解释, slots 包不解释** —— 这里是过路的袋子。
+   *
+   * 为什么需要它: 有些座位不是「画一个组件」就完事, 宿主得先知道**它叫什么**才能
+   * 画外围结构。`settings.section` 就是第一个真实需求: 左导航要先列出所有分区的
+   * label / 分组 / 排序才谈得上「选中谁」, 而那时候组件还没渲染。
+   *
+   * 约定形状(由座位声明方定义, 见 docs/13 §6):
+   *   settings.section → { label, group, origin: 'local' | 'kernel', order? }
+   *
+   * 不放进 SlotRegistration 的强类型字段: 每个座位的 meta 形状不同, 全塞进一个
+   * 联合类型只会让不认识它的座位也被迫看见 —— 那正是「不知道就往里加字段」的开端。
+   */
+  meta?: Record<string, unknown>
   /** 子 slot 声明 —— 一次注册同时贡献组件和它的扩展点 (声明即占用) */
   children?: Record<string, SlotDef>
   /** store 座位: 传工厂, 不传句柄 */

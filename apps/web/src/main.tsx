@@ -40,6 +40,8 @@ import { App } from './app/App.tsx'
 import { CrashBomb, CrashBoundary, FallbackShell, shouldBootSafe } from './app/FallbackShell.tsx'
 import { DEMO_PLUGIN_ID, demoRuntime } from './app/demo-plugin.tsx'
 import { DEMO_SKIN_ID, demoSkinRuntime } from './app/demo-skin-plugin.tsx'
+import { AppearanceSection } from './app/settings/AppearanceSection.tsx'
+import { SettingsView } from './app/settings/SettingsView.tsx'
 import { createFixtureKernel, fixtureFromSearch } from './dev/fixture-kernel.ts'
 import { applyTheme, readThemeMode } from './theme.ts'
 
@@ -206,6 +208,29 @@ async function bootstrap(report: (entries: EntryState[]) => void): Promise<Boote
 
   const slots = createSlotRegistry()
   for (const [name, def] of SLOT_DEFS) slots.declare(name, def)
+
+  /**
+   * 内置设置页 + 第一个分区, **走的是插件的同一条注册路径** ——
+   * 不是「宿主特权」: 它们能被同 id 的运行时插件替换, 崩了也走同一套错误边界。
+   *
+   * 两个注册刻意分开:
+   *   · `settings.view` = 整窗层（壳）。`select` 只认宿主的 `open` 状态 ——
+   *     壳不知道也不该知道自己是"设置", 它只是"被打开时上台的整窗视图"。
+   *   · `settings.section` = 右区的一个分区。加/删分区不需要碰壳, 也不需要碰这里
+   *     之外的任何代码 —— 这就是「设置页面按插件形式集成」的实证。
+   */
+  slots.register('builtin.settings', {
+    name: 'settings.view',
+    component: SettingsView,
+    priority: 0,
+    select: (owner) => ((owner as { open?: boolean } | undefined)?.open ? {} : null),
+  })
+  slots.register('builtin.settings.appearance', {
+    name: 'settings.section',
+    component: AppearanceSection,
+    order: 100,
+    meta: { label: '外观', group: '界面', origin: 'local' },
+  })
 
   let transport: Transport
   let fixture: ReturnType<typeof fixtureFromSearch> | null = null

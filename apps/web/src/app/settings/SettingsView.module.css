@@ -1,0 +1,195 @@
+/* 设置页壳。颜色只用 alias 令牌 —— lint-tokens 会拦硬编码 */
+
+.root {
+  display: flex;
+  height: 100vh;
+  background: var(--meng-alias-bg-canvas);
+  color: var(--meng-alias-fg-primary);
+}
+
+/* ── 左导航 ── */
+.nav {
+  width: 224px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 16px 12px;
+  background: var(--meng-alias-bg-surface);
+  border-right: 1px solid var(--meng-alias-border-l1);
+  overflow-y: auto;
+}
+
+.backRow {
+  margin-bottom: 14px;
+}
+
+.back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--meng-alias-border-l1);
+  background: var(--meng-alias-bg-surface);
+  color: var(--meng-alias-fg-secondary);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.back:hover {
+  background: var(--meng-alias-bg-hover);
+  color: var(--meng-alias-fg-primary);
+}
+
+.search {
+  position: relative;
+  margin-bottom: 16px;
+}
+
+.search svg {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  stroke: var(--meng-alias-fg-disabled);
+  fill: none;
+  stroke-width: 2;
+}
+
+.search input {
+  width: 100%;
+  padding: 7px 10px 7px 30px;
+  font-size: 13px;
+  font-family: inherit;
+  border: 1px solid var(--meng-alias-border-l2);
+  border-radius: 8px;
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-primary);
+}
+
+.search input:focus {
+  outline: 2px solid var(--meng-alias-focus-ring);
+  outline-offset: -1px;
+  background: var(--meng-alias-bg-surface);
+}
+
+.search input::placeholder {
+  color: var(--meng-alias-fg-disabled);
+}
+
+.groupLabel {
+  font-size: 11px;
+  color: var(--meng-alias-fg-disabled);
+  padding: 0 10px;
+  margin: 14px 0 6px;
+  letter-spacing: 0.04em;
+}
+
+.navItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  color: var(--meng-alias-fg-secondary);
+  font-family: inherit;
+  text-align: left;
+}
+
+.navItem:hover {
+  background: var(--meng-alias-bg-hover);
+  color: var(--meng-alias-fg-primary);
+}
+
+/* 选中态: 底色 + 字重, 不用左侧色条 —— 那和会话列表的选中态会撞脸 */
+.navItem[data-active] {
+  background: var(--meng-alias-bg-selected);
+  color: var(--meng-alias-fg-primary);
+  font-weight: 500;
+}
+
+.navDot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  border: 1.5px solid var(--meng-alias-border-l3);
+}
+
+.navItem[data-active] .navDot {
+  border-color: var(--meng-alias-accent);
+  background: var(--meng-alias-accent);
+}
+
+/* 两条腿的标记: 内核项的点是青绿(活跃相位色), 本机项保持中性 */
+.navDot[data-origin='kernel'] {
+  border-color: var(--meng-alias-live);
+}
+
+.navText {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.empty {
+  font-size: 12px;
+  color: var(--meng-alias-fg-disabled);
+  padding: 8px 10px;
+}
+
+.foot {
+  margin-top: auto;
+  padding: 10px 10px 0;
+  border-top: 1px solid var(--meng-alias-border-l1);
+}
+
+.ver {
+  font-size: 11px;
+  color: var(--meng-alias-fg-disabled);
+}
+
+/* ── 右内容 ── */
+.content {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 36px 48px 72px;
+}
+
+.head {
+  margin-bottom: 26px;
+}
+
+.title {
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.origin {
+  font-size: 11px;
+  font-weight: 400;
+  padding: 2px 8px;
+  border-radius: 99px;
+  border: 1px solid var(--meng-alias-border-l2);
+  color: var(--meng-alias-fg-muted);
+  background: var(--meng-alias-bg-surface);
+}
+
+.origin[data-origin='kernel'] {
+  color: var(--meng-alias-live);
+  border-color: var(--meng-alias-live-subtle);
+  background: var(--meng-alias-live-subtle);
+}

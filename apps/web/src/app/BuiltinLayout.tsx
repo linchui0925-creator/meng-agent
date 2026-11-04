@@ -13,7 +13,7 @@ import { useEffect, useMemo, useState } from 'react'
 
 import { Badge, Button, IconButton, ScrollArea, Separator, Spinner, Tooltip } from '@meng/ui'
 
-import { MoonIcon, PlusIcon, SunIcon, LayersIcon } from './icons.tsx'
+import { MoonIcon, PlusIcon, SunIcon, LayersIcon, GearIcon } from './icons.tsx'
 import type { LayoutApi } from './layout.ts'
 import { waitingState, windowMessages, type Message, type WaitState } from './conversation.ts'
 import { WHISPER_DELAY_MS, WHISPER_HOLD_MS } from './whisper.ts'
@@ -49,6 +49,7 @@ export function BuiltinLayout(api: LayoutApi) {
     connection,
     onNewSession,
     onToggleTheme,
+    onOpenSettings,
     composer,
     Slot,
     scrollRef,
@@ -153,6 +154,11 @@ export function BuiltinLayout(api: LayoutApi) {
             {/* 标题栏动作位: 分享 / 导出 / 设置这类全局动作。
                 放在状态点**之前** —— 状态是宿主的, 动作是插件的, 插件不该被挤到最右边 */}
             <Slot name="topbar.actions" props={{ sessionId, theme }} />
+            <Tooltip label="设置">
+              <IconButton aria-label="打开设置" size="sm" onClick={onOpenSettings} data-settings-open="">
+                <GearIcon />
+              </IconButton>
+            </Tooltip>
             <Tooltip label={plugins.open ? '收起插件面板' : '插件状态'}>
               <IconButton
                 aria-label="插件状态面板"
