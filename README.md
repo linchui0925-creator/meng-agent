@@ -225,7 +225,8 @@ invariants: 25 / 25 通过
 | **M5** | **ui 原子层 + transport 客户端 + slots/modules/shell**（前端, 并行） | 浏览器运行时装载 UI 插件 |
 | M6 | platform 三份实现 + Electron 桌面端 | 本地内核 + 本地 fs 可用 |
 | M7 | Capacitor 移动端 | 同一插件在 iOS/Android 跑通 |
-| M8 | 真 provider 联网验证 | `MENG_PROVIDER=openai meng chat` 出字 |
+| **M5g** | **供应商目录 + 可配置的模型插件**: Provider 带 `displayName` / `configScope` / `available`; 两家 provider 用 zod 声明配置; `llm.catalog` + `config.list/set/unset`（后端） | 没配 key 的那家也出现在目录里且标"未配置"; 在设置页改 model 名当场生效; 密钥只以变量名落盘 ✓ |
+| M8 | 真 provider 联网验证 | 配好 key 后 `meng chat` 出字（不再需要 `MENG_PROVIDER`） |
 
 M4（后端）与 M5（前端）**无依赖, 可双线并行** —— 前端只需对着 `docs/06` 的契约实现,
 不需要等后端任何东西。合流点在 M5 末尾的 BootManifest。

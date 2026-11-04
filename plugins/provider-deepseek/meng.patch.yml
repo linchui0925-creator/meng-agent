@@ -1,24 +1,19 @@
-# DeepSeek 官方接入。
+# DeepSeek 官方接入 —— **单独使用时的参考清单**。
 #
-# 默认 disabled：没有 key 时装载它会让默认模型变成 deepseek-*，用户打第一句话
-# 才报"没凭据" —— 晚失败比早失败难查。要用就显式打开：
-#   MENG_PROVIDER=deepseek DEEPSEEK_API_KEY=sk-xxx meng
+# 平时不用这个文件: server 走 apps/server/providers.meng.patch.yml (全装),
+# 别处只想装这一家时才 include 它。
 #
-# 密钥只以**环境变量名**出现在这里（apiKeyEnv），清单里永远不写明文 ——
+# 这里**故意没有 config 块**:
+#   · 配置项在 src/index.ts 的 CONFIG 里用 zod 声明 (设置页据此画表单)
+#   · 值走配置层: 界面(settings.json) > env > 声明里的默认
+#   · 所以清单里再写一份, 就是第二个真相源 —— 两处迟早漂移
+#
+# 密钥只以**环境变量名**存在 (DEEPSEEK_API_KEY), 值永不落盘 ——
 # 清单会进 git、进日志、进别人的截图。
+#
+# 没有 key 时它照样装载, 只是 available=false: 默认模型会跳过它,
+# 设置页把它显示成"未配置"。这也正是设置页能"配置一家新供应商"的前提。
 
 - insert:
     - id: provider-deepseek
       name: '@meng/provider-deepseek'
-      disabled: !!js process.env.MENG_PROVIDER !== 'deepseek'
-      config:
-        id: deepseek
-        baseURL: !!js process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
-        apiKeyEnv: DEEPSEEK_API_KEY
-        models:
-          - deepseek-chat
-          - deepseek-reasoner
-        # 默认不写 thinking 字段，让服务端默认生效。
-        # 要开思考就：
-        #   thinking: enabled
-        #   reasoningEffort: high   # off / high / max

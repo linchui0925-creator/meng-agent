@@ -1,0 +1,20 @@
+# server 自带的两家真供应商 —— **默认全装**。
+#
+# 以前的写法是"用 MENG_PROVIDER 选一家装"(见 git 历史), 那样做不出设置页:
+# 没装的那个插件根本不会被加载, 于是它的配置项、它的"未配置"状态都不存在,
+# 用户在界面上既看不到它, 也无从配置它。
+#
+# 现在反过来: 全部装上, **能不能发请求由凭据决定**。没有 key 的 provider
+# 自己报 available=false, 默认模型会跳过它 (见 @meng/llm 的 resolve)。
+# 代价: 启动时多两次注册, 以及日志里会多一行"未配置"—— 那正是我们要的可见性。
+#
+# 配置**不写在这里**。以前每家在这里写一份 config, 而设置页要写的又是同一批值,
+# 两处都写迟早漂移。现在每个 provider 在自己的源码里用 zod 声明 (CONFIG),
+# 清单只负责"装不装"。环境变量名仍认老的 (DEEPSEEK_BASE_URL / MENG_LLM_BASE_URL)。
+
+- insert:
+    - id: provider-deepseek
+      name: '@meng/provider-deepseek'
+
+    - id: provider-openai
+      name: '@meng/provider-openai'

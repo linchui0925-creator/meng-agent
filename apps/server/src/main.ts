@@ -11,7 +11,7 @@
 import { fileURLToPath } from 'node:url'
 import type { LoopService } from '@meng/loop'
 import type { ToolService } from '@meng/tools'
-import { bootKernel, providerPatch } from './boot.ts'
+import { bootKernel, mockPatch, providersPatch } from './boot.ts'
 
 const args = process.argv.slice(2)
 const command = args.find((a) => !a.startsWith('-')) ?? 'serve'
@@ -26,7 +26,7 @@ async function main(): Promise<void> {
 }
 
 async function serve(): Promise<void> {
-  const kernel = await bootKernel({ web: true, patches: [providerPatch()] })
+  const kernel = await bootKernel({ web: true, patches: [providersPatch(), mockPatch()] })
   if (!kernel.ok) process.exitCode = 1
 
   const stop = async () => {
@@ -47,7 +47,7 @@ async function chat(prompt: string): Promise<void> {
   }
   // 带上 hello 插件: mock 脚本第一步就是调它, 这样一次 chat 同时验证
   // 「工具循环」和「文本流式」两条路径
-  const kernel = await bootKernel({ patches: [providerPatch(), helloPatch()], quiet: true })
+  const kernel = await bootKernel({ patches: [providersPatch(), mockPatch(), helloPatch()], quiet: true })
   // 用真类型而不是手抄一份结构: 手抄的那份不会随 LoopEvent 一起改,
   // 于是"新增一个 error 字段"在这里静默变成"读不到" (类型检查当场红)
   const loop = kernel.ctx.get<LoopService>('loop')
@@ -69,7 +69,7 @@ async function chat(prompt: string): Promise<void> {
 }
 
 async function graph(): Promise<void> {
-  const kernel = await bootKernel({ patches: [providerPatch()], quiet: true })
+  const kernel = await bootKernel({ patches: [providersPatch(), mockPatch()], quiet: true })
   console.log(JSON.stringify({
     ...kernel.graph.toJSON(),
     invariants: kernel.invariants,
@@ -92,7 +92,7 @@ function helloPatch(): string {
  * 全部丢弃返回值。这里没有第二条执行路径可绕, 拦不住才是异常。
  */
 async function demo(): Promise<void> {
-  const kernel = await bootKernel({ patches: [providerPatch(), helloPatch()], quiet: true })
+  const kernel = await bootKernel({ patches: [providersPatch(), mockPatch(), helloPatch()], quiet: true })
 
   // 同上: ToolService 的 call 入参是 ToolCall (含 sessionId), 手抄的窄类型
   // 会把 sessionId 判成"不存在的字段"

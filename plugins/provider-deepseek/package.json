@@ -10,7 +10,9 @@
     }
   },
   "dependencies": {
+    "@meng/config": "workspace:*",
     "@meng/core": "workspace:*",
-    "@meng/llm": "workspace:*"
+    "@meng/llm": "workspace:*",
+    "zod": "^4.6.7"
   }
 }

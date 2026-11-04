@@ -10,7 +10,9 @@
  * 由**各自的 provider 插件**负责, 绝不能漏进 agent 循环。
  */
 
+import * as z from 'zod'
 import type { Ctx, Disposer } from '@meng/core'
+import { openScope, probeSecret } from '@meng/config'
 import {
   LLM_CODE,
   LlmError,
@@ -29,49 +31,95 @@ import { parseLine, sseLines } from './sse.ts'
 export const name = 'provider-openai'
 export const inject = ['llm']
 
-export interface OpenAIConfig {
-  id?: string
-  baseURL?: string
-  apiKey?: string
-  models?: string[]
-  /** 不设置默认走的模型 (清单里 defaultModel 为空时用) */
-  defaultModel?: string
-  temperature?: number
+/** 路由 id。一个插件实例一条路由 (多账号是另一件事, 见 provider-deepseek 的同名注释) */
+const ROUTE = 'openai'
+export const CONFIG_SCOPE = 'llm.openai'
+
+const DEFAULT_BASE_URL = 'https://api.openai.com/v1'
+const DEFAULT_MODELS = ['gpt-4o-mini']
+
+/**
+ * 配置声明。**密钥那一行存的是环境变量名, 不是密钥本身**。
+ *
+ * 老名字 `OPENAI_API_KEY` 不写进 `meta.env` 而是留在读取处当兜底 ——
+ * `meta.env` 只能填一个, 而这里历史上认过两个名字。填哪个都会让另一个
+ * 悄悄失效, 所以两个都认, 只是 MENG_LLM_API_KEY 优先 (它才是我们自己的名字)。
+ */
+export const CONFIG = {
+  baseURL: z.string().default(DEFAULT_BASE_URL).meta({
+    env: 'MENG_LLM_BASE_URL',
+    description: '接口地址 (/v1 结尾)。edgefn / 智谱 / minimax 都填自己的',
+  }),
+
+  apiKey: z.string().meta({
+    secret: true,
+    env: 'MENG_LLM_API_KEY',
+    required: true,
+    description: '密钥绑定的环境变量名。也认 OPENAI_API_KEY, 但这里绑定的是前者',
+  }),
+
+  models: z.array(z.string()).default(DEFAULT_MODELS).meta({
+    description: '这个路由能用的模型名。第三方厂商填它给的模型 id',
+  }),
+
+  temperature: z.number().min(0).max(2).default(0.7).meta({
+    description: '采样温度。0 = 稳定, 2 = 发散',
+  }),
 }
 
-export function apply(ctx: Ctx, config: OpenAIConfig = {}): Disposer {
+export function apply(ctx: Ctx): Disposer {
   const llm = ctx.get<LLMService>('llm')
   if (!llm) throw new Error('provider-openai 依赖 llm')
 
-  const id = config.id ?? 'openai'
-  const baseURL = stripSlash(
-    config.baseURL ?? process.env.MENG_LLM_BASE_URL ?? process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1',
-  )
-  const apiKey = config.apiKey ?? process.env.MENG_LLM_API_KEY ?? process.env.OPENAI_API_KEY ?? ''
-  const models = config.models ?? ['gpt-4o-mini']
-  const temperature = config.temperature ?? 0.7
+  const { scope, dispose } = openScope(ctx, CONFIG_SCOPE, CONFIG)
+  ctx.effect(() => dispose)
+
+  const read = () => {
+    const bound = (scope.secret('apiKey') ?? '').trim()
+    // 老名字兜底: 只在绑定的那个名字为空时才看 OPENAI_API_KEY。
+    // 这一行是"用户明明导出了 key 却报未配置"的唯一修复点
+    const legacy = bound ? '' : (process.env['OPENAI_API_KEY'] ?? '').trim()
+    return {
+      baseURL: stripSlash(scope.get<string>('baseURL') ?? DEFAULT_BASE_URL),
+      apiKey: bound || legacy,
+      keyEnv: scope.secretRef('apiKey') ?? 'MENG_LLM_API_KEY',
+      temperature: scope.get<number>('temperature') ?? 0.7,
+    }
+  }
 
   const provider: Provider = {
-    id,
-    models,
+    id: ROUTE,
+    displayName: 'OpenAI 兼容',
+    configScope: CONFIG_SCOPE,
+
+    get models(): string[] {
+      const list = scope.get<string[]>('models')
+      return Array.isArray(list) && list.length > 0 ? list : DEFAULT_MODELS
+    },
+
+    available: () => read().apiKey !== '',
 
     async *stream(req: StreamRequest): AsyncIterable<StreamChunk> {
-      if (!apiKey) {
-        throw new LlmError(`provider ${id} 未配置 apiKey (MENG_LLM_API_KEY)`, LLM_CODE.MISSING_CREDENTIAL)
+      const cfg = read()
+      if (!cfg.apiKey) {
+        throw new LlmError(
+          `provider ${ROUTE} 未配置 apiKey (环境变量 ${cfg.keyEnv})`,
+          LLM_CODE.MISSING_CREDENTIAL,
+        )
       }
 
-      const res = await fetch(`${baseURL}/chat/completions`, {
+      const res = await fetch(`${cfg.baseURL}/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
+          Authorization: `Bearer ${cfg.apiKey}`,
           // 不可关闭的自我标识: 上游统计/限流认这个, 也让请求一眼可分辨
           'User-Agent': 'meng-agent/0.1 (+https://github.com/linc/meng)',
         },
         body: JSON.stringify({
-          model: req.model || models[0],
+          model: req.model || provider.models[0],
           messages: toOpenAI(req.messages),
-          temperature,
+          temperature: cfg.temperature,
           stream: true,
           stream_options: { include_usage: true },
           ...(req.tools?.length ? { tools: toTools(req.tools) } : {}),
@@ -81,7 +129,7 @@ export function apply(ctx: Ctx, config: OpenAIConfig = {}): Disposer {
 
       if (!res.ok || !res.body) {
         const text = await res.text().catch(() => '')
-        throw wireError(id, res.status, text, res.headers)
+        throw wireError(ROUTE, res.status, text, res.headers)
       }
 
       // 块号按**出现顺序**分配, 不是"正文固定 0 号"。
@@ -100,7 +148,7 @@ export function apply(ctx: Ctx, config: OpenAIConfig = {}): Disposer {
         if (!chunk) continue
 
         if (chunk.error?.message) {
-          throw new LlmError(`provider ${id}: ${chunk.error.message}`, LLM_CODE.MALFORMED_RESPONSE)
+          throw new LlmError(`provider ${ROUTE}: ${chunk.error.message}`, LLM_CODE.MALFORMED_RESPONSE)
         }
 
         if (chunk.usage) {
@@ -150,8 +198,15 @@ export function apply(ctx: Ctx, config: OpenAIConfig = {}): Disposer {
   }
 
   const off = llm.register(provider)
-  if (!process.env.MENG_QUIET) console.log(`[meng] provider ${id} · ${models.join(', ')} · ${baseURL}`)
-  return off
+  if (!process.env.MENG_QUIET) {
+    const cfg = read()
+    const key = cfg.apiKey ? '' : ` · 未配置 (${cfg.keyEnv} 为空)`
+    console.log(`[meng] provider ${ROUTE} · ${provider.models.join(', ')} · ${cfg.baseURL}${key}`)
+  }
+  return () => {
+    off()
+    dispose()
+  }
 }
 
 // ── wire ↔ 中立层 ─────────────────────────────────────────────────────────────
@@ -267,11 +322,29 @@ export const invariant = {
   pkg: '@meng/provider-openai',
   checks: [
     {
-      id: 'registered',
+      id: 'declared',
       run(ctx: Ctx) {
         const llm = ctx.get<LLMService>('llm')
         if (!llm) throw new Error('llm 未注册')
-        if (!llm.models().length) throw new Error('没有任何模型, agent 无法启动')
+        const info = llm.listProviders().find((p) => p.id === ROUTE)
+        if (!info) throw new Error(`路由 ${ROUTE} 没注册上`)
+        if (!info.configScope) throw new Error(`路由 ${ROUTE} 没挂 configScope, 设置页找不到它的配置`)
+      },
+    },
+    {
+      /** 见 provider-deepseek 里同名检查的注释: 只在"没有别的可用 provider"时才算失败 */
+      id: 'credential-present',
+      run(ctx: Ctx) {
+        const { value, ref } = probeSecret(ctx, CONFIG_SCOPE, 'apiKey', CONFIG)
+        // OPENAI_API_KEY 是历史名字, 读取处也认它 —— 自检不认就成了"明明能跑却报没配"
+        const legacy = (process.env['OPENAI_API_KEY'] ?? '').trim()
+        if ((value ?? '').trim() || legacy) return
+        const llm = ctx.get<LLMService>('llm')
+        const others = llm?.listProviders().filter((p) => p.id !== ROUTE && p.available) ?? []
+        if (others.length > 0) return
+        throw new Error(
+          `${ref ?? 'MENG_LLM_API_KEY'} 为空 —— 这个 provider 现在发不出请求, 而也没有别的可用 provider`,
+        )
       },
     },
   ],

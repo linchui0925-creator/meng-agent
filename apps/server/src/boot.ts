@@ -127,17 +127,22 @@ export function helloPatch(): string {
   return fileURLToPath(new URL('../../../plugins/hello/meng.patch.yml', import.meta.url))
 }
 
-/** provider 清单选择: 默认 mock (离线可跑), 显式指定才用真 provider */
-export function providerPatch(): string {
-  const which = process.env.MENG_PROVIDER ?? 'mock'
-  // mock 单独提出来: 兜底时要用它, 而从 map 里取出来的是 string | undefined
-  // (索引访问不做存在性保证), 于是兜底自成一个常量, 不用二次断言
-  const MOCK = '../../../plugins/provider-mock/meng.patch.yml'
-  const map: Record<string, string> = {
-    mock: MOCK,
-    openai: '../../../plugins/provider-openai/meng.patch.yml',
-    deepseek: '../../../plugins/provider-deepseek/meng.patch.yml',
-  }
-  const rel = map[which] ?? MOCK
-  return fileURLToPath(new URL(rel, import.meta.url))
+/**
+ * 真供应商清单: DeepSeek + OpenAI 兼容**全装**。
+ *
+ * 为什么不按 MENG_PROVIDER 只装一家: 没装的插件不会加载, 设置页就看不到它,
+ * 也就无从配置 —— 而"在设置页里配一家新供应商"正是这一层要实现的事。
+ * 谁真的能用由凭据决定, 不配 key 的自动让位 (见 @meng/llm 的 resolve)。
+ */
+export function providersPatch(): string {
+  return fileURLToPath(new URL('../providers.meng.patch.yml', import.meta.url))
+}
+
+/**
+ * 只装离线 mock。**冒烟/CI 必须用它**, 不能用 providersPatch:
+ * 本机若导出了真的 DEEPSEEK_API_KEY, 真 provider 会抢走默认模型,
+ * 冒烟断言的是 mock 的脚本, 于是"测试失败"看起来像代码坏了。
+ */
+export function mockPatch(): string {
+  return fileURLToPath(new URL('../../../plugins/provider-mock/meng.patch.yml', import.meta.url))
 }

@@ -82,6 +82,15 @@ importers:
       '@meng/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@meng/provider-deepseek':
+        specifier: workspace:*
+        version: link:../../plugins/provider-deepseek
+      '@meng/provider-mock':
+        specifier: workspace:*
+        version: link:../../plugins/provider-mock
+      '@meng/provider-openai':
+        specifier: workspace:*
+        version: link:../../plugins/provider-openai
       '@meng/tools':
         specifier: workspace:*
         version: link:../../packages/tools
@@ -408,9 +417,15 @@ importers:
 
   packages/web:
     dependencies:
+      '@meng/config':
+        specifier: workspace:*
+        version: link:../config
       '@meng/core':
         specifier: workspace:*
         version: link:../core
+      '@meng/llm':
+        specifier: workspace:*
+        version: link:../llm
       '@meng/session':
         specifier: workspace:*
         version: link:../session
@@ -548,12 +563,18 @@ importers:
 
   plugins/provider-deepseek:
     dependencies:
+      '@meng/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@meng/core':
         specifier: workspace:*
         version: link:../../packages/core
       '@meng/llm':
         specifier: workspace:*
         version: link:../../packages/llm
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
 
   plugins/provider-mock:
     dependencies:
@@ -566,12 +587,18 @@ importers:
 
   plugins/provider-openai:
     dependencies:
+      '@meng/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@meng/core':
         specifier: workspace:*
         version: link:../../packages/core
       '@meng/llm':
         specifier: workspace:*
         version: link:../../packages/llm
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
 
   plugins/questions-web:
     dependencies:

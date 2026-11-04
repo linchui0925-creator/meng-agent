@@ -5,7 +5,10 @@
   "type": "module",
   "dependencies": {
     "@meng/core": "workspace:*",
-    "@meng/web": "workspace:*",
-    "@meng/tools": "workspace:*"
+    "@meng/provider-deepseek": "workspace:*",
+    "@meng/provider-mock": "workspace:*",
+    "@meng/provider-openai": "workspace:*",
+    "@meng/tools": "workspace:*",
+    "@meng/web": "workspace:*"
   }
 }

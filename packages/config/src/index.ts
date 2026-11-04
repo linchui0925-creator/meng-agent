@@ -147,6 +147,21 @@ export interface ConfigEntry {
   /** 密钥行: 当前绑定到哪个环境变量名。非密钥行恒为 undefined */
   secretRef?: string
   /**
+   * 密钥行: 那个环境变量里**有没有值**。
+   *
+   * 只回答"有/没有", 不带值 —— 设置页要显示"已绑定 DEEPSEEK_API_KEY(有值)"
+   * 还是"已绑定但环境变量是空的", 这两种状态对用户的含义完全不同, 而
+   * 界面上原本只能看到同一个 `secretRef`, 于是"我明明绑好了却没生效"。
+   */
+  present?: boolean
+  /**
+   * 解析失败的原因 (必填但没配 / 值类型不对)。
+   *
+   * 有它, 一行坏了只坏这一行; 没有它, `list()` 会整体抛异常 ——
+   * 设置页于是白屏, 用户连"去配它"的输入框都看不到。
+   */
+  unresolved?: string
+  /**
    * 这一项的**标准 JSON Schema** (draft 2020-12)。
    *
    * 设置页画控件靠它: 标量画输入框, `object` + `additionalProperties` 画键值表,
@@ -167,6 +182,8 @@ export const CONFIG_CODE = {
   TYPE: 'CONFIG_TYPE',
   /** 用了 get() 去取一个标了 secret 的键 */
   SECRET_AS_PLAIN: 'CONFIG_SECRET_AS_PLAIN',
+  /** 写一个从未声明过的键 */
+  UNKNOWN: 'CONFIG_UNKNOWN',
 } as const
 
 export type ConfigCode = (typeof CONFIG_CODE)[keyof typeof CONFIG_CODE]
@@ -210,10 +227,39 @@ export interface ConfigScope {
   sourceOf(key: string): ConfigSource | undefined
 }
 
+/**
+ * 写一个配置值, 返回它重新解析后的样子 (一条 entry)。
+ *
+ * **密钥行写的是环境变量名, 不是密钥本身** —— 与 settings.json 里存的东西一致。
+ * 这样设置页只有一条写路径: `set('llm.deepseek','apiKey','MY_DEEPSEEK_KEY')`
+ * 的含义是"这个密钥去 MY_DEEPSEEK_KEY 里找", 而值永远不经过这条通道。
+ *
+ * 校验在写之前做 (`schema.parse`), 坏值不会落盘 —— 否则下次启动会读到一份
+ * 自己写坏的 settings.json, 而报错会指向"配置读不出来", 指不回写它的那一刻。
+ *
+ * 值可以是数组/对象 (`models: string[]` 就是), 校验一律交给声明里的 schema:
+ * 在这里再写一套"允许哪些形状"等于第二份规则, 而两份规则必然漂移。
+ */
+export interface ConfigWriteResult {
+  /** 写完之后这一项的样子。设置页拿它直接替换那一行, 不需要再 list() 一次 */
+  entry: ConfigEntry
+  /** 同一个 scope 下的全部条目: 写一个键可能让同组的值跟着变 (组合配置) */
+  scopeEntries: ConfigEntry[]
+}
+
 export interface ConfigService {
   scope(name: string): ConfigScope
   /** 全仓所有已声明的配置项。设置页的唯一入口 */
   list(): ConfigEntry[]
+
+  /**
+   * 写一层 settings。未声明的键直接拒绝: 设置页只画已声明的项,
+   * 写未声明的键等于往黑箱里塞东西, 而用户永远看不到它、也删不掉它。
+   */
+  set(scope: string, key: string, value: unknown): Promise<ConfigWriteResult>
+
+  /** 清掉 settings 层 → 回落到 env / default。同样只接受已声明的键 */
+  unset(scope: string, key: string): Promise<ConfigWriteResult>
 }
 
 export function provideConfig(ctx: Ctx, impl: ConfigService): Disposer {
@@ -223,6 +269,77 @@ export function provideConfig(ctx: Ctx, impl: ConfigService): Disposer {
 /** 取能力面。插件侧统一走它, 免得每处都写字符串 */
 export function getConfig(ctx: Ctx): ConfigService | undefined {
   return ctx.get<ConfigService>(CONFIG_CAPABILITY)
+}
+
+/**
+ * 环境变量名的推导规则: `sandbox.root` → `MENG_SANDBOX_ROOT`。
+ *
+ * 放在缝里而不是实现里, 因为**兜底 scope 也要用同一套**。两处各写一遍,
+ * 就会在"没装 config-local 时读不到环境变量"这种事上分岔 —— 而那种分岔
+ * 只在特定部署里出现, 本地永远复现不了。
+ */
+export function envNameOf(scope: string, key: string): string {
+  const raw = `${scope}.${key}`
+  return `MENG_${raw.replace(/[^A-Za-z0-9]+/g, '_').toUpperCase()}`
+}
+
+/**
+ * 声明一个插件自己的配置 scope。**插件装配置的唯一入口。**
+ *
+ * 它做的事很少, 但省掉的是每个插件都要写一遍的三行样板:
+ *
+ *     const svc = getConfig(ctx)
+ *     const scope = svc ? svc.scope(NS) : fallbackScope(NS)
+ *     ctx.effect(() => scope.declare(CONFIG))
+ *
+ * 样板一多, 下一个人就会图省事写成 `if (!svc) return` —— 于是那个插件在
+ * 没有 config-local 的环境里**静默没有配置**, 表现为"默认值全对但 env 全不认"。
+ *
+ * 返回的 `dispose` 必须挂到插件的生命周期上 (通常 `ctx.effect(() => dispose)`),
+ * 否则插件卸载后它的配置项会留在设置页上, 点一下就没反应。
+ */
+export function openScope(
+  ctx: Ctx,
+  name: string,
+  decl: ConfigDecl,
+): { scope: ConfigScope; dispose: Disposer } {
+  const svc = getConfig(ctx)
+  const scope = svc ? svc.scope(name) : fallbackScope(name)
+  const dispose = scope.declare(decl)
+  return { scope, dispose }
+}
+
+/**
+ * 探一次密钥: 拿到它的值与它绑定的环境变量名。**不改变任何声明。**
+ *
+ * 给"启动自检"用 —— 那类代码拿到的 ctx 不一定是插件自己的 scope,
+ * 也不该为了读一个值去 declare (同一份声明被 declare 两次, 先退出的那个
+ * disposer 会把后一份一起删掉, 这个坑已经在 config-local 里写过注释了)。
+ */
+export function probeSecret(
+  ctx: Ctx,
+  scopeName: string,
+  key: string,
+  decl: ConfigDecl,
+): { value?: string; ref?: string } {
+  const svc = getConfig(ctx)
+  if (svc) {
+    const scope = svc.scope(scopeName)
+    const value = scope.secret(key)
+    const ref = scope.secretRef(key)
+    return { ...(value === undefined ? {} : { value }), ...(ref === undefined ? {} : { ref }) }
+  }
+  // 没有配置层: 兜底 scope 是**每次新建**的, 不认识别处声明过的键 ——
+  // 所以这里补一份临时声明, 读完就撤
+  const scope = fallbackScope(scopeName)
+  const undo = scope.declare(decl)
+  try {
+    const value = scope.secret(key)
+    const ref = scope.secretRef(key)
+    return { ...(value === undefined ? {} : { value }), ...(ref === undefined ? {} : { ref }) }
+  } finally {
+    undo()
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -300,8 +417,12 @@ export function sandboxRoot(ctx: Ctx): string {
  * (测试、demo、单插件调试都不需要设置页)。硬要求每个调用点判空,
  * 会让"加一个配置项"这件事变得很吵。
  *
- * 兜底行为: 只用声明里的 default。**不读 env** —— 读 env 会让"没装
+ * 兜底行为: 普通值只用声明里的 default, **不读 env** —— 读 env 会让"没装
  * config-local"和"装了但没配"两种状态变得不可区分, 排查时是灾难。
+ *
+ * 唯一例外是**密钥**: 它的值只能来自 env (settings 存的是变量名), 不存在
+ * 上面那种歧义, 所以兜底也读。否则"没装 config-local"就等于"永远没有凭据",
+ * 而界面上看不出是配置层缺了还是 key 没设。
  */
 export function fallbackScope(name: string): ConfigScope {
   const decls = new Map<string, ConfigItem>()
@@ -365,10 +486,20 @@ export function fallbackScope(name: string): ConfigScope {
       return v
     },
     secret(key) {
-      // 兜底 scope 不读 env: 见上面的注释。密钥声明在这里也只是"不报错",
-      // 值恒空 —— 不会因为没装 config-local 就悄悄从 env 泄漏出来
-      void key
-      return undefined
+      // **密钥是唯一读 env 的一类, 即使没有 config-local。**
+      //
+      // 上面那条"兜底不读 env"的理由是: 读了 env, "没装 config-local"和
+      // "装了但没配"就分不清了 —— 那是对**普通值**说的 (普通值三层来源,
+      // 分不清就查不出来源)。
+      // 密钥没有这个歧义: 它的值**只能**来自 env, settings 层存的是变量名。
+      // 兜底不读 = 没装 config-local 时所有 provider 都永远"没有凭据",
+      // 而这件事在界面上看起来像"我的 key 明明在环境里"。
+      const meta = metaAt(key)
+      if (meta['secret'] !== true) return undefined
+      const envName = typeof meta['env'] === 'string' ? meta['env'] : envNameOf(name, key)
+      const raw = process.env[envName]
+      // 空串等于没配 —— 与 config-local 同一条规则
+      return raw === undefined || raw === '' ? undefined : raw
     },
     secretRef(key) {
       const env = metaAt(key)['env']

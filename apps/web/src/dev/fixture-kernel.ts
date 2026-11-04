@@ -307,6 +307,125 @@ export function createFixtureKernel(name: FixtureName, options: FixtureOptions =
   let seq = 0
   let runId = ''
 
+  /**
+   * 设置页的假数据。**故意做成"可写"的**: `config.set` 改完, 下一次
+   * `llm.catalog` 要能看见新值 —— 否则前端只能验"渲染", 验不了"保存后
+   * 那一行有没有跟着变", 而后者才是设置页最容易画错的地方。
+   */
+  /** 哪些密钥项"环境变量里有值"。fixture 里用集合模拟, 真内核是进程 env */
+  const present = new Set(['llm.openai.apiKey'])
+  const settings: Record<string, string | number | boolean> = {
+    'llm.deepseek.baseURL': 'https://api.deepseek.com',
+    'llm.deepseek.models': 'deepseek-chat, deepseek-reasoner',
+  }
+  const configEntries = () => [
+    {
+      key: 'llm.deepseek.apiKey',
+      scope: 'llm.deepseek',
+      name: 'apiKey',
+      type: 'string',
+      secret: true,
+      required: true,
+      desc: '密钥绑定的环境变量名。值是进程启动时读的, 换 key 要重启',
+      // fixture 里假设"环境变量是空的" —— 正好演示未配置态
+      secretRef: String(settings['llm.deepseek.apiKey'] ?? 'DEEPSEEK_API_KEY'),
+      present: present.has('llm.deepseek.apiKey'),
+      schema: { type: 'string' },
+    },
+    {
+      key: 'llm.deepseek.baseURL',
+      scope: 'llm.deepseek',
+      name: 'baseURL',
+      type: 'string',
+      secret: false,
+      required: false,
+      desc: '接口地址。第三方代理填它自己那一份, 不要带结尾斜杠',
+      default: 'https://api.deepseek.com',
+      value: settings['llm.deepseek.baseURL'],
+      source: 'settings',
+      schema: { type: 'string', default: 'https://api.deepseek.com' },
+    },
+    {
+      key: 'llm.deepseek.models',
+      scope: 'llm.deepseek',
+      name: 'models',
+      type: 'array',
+      secret: false,
+      required: false,
+      desc: '这个路由能用的模型名。改完立刻生效, 不用重启',
+      schema: { type: 'array', items: { type: 'string' }, default: ['deepseek-chat', 'deepseek-reasoner'] },
+    },
+    {
+      key: 'llm.openai.apiKey',
+      scope: 'llm.openai',
+      name: 'apiKey',
+      type: 'string',
+      secret: true,
+      required: true,
+      desc: '密钥绑定的环境变量名。也认 OPENAI_API_KEY',
+      secretRef: String(settings['llm.openai.apiKey'] ?? 'MENG_LLM_API_KEY'),
+      // 这一家初始就是"绑好了" —— 两种状态都要能画出来
+      present: present.has('llm.openai.apiKey'),
+      schema: { type: 'string' },
+    },
+    {
+      key: 'llm.openai.baseURL',
+      scope: 'llm.openai',
+      name: 'baseURL',
+      type: 'string',
+      secret: false,
+      required: false,
+      desc: '接口地址 (/v1 结尾)',
+      default: 'https://api.openai.com/v1',
+      value: 'https://api.openai.com/v1',
+      source: 'default',
+      schema: { type: 'string', default: 'https://api.openai.com/v1' },
+    },
+    {
+      key: 'llm.openai.temperature',
+      scope: 'llm.openai',
+      name: 'temperature',
+      type: 'number',
+      secret: false,
+      required: false,
+      desc: '采样温度。0 = 稳定, 2 = 发散',
+      default: 0.7,
+      value: 0.7,
+      source: 'default',
+      schema: { type: 'number', minimum: 0, maximum: 2, default: 0.7 },
+    },
+  ]
+
+  const catalog = () => [
+    {
+      id: 'deepseek',
+      name: 'DeepSeek',
+      models: ['deepseek-chat', 'deepseek-reasoner'],
+      available: false,
+      configScope: 'llm.deepseek',
+      config: configEntries().filter((e) => e.scope === 'llm.deepseek'),
+      missing: ['DEEPSEEK_API_KEY 里没有值'],
+    },
+    {
+      id: 'openai',
+      name: 'OpenAI 兼容',
+      models: ['gpt-4o-mini'],
+      available: true,
+      configScope: 'llm.openai',
+      config: configEntries().filter((e) => e.scope === 'llm.openai'),
+      missing: [],
+    },
+    {
+      // 没有 configScope 的那种: 界面上要能画成"不可配", 而不是一个空表单
+      id: 'mock',
+      name: 'mock',
+      models: ['mock-1'],
+      available: true,
+      config: [],
+      missing: [],
+    },
+  ]
+
   const events: StreamEvent[] = []
   const listeners = new Set<(event: StreamEvent) => void>()
 
@@ -403,6 +522,36 @@ export function createFixtureKernel(name: FixtureName, options: FixtureOptions =
 
         case 'question.list':
           return []
+
+        // ── 设置页: 供应商目录 + 配置读写 ──────────────────
+        // 四个 op 的形状与真内核一致 (packages/web/src/ops.ts),
+        // 前端照着它写就行了; 真内核那边一处不改这里就过期, 所以下面
+        // set/unset 走的是同一套"改完重读"的语义, 而不是返回一个假 ok
+        case 'llm.catalog':
+          return catalog()
+
+        case 'config.list':
+          return configEntries()
+
+        case 'config.set': {
+          const { key, value } = (payload ?? {}) as { key?: string; value?: unknown }
+          if (!key || value === undefined) throw new Error('fixture: config.set 缺 key 或 value')
+          settings[key] = value as string | number | boolean
+          // 密钥行写的是变量名, 写完就当"那个变量里有值"—— 真内核去读 env,
+          // fixture 只能这样表达"绑定变了, 状态跟着变"
+          if (key.endsWith('.apiKey')) present.add(key)
+          const entry = configEntries().find((e) => e.key === key)
+          return { entry, scopeEntries: configEntries().filter((e) => e.scope === entry?.scope) }
+        }
+
+        case 'config.unset': {
+          const { key } = (payload ?? {}) as { key?: string }
+          if (!key) throw new Error('fixture: config.unset 缺 key')
+          delete settings[key]
+          if (key.endsWith('.apiKey')) present.delete(key)
+          const entry = configEntries().find((e) => e.key === key)
+          return { entry, scopeEntries: configEntries().filter((e) => e.scope === entry?.scope) }
+        }
 
         /**
          * 与真内核 `StatusGraph.toJSON()` 逐字段一致 (`{ nodes: NodeRecord[] }`)。

@@ -401,14 +401,49 @@ export async function collectBlocks(chunks: AsyncIterable<StreamChunk>): Promise
 
 export interface Provider {
   id: string
+  /**
+   * 给人看的名字 (`DeepSeek` / `OpenAI 兼容`)。选择器与设置页用;
+   * 留空回落到 id —— 但那样界面上出现的是一串路由名, 不是人话。
+   */
+  displayName?: string
+  /**
+   * 这个 provider 的配置在哪个 scope 里。设置页靠它把"供应商"和"它的配置项"
+   * 连起来 (`ctx.config.list()` 只认 scope, 不认插件)。
+   *
+   * 留空 = 这个 provider 没有可配的东西 (比如 mock)。
+   */
+  configScope?: string
   models: string[]
+  /**
+   * **现在能不能真的发请求**。凭据缺失时返回 false。
+   *
+   * 为什么这件事必须由 provider 自己回答: 只有它知道自己的凭据从哪来
+   * (环境变量名 / 将来的凭据服务)。让路由层去猜, 就等于把"每个厂商怎么
+   * 拿 key"的知识写进 llm 包 —— 那正是它要坚持中立的东西。
+   *
+   * 留空 = 恒可用。缺省不是"没实现", 而是"没有会缺失的前提"。
+   */
+  available?: () => boolean
   /** 原始流: block-start / delta / usage / finish。组装不由你做 */
   stream(req: StreamRequest): AsyncIterable<StreamChunk>
 }
 
+/** 路由的对外描述。`llm.catalog` 与设置页读它, 不碰 provider 本体 */
+export interface ProviderInfo {
+  id: string
+  name: string
+  models: string[]
+  /** 见 `Provider.available`。没实现 `available()` 的恒为 true */
+  available: boolean
+  configScope?: string
+}
+
 export interface LLMService {
   register(provider: Provider): Disposer
+  /** 已注册的全部路由, 含**不可用**的 (设置页要列出"装了但没配"的那些) */
+  listProviders(): ProviderInfo[]
   resolve(model?: string): Provider
+  /** **可用** provider 的模型。它是"选模型"的输入, 所以不给用不了的 */
   models(): string[]
   /** 未经组装的原始流。调试 provider 时用 */
   raw(req: StreamRequest): AsyncIterable<StreamChunk>
@@ -420,37 +455,71 @@ export function apply(ctx: Ctx, config: { defaultModel?: string }): Disposer {
   const providers = new Map<string, Provider>()
   let defaultModel = config.defaultModel ?? ''
 
+  const usable = (p: Provider): boolean => (p.available ? p.available() : true)
+
   const resolve = (model?: string): Provider => {
     // 用 || 而不是 ?? : 调用方传空字符串是常态(agent 的 defaultModel 没配时就是 ''),
     // ?? 只在 null/undefined 时回退, 空串会直接走到"找不到 provider" ——
     // 而且异常被 agent 的 try 吞掉后表现为"一句话也不说", 极难定位
     const wanted = model || defaultModel
-    // 模型名优先, 其次 provider id —— 别要求插件记住 provider↔model 的映射
-    for (const provider of providers.values()) {
-      if (provider.models.includes(wanted) || provider.id === wanted) return provider
+
+    if (wanted) {
+      // 模型名优先, 其次 provider id —— 别要求插件记住 provider↔model 的映射。
+      // **点名的不筛可用性**: 没配 key 的 provider 也要路由过去, 让它抛出
+      // "没凭据"这个准确的错。在这里改成"找不到 provider", 用户会去翻模型名
+      for (const provider of providers.values()) {
+        if (provider.models.includes(wanted) || provider.id === wanted) return provider
+      }
+      throw new LlmError(`没有 provider 能提供模型 ${wanted}`, LLM_CODE.NO_ADAPTER)
     }
-    // 没指定就用第一个注册者。清单里 defaultModel 留空是合法配置
-    const first = providers.values().next().value
-    if (!wanted && first) return first
-    throw new LlmError(`没有 provider 能提供模型 ${wanted || '(未指定)'}`, LLM_CODE.NO_ADAPTER)
+
+    // 没点名: 只挑能用的。装了但没配 key 的 provider 排在前面时,
+    // 不能用它顶默认 —— 那会让用户第一句话就撞上"没凭据",
+    // 而他其实配好了另一家
+    const first = [...providers.values()].find(usable)
+    if (first) return first
+
+    const known = [...providers.values()].map((p) => p.id)
+    throw new LlmError(
+      known.length === 0
+        ? '一个 provider 都没装'
+        : `已装载的 provider 都不可用 (${known.join(', ')}) —— 检查它们的凭据配置`,
+      LLM_CODE.NO_ADAPTER,
+    )
   }
+
+  const infoOf = (p: Provider): ProviderInfo => ({
+    id: p.id,
+    name: p.displayName ?? p.id,
+    models: [...p.models],
+    available: usable(p),
+    ...(p.configScope ? { configScope: p.configScope } : {}),
+  })
 
   const service: LLMService = {
     register(provider) {
       if (providers.has(provider.id)) throw new Error(`provider ${provider.id} 重复注册`)
       providers.set(provider.id, provider)
-      if (!defaultModel && provider.models[0]) defaultModel = provider.models[0]
+      // 只在"能用"的 provider 上落默认模型: 一个没配 key 的 provider 抢走默认,
+      // 表现为"用户配好的那家永远用不上"
+      if (!defaultModel && usable(provider) && provider.models[0]) defaultModel = provider.models[0]
       ctx.emit('llm/provider-added', provider.id)
+      ctx.emit('llm/providers-updated')
       return () => {
         providers.delete(provider.id)
         ctx.emit('llm/provider-removed', provider.id)
+        ctx.emit('llm/providers-updated')
       }
+    },
+
+    listProviders() {
+      return [...providers.values()].map(infoOf)
     },
 
     resolve,
 
     models() {
-      return [...providers.values()].flatMap((p) => p.models)
+      return [...providers.values()].filter(usable).flatMap((p) => p.models)
     },
 
     raw(req) {
@@ -475,6 +544,31 @@ export const invariant = defineInvariant('@meng/llm', [
     id: 'capability-present',
     run(ctx) {
       if (!ctx.get('llm')) throw new Error('能力面 llm 未注册')
+    },
+  },
+  {
+    id: 'default-route-usable',
+    run(ctx) {
+      const llm = ctx.get<LLMService>('llm')
+      if (!llm) throw new Error('能力面 llm 未注册')
+      const list = llm.listProviders()
+      // 空列表不在这里管: 只装 base 的场景 (测试 / graph) 本来就没有 provider,
+      // 该由 provider 插件自己的不变量去抱怨"装了却不能用"
+      if (list.length === 0) return
+      const usable = list.filter((p) => p.available)
+      if (usable.length === 0) {
+        // "装了但都不可用"是**静默的死局**: 用户打第一句话才看到报错,
+        // 而那时他以为是模型坏了。启动就红, 指向凭据
+        throw new Error(
+          `已装载的 provider 都不可用 (${list.map((p) => p.id).join(', ')}) —— 检查凭据配置`,
+        )
+      }
+      // 默认路由必须真能落到一个可用的 provider 上。这一条防的是
+      // "defaultModel 指向一个没配 key 的模型"和"resolve 的顺序写反了"
+      const picked = llm.resolve()
+      if (!usable.some((p) => p.id === picked.id)) {
+        throw new Error(`默认路由落到了不可用的 provider ${picked.id}`)
+      }
     },
   },
   {

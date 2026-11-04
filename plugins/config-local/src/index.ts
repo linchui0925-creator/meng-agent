@@ -35,13 +35,14 @@
  * 现在接就是死代码。
  */
 
-import { readFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import * as z from 'zod'
 import {
   CONFIG_CODE,
   ConfigError,
   KERNEL_CONFIG,
+  envNameOf,
   provideConfig,
   type ConfigDecl,
   type ConfigEntry,
@@ -49,15 +50,10 @@ import {
   type ConfigService,
   type ConfigSource,
   type ConfigType,
+  type ConfigWriteResult,
 } from '@meng/config'
 import type { Ctx, Disposer } from '@meng/core'
 import { defineInvariant } from '@meng/core'
-
-/** 环境变量名推导: `sandbox.root` → `MENG_SANDBOX_ROOT` */
-function envNameOf(scope: string, key: string): string {
-  const raw = `${scope}.${key}`
-  return `MENG_${raw.replace(/[^A-Za-z0-9]+/g, '_').toUpperCase()}`
-}
 
 /**
  * 把线上来的原始值转成 schema 期望的形状。
@@ -340,42 +336,124 @@ export async function apply(
     return self
   }
 
+  /**
+   * 落盘。**先写临时文件再 rename** —— 直接 writeFile 时进程被杀会留下半个
+   * JSON, 下次启动读不出来, 而那时的报错只会说"配置读不出来", 指不回写它
+   * 的那一刻。rename 在同一文件系统上是原子的。
+   */
+  const persist = async (): Promise<void> => {
+    await mkdir(dir, { recursive: true })
+    const tmp = `${file}.tmp`
+    await writeFile(tmp, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
+    await rename(tmp, file)
+    // 写成功了, 那份"读不出来"的旧账就该清了 —— 否则日志会一直报案
+    broken = undefined
+  }
+
+  /** 一个槽 → 设置页的一行。list() 与写通道共用, 免得两处各拼一遍字段 */
+  const entryOf = (full: string): ConfigEntry => {
+    const slot = slots.get(full)
+    if (!slot) throw new ConfigError(CONFIG_CODE.UNKNOWN, full, `${full} 没有被任何插件声明`)
+    // **scope 从槽里取, 不按第一个点切全名。** scope 名自己可以带点
+    // (`llm.deepseek`), 切出来就成了 `llm` + `deepseek.apiKey`,
+    // 于是设置页按 scope 分组的那些行全部落到错误的组里 —— 而且不报错
+    const scope = slot.scope
+    const name = full.slice(scope.length + 1)
+
+    // 必填项还没配时 resolveOne 会抛 —— 但 **list() 不能因此整页失败**。
+    // 一个字段没配就让设置页白屏, 用户连"去配它"的输入框都看不到
+    let r: { value: unknown; source?: ConfigSource; secretRef?: string } = { value: undefined }
+    let unresolved: string | undefined
+    try {
+      r = resolveOne(scope, name)
+    } catch (err) {
+      unresolved = err instanceof Error ? err.message : String(err)
+    }
+    const entry: ConfigEntry = {
+      key: full,
+      scope,
+      name,
+      type: typeOf(slot.json),
+      secret: slot.meta.secret,
+      required: slot.meta.required,
+      // 标准 JSON Schema, 设置页画控件靠它。前端不用装 zod
+      schema: slot.json,
+    }
+    if (unresolved !== undefined) entry.unresolved = unresolved
+    // 组合配置的默认值是对象/数组, 类型对不上 `default?: 标量` —— 不给,
+    // 前端从 schema.default 拿得到同样的东西
+    if (typeof slot.defaultValue === 'string' || typeof slot.defaultValue === 'number' || typeof slot.defaultValue === 'boolean') {
+      entry.default = slot.defaultValue
+    }
+    if (slot.meta.desc !== undefined) entry.desc = slot.meta.desc
+    // 密钥行的 value **恒不给**: 这条 if 是这一层唯一的安全边界
+    if (!slot.meta.secret) {
+      if (r.value !== undefined) entry.value = r.value as string | number | boolean
+      if (r.source !== undefined) entry.source = r.source
+    } else {
+      if (r.secretRef !== undefined) entry.secretRef = r.secretRef
+      // 只报"有没有", 不带值 —— 见 ConfigEntry.present 的注释
+      entry.present = r.value !== undefined
+    }
+    return entry
+  }
+
+  const entriesIn = (scope: string): ConfigEntry[] =>
+    [...slots.keys()]
+      .filter((full) => full.startsWith(`${scope}.`))
+      // 稳定顺序: 设置页靠它, 顺序乱跳会让人以为配置变了
+      .sort()
+      .map(entryOf)
+
+  const write = async (scope: string, key: string, apply: (full: string) => void): Promise<ConfigWriteResult> => {
+    const full = `${scope}.${key}`
+    // 未声明的键直接拒绝: 设置页只画已声明的项, 写未声明的键等于往黑箱里塞
+    // 东西 —— 用户看不到它, 也删不掉它
+    if (!slotOf(scope, key)) {
+      throw new ConfigError(
+        CONFIG_CODE.UNKNOWN,
+        full,
+        `${full} 没有被任何插件声明 —— 只有已声明的键才能写`,
+      )
+    }
+    apply(full)
+    await persist()
+    return { entry: entryOf(full), scopeEntries: entriesIn(scope) }
+  }
+
   const service: ConfigService = {
     scope: makeScope,
+
     list(): ConfigEntry[] {
-      const out: ConfigEntry[] = []
-      for (const [full, slot] of slots) {
-        const at = full.indexOf('.')
-        const scope = full.slice(0, at)
-        const name = full.slice(at + 1)
-        const r = resolveOne(scope, name)
-        const entry: ConfigEntry = {
-          key: full,
-          scope,
-          name,
-          type: typeOf(slot.json),
-          secret: slot.meta.secret,
-          required: slot.meta.required,
-          // 标准 JSON Schema, 设置页画控件靠它。前端不用装 zod
-          schema: slot.json,
-        }
-        // 组合配置的默认值是对象/数组, 类型对不上 `default?: 标量` —— 不给,
-        // 前端从 schema.default 拿得到同样的东西
-        if (typeof slot.defaultValue === 'string' || typeof slot.defaultValue === 'number' || typeof slot.defaultValue === 'boolean') {
-          entry.default = slot.defaultValue
-        }
-        if (slot.meta.desc !== undefined) entry.desc = slot.meta.desc
-        // 密钥行的 value **恒不给**: 这条 if 是这一层唯一的安全边界
-        if (!slot.meta.secret) {
-          if (r.value !== undefined) entry.value = r.value as string | number | boolean
-          if (r.source !== undefined) entry.source = r.source
-        } else if (r.secretRef !== undefined) {
-          entry.secretRef = r.secretRef
-        }
-        out.push(entry)
-      }
       // 稳定顺序: 设置页靠它, 顺序乱跳会让人以为配置变了
-      return out.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+      return [...slots.keys()].sort().map(entryOf)
+    },
+
+    async set(scope: string, key: string, value: unknown): Promise<ConfigWriteResult> {
+      const slot = slotOf(scope, key)
+      return write(scope, key, (full) => {
+        if (!slot) return
+        if (slot.meta.secret) {
+          // **密钥写的是变量名, 不是值。** 值永远不经过这条通道 ——
+          // 这样 settings.json 进备份/进截图/进 git 都不出事
+          const name = String(value).trim()
+          if (name === '') delete settings[full]
+          else settings[full] = name
+          return
+        }
+        // 先按声明校验, 坏值不落盘。否则下次启动读到一份自己写坏的 settings,
+        // 而报错会指向"读不出来", 指不回写它的那一刻
+        const parsed = parseVia(slot, value, full)
+        if (parsed === undefined || parsed === null) delete settings[full]
+        else settings[full] = parsed
+      })
+    },
+
+    async unset(scope: string, key: string): Promise<ConfigWriteResult> {
+      return write(scope, key, (full) => {
+        // 清掉 settings 层 → 自动回落到 env / default
+        delete settings[full]
+      })
     },
   }
 
