@@ -42,6 +42,7 @@ import { DEMO_PLUGIN_ID, demoRuntime } from './app/demo-plugin.tsx'
 import { DEMO_SKIN_ID, demoSkinRuntime } from './app/demo-skin-plugin.tsx'
 import { AppearanceSection } from './app/settings/AppearanceSection.tsx'
 import { ConversationSection } from './app/settings/ConversationSection.tsx'
+import { ModelSection } from './app/settings/ModelSection.tsx'
 import { SettingsView } from './app/settings/SettingsView.tsx'
 import { createFixtureKernel, fixtureFromSearch } from './dev/fixture-kernel.ts'
 import { applyTheme } from './theme.ts'
@@ -253,6 +254,21 @@ async function bootstrap(report: (entries: EntryState[]) => void): Promise<Boote
     component: ConversationSection,
     order: 110,
     meta: { label: '对话', group: '界面', origin: 'local' },
+  })
+  /**
+   * 模型分区: 第一个**内核腿**的分区（origin: 'kernel' → 右上角徽章写「内核」）。
+   *
+   * order 300 是「内核」组的起点, 和「界面」组（100 起）隔开 200 ——
+   * 组内间隔 50, 中间留出空间给将来的「工作区」（310）/「接口密钥」（320）。
+   *
+   * 它和上面两个分区走**同一条注册路径**, 但拿到的 invoke 是宿主转发的:
+   * 分区读内核靠 `SectionApi.invoke`, 拿不到 transport —— 也就订阅不到事件流。
+   */
+  slots.register('builtin.settings.model', {
+    name: 'settings.section',
+    component: ModelSection,
+    order: 300,
+    meta: { label: '模型', group: '内核', origin: 'kernel' },
   })
 
   let transport: Transport

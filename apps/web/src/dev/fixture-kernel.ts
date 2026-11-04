@@ -359,7 +359,7 @@ export function createFixtureKernel(name: FixtureName, options: FixtureOptions =
   type FixtureRoute = typeof OPENAI_ROUTE
 
   /** 声明自带的路由名。它们不算"用户自己加的" */
-  const builtin = new Set(['openai'])
+  const builtin = new Set(['openai', 'zai'])
 
   /** 路由表现读 settings —— 写完立刻能看见, 前端才验得了"加一条" */
   const routes = (): Record<string, FixtureRoute> =>
@@ -375,6 +375,27 @@ export function createFixtureKernel(name: FixtureName, options: FixtureOptions =
    */
   const FALLBACK_MODELS: FixtureModel[] = [
     { id: 'gpt-4o-mini', name: 'GPT-4o mini', contextWindow: 128000, maxTokens: 16384, input: ['text'] },
+  ]
+
+  /**
+   * 内置目录里 `zai` 那一家的模型（真内核从 `@meng/llm-catalog` 拿）。
+   *
+   * 它**要被两处用到**, 所以抽出来: 「可添加」那条要拿它画"这家会带来哪些模型",
+   * 而添加之后（`template.models` 是空数组）真内核是**用目录**, 不是兜底 ——
+   * 两处各写一份的话, 会出现"加之前写着 3 款、加完变成 GPT-4o mini"这种假象,
+   * 而那正是验收时最容易误判成前端 bug 的地方。
+   */
+  const ZAI_MODELS: FixtureModel[] = [
+    { id: 'glm-4.7', name: 'GLM-4.7', contextWindow: 204800, maxTokens: 131072, input: ['text'], reasoning: true },
+    { id: 'glm-5.2', name: 'GLM-5.2', contextWindow: 1000000, maxTokens: 131072, input: ['text'], reasoning: true },
+    {
+      id: 'glm-5v-turbo',
+      name: 'GLM-5V-Turbo',
+      contextWindow: 200000,
+      maxTokens: 131072,
+      input: ['text', 'image'],
+      reasoning: true,
+    },
   ]
 
   /** deepseek 绑的环境变量名。密钥行存的是**名字**, 不是值 */
@@ -499,8 +520,12 @@ export function createFixtureKernel(name: FixtureName, options: FixtureOptions =
       id,
       name: profile.displayName ?? id,
       protocol: profile.protocol,
-      // 没声明模型、也不在内置目录里 → 兜底那一条 (真内核是 `modelsOf`)
-      models: (profile.models.length > 0 ? profile.models : FALLBACK_MODELS) as FixtureModel[],
+      // 没声明模型时: 在内置目录里就用目录（zai），否则兜底那一条
+      models: (profile.models.length > 0
+        ? profile.models
+        : id === 'zai'
+          ? ZAI_MODELS
+          : FALLBACK_MODELS) as FixtureModel[],
       available: usable(profile),
       ...(builtin.has(id) ? {} : { declared: true }),
       configScope: 'llm.openai',
@@ -516,44 +541,39 @@ export function createFixtureKernel(name: FixtureName, options: FixtureOptions =
       config: [],
       missing: [],
     },
-    {
-      /**
-       * **还没激活**的那一家。这一段就是"可添加"态: 有模型清单、有模板
-       * (`template` 原样写进 `routes.zai` 就行), 但没有 `available` ——
-       * 界面上应该是一个添加按钮 + 它会带来哪些模型, 不是一张缺 key 的表单。
-       *
-       * 数据取自 `@meng/llm-catalog` 的 `zai`。
-       */
-      id: 'zai',
-      name: 'Z.AI',
-      protocol: 'openai-completions',
-      models: [
-        { id: 'glm-4.7', name: 'GLM-4.7', contextWindow: 204800, maxTokens: 131072, input: ['text'], reasoning: true },
-        { id: 'glm-5.2', name: 'GLM-5.2', contextWindow: 1000000, maxTokens: 131072, input: ['text'], reasoning: true },
-        {
-          id: 'glm-5v-turbo',
-          name: 'GLM-5V-Turbo',
-          contextWindow: 200000,
-          maxTokens: 131072,
-          input: ['text', 'image'],
-          reasoning: true,
-        },
-      ] as FixtureModel[],
-      available: false,
-      dormant: true,
-      configScope: 'llm.openai',
-      configPath: ['routes', 'zai'],
-      template: {
-        displayName: 'Z.AI',
-        protocol: 'openai-completions',
-        baseURL: 'https://api.z.ai/api/coding/paas/v4',
-        apiKeyEnv: 'ZAI_API_KEY',
-        models: [],
-        modelOverrides: {},
-      },
-      config: [],
-      missing: ['还没添加 —— 在设置页点"添加"即可'],
-    },
+    /**
+     * **还没激活**的那一家。这一段就是"可添加"态: 有模型清单、有模板
+     * (`template` 原样写进 `routes.zai` 就行), 但没有 `available` ——
+     * 界面上应该是一个添加按钮 + 它会带来哪些模型, 不是一张缺 key 的表单。
+     *
+     * **只在 routes 里还没有它时才出现。** 真内核是这个语义（dormant =
+     * "目录里有、配置里没加"）, 这里漏判的话, 点完添加会同时出现两条 id 相同的
+     * 供应商 —— React 报重复 key, 而界面上看起来像"添加没生效, 又多了一条"。
+     */
+    ...(routes().zai
+      ? []
+      : [
+          {
+            id: 'zai',
+            name: 'Z.AI',
+            protocol: 'openai-completions',
+            models: ZAI_MODELS,
+            available: false,
+            dormant: true,
+            configScope: 'llm.openai',
+            configPath: ['routes', 'zai'],
+            template: {
+              displayName: 'Z.AI',
+              protocol: 'openai-completions',
+              baseURL: 'https://api.z.ai/api/coding/paas/v4',
+              apiKeyEnv: 'ZAI_API_KEY',
+              models: [],
+              modelOverrides: {},
+            },
+            config: [],
+            missing: ['还没添加 —— 在设置页点"添加"即可'],
+          },
+        ]),
   ]
 
   const events: StreamEvent[] = []

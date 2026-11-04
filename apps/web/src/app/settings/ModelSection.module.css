@@ -1,0 +1,273 @@
+/*
+  模型分区。列表是一个**整块容器**, 行与行之间只有 1px 分隔线 ——
+  「一张长表」而不是一节一张卡: 13 家各占一张卡会有 13 个圆角和 13 道阴影,
+  扫读时眼睛一直在被边框打断。
+*/
+
+.list {
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: var(--meng-specific-radius-xl);
+  overflow: hidden;
+  background: var(--meng-alias-bg-surface);
+  /* 和 Group 同一档: 表 → 注脚之间 16, 不是 Group 之间的 30（注脚属于这张表） */
+  margin-bottom: 16px;
+}
+
+.item {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 13px 14px;
+}
+
+.item + .item {
+  border-top: 1px solid var(--meng-alias-border-l1);
+}
+
+/*
+  可添加的那一行**明显更矮**: 无第二行、无 missing、padding 更小。
+  高度差本身就是"这家还没进来"的表达 —— 不用再多一个说明文字。
+*/
+.item[data-state='dormant'] {
+  gap: 0;
+  padding: 8px 14px;
+  transition: background 0.15s;
+}
+
+.item[data-state='dormant']:hover {
+  background: var(--meng-alias-bg-hover);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* ── 字母章 ── */
+.stamp {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 700;
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-secondary);
+}
+
+.stamp[data-state='available'] {
+  background: var(--meng-alias-accent-subtle);
+  color: var(--meng-alias-accent);
+}
+
+.stamp[data-state='unconfigured'] {
+  background: var(--meng-alias-warning-subtle);
+  color: var(--meng-alias-warning);
+}
+
+/* 还没加进来的: 虚线空心。和"配置错了"的黄底必须一眼分开 */
+.stamp[data-state='dormant'] {
+  background: transparent;
+  border: 1px dashed var(--meng-alias-border-l2);
+  color: var(--meng-alias-fg-muted);
+}
+
+/* ── 名字 + 模型摘要 ── */
+.titleGroup {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.nameLine {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+
+.name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--meng-alias-fg-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tag {
+  flex: none;
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-muted);
+}
+
+.modelLine {
+  font-size: 12px;
+  color: var(--meng-alias-fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── 右侧: 徽章 / 添加按钮 ── */
+.badge {
+  flex: none;
+  font-size: 11.5px;
+  padding: 3px 9px;
+  border-radius: 99px;
+  white-space: nowrap;
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-muted);
+}
+
+.badge[data-state='available'],
+.badge[data-state='fixed'] {
+  background: var(--meng-alias-positive-subtle);
+  color: var(--meng-alias-positive);
+}
+
+.badge[data-state='unconfigured'] {
+  background: var(--meng-alias-warning-subtle);
+  color: var(--meng-alias-warning);
+}
+
+.add {
+  flex: none;
+  font: inherit;
+  font-size: 12.5px;
+  padding: 4px 14px;
+  border-radius: 7px;
+  border: 1px solid var(--meng-alias-accent);
+  background: transparent;
+  color: var(--meng-alias-accent);
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    color 0.15s;
+}
+
+.add:hover:not(:disabled) {
+  background: var(--meng-alias-accent-subtle);
+}
+
+.add:disabled {
+  cursor: default;
+  border-color: var(--meng-alias-border-l2);
+  color: var(--meng-alias-fg-muted);
+  background: var(--meng-alias-bg-inset);
+}
+
+/* ── 事实行 (地址 / 变量名) ── */
+.facts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  /* 对齐名字, 跳过字母章: 38 = 28 章 + 10 间距 */
+  padding-left: 38px;
+  font-size: 11.5px;
+  color: var(--meng-alias-fg-muted);
+}
+
+.fact {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--meng-specific-font-mono);
+  color: var(--meng-alias-fg-code);
+  background: var(--meng-alias-bg-inset);
+  border-radius: 6px;
+  padding: 2px 7px;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 有值/没值。空心圈不是灰点 —— 它必须看起来像"缺" */
+.dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1.5px dashed var(--meng-alias-border-l3);
+}
+
+.dot[data-present] {
+  border: 0;
+  background: var(--meng-alias-positive);
+}
+
+.quiet {
+  font-size: 11.5px;
+  color: var(--meng-alias-fg-muted);
+}
+
+/* 后端原话。黄而不是红: 它是"还没配", 不是"配错了" */
+.missing {
+  padding-left: 38px;
+  font-size: 11.5px;
+  color: var(--meng-alias-warning);
+  line-height: 1.5;
+}
+
+.rowError {
+  padding-left: 38px;
+  font-size: 11.5px;
+  color: var(--meng-alias-danger);
+  line-height: 1.5;
+}
+
+/* ── 整页级状态 ── */
+.loading {
+  padding: 18px 2px;
+  font-size: 12.5px;
+  color: var(--meng-alias-fg-muted);
+}
+
+.error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: var(--meng-alias-danger-subtle);
+  color: var(--meng-alias-danger);
+  font-size: 12.5px;
+}
+
+.retry {
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--meng-alias-danger);
+  background: transparent;
+  color: var(--meng-alias-danger);
+  cursor: pointer;
+}
+
+.retry:hover {
+  background: var(--meng-alias-bg-surface);
+}
+
+/* 窄屏: 事实行换行后不再缩进对齐, 太窄时对齐反而像错位 */
+@media (max-width: 720px) {
+  .facts,
+  .missing,
+  .rowError {
+    padding-left: 0;
+  }
+}

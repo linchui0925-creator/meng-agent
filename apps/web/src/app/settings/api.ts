@@ -37,6 +37,18 @@ export type SectionEntry = {
 export type SectionApi = {
   prefs: Prefs
   setPrefs: (patch: Partial<Prefs>) => void
+  /**
+   * 内核 op 的**唯一入口**。
+   *
+   * 为什么给一个函数而不是整个 `Transport`: 分区要的是「问内核一件事」这一种能力。
+   * 给 transport 就等于同时给了 `subscribe` —— 分区会顺手去监听会话事件流,
+   * 而设置页与会话流是两条互不相干的路, 那条路一开就再也收不回去了。
+   *
+   * 所以这里刻意**不按 op 拆成 catalog()/setConfig() 这样的领域方法**:
+   * 那样每加一个内核能力都要改一次这份契约, 等于把宿主当成 op 的路由表。
+   * 一个 invoke, 后端加 op 前端零改动 —— 和 `setPrefs` 是同一条思路。
+   */
+  invoke: <T = unknown>(op: string, payload?: unknown) => Promise<T>
 }
 
 /**

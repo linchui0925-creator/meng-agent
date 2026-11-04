@@ -8,7 +8,7 @@
  * 状态上移之后, 换一个布局插件, 消息、会话 id、连接状态一条都不会丢。
  */
 
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType } from 'react'
 
 import type { ConnectionState, StreamEvent, Transport } from '@meng/transport'
 import type { SlotRegistry } from '@meng/slots'
@@ -340,6 +340,16 @@ export function App({ transport, slots, fixture, auto }: AppProps) {
     [slots, slotVersion],
   )
 
+  /**
+   * 设置分区的 invoke。**必须稳定** —— 分区用 `useEffect(..., [invoke])` 拉数据,
+   * 每次渲染换一个新函数就等于每次重渲染都重新拉一遍。而 App 是会因为
+   * 会话流每来一片 token 就重渲染一次的 —— 那会变成一条消息几十次 `llm.catalog`。
+   */
+  const settingsInvoke = useCallback(
+    <T,>(op: string, payload?: unknown) => transport.invoke<T>(op, payload),
+    [transport],
+  )
+
   /** `settings.view` 的 owner: 开不开归宿主, 关的动作也从这里给 */
   const settingsView: SettingsViewApi = {
     open: settingsOpen,
@@ -347,6 +357,9 @@ export function App({ transport, slots, fixture, auto }: AppProps) {
     sections: settingsSections,
     prefs,
     setPrefs: changePrefs,
+    // 分区要用内核能力（读供应商目录 / 写配置）时走这里。
+    // 只转一个 invoke: 分区拿不到 transport, 也就拿不到事件流订阅。
+    invoke: settingsInvoke,
   }
 
   const composer: ComposerApi = {
