@@ -17,6 +17,7 @@
  *   tools    session/created + turn/started + 2×llm/chunk + llm/completed + 3×(tool/called + tool/completed) + turn/ended = 12
  */
 
+import { CATALOG } from '@meng/llm-catalog'
 import type { StreamEvent } from '@meng/transport'
 import type { InprocKernel } from '@meng/transport/inproc'
 
@@ -358,8 +359,13 @@ export function createFixtureKernel(name: FixtureName, options: FixtureOptions =
   }
   type FixtureRoute = typeof OPENAI_ROUTE
 
-  /** 声明自带的路由名。它们不算"用户自己加的" */
-  const builtin = new Set(['openai', 'zai'])
+  /**
+   * 声明自带的路由名。它们不算"用户自己加的"。
+   *
+   * **直接从内置目录取**, 不再手写 `['openai', 'zai']` —— 手写的清单会和
+   * 目录分叉, 而分叉的后果是"设置页里明明有这家, 加完却被标成自己加的"。
+   */
+  const builtin = new Set(['openai', ...CATALOG.map((c) => c.id)])
 
   /** 路由表现读 settings —— 写完立刻能看见, 前端才验得了"加一条" */
   const routes = (): Record<string, FixtureRoute> =>
@@ -377,26 +383,38 @@ export function createFixtureKernel(name: FixtureName, options: FixtureOptions =
     { id: 'gpt-4o-mini', name: 'GPT-4o mini', contextWindow: 128000, maxTokens: 16384, input: ['text'] },
   ]
 
+  /** 目录里的那一家。`openai` 不在里面 —— 目录只收第三方 (真内核同义) */
+  const directoryEntry = (id: string) => CATALOG.find((c) => c.id === id)
+
   /**
-   * 内置目录里 `zai` 那一家的模型（真内核从 `@meng/llm-catalog` 拿）。
+   * 一条路由现在有哪些模型。
    *
-   * 它**要被两处用到**, 所以抽出来: 「可添加」那条要拿它画"这家会带来哪些模型",
-   * 而添加之后（`template.models` 是空数组）真内核是**用目录**, 不是兜底 ——
-   * 两处各写一份的话, 会出现"加之前写着 3 款、加完变成 GPT-4o mini"这种假象,
-   * 而那正是验收时最容易误判成前端 bug 的地方。
+   * 三段判据**必须和真内核同序** (`provider-openai` 的 `modelsOf`):
+   *   ① 路由自己声明了 → 用它
+   *   ② 它在内置目录里 → 用目录（点"添加"之后 `template.models` 是空, 走的就是这条）
+   *   ③ 都不在 → 兜底那一条
+   *
+   * 曾经这里是 `id === 'zai' ? ZAI_MODELS : FALLBACK_MODELS` —— 加第二家
+   * 目录供应商时就会静默退化成"添加前写 10 款、添加后变成 GPT-4o mini"。
    */
-  const ZAI_MODELS: FixtureModel[] = [
-    { id: 'glm-4.7', name: 'GLM-4.7', contextWindow: 204800, maxTokens: 131072, input: ['text'], reasoning: true },
-    { id: 'glm-5.2', name: 'GLM-5.2', contextWindow: 1000000, maxTokens: 131072, input: ['text'], reasoning: true },
-    {
-      id: 'glm-5v-turbo',
-      name: 'GLM-5V-Turbo',
-      contextWindow: 200000,
-      maxTokens: 131072,
-      input: ['text', 'image'],
-      reasoning: true,
-    },
-  ]
+  const modelsOfRoute = (id: string, profile: FixtureRoute): FixtureModel[] => {
+    if (profile.models.length > 0) return profile.models
+    return (directoryEntry(id)?.models as FixtureModel[] | undefined) ?? FALLBACK_MODELS
+  }
+
+  /** 「添加」写进配置的那份初始 profile。真内核的 `template` 就是这个形状 */
+  const templateOf = (entry: (typeof CATALOG)[number]): FixtureRoute => ({
+    displayName: entry.name,
+    protocol: entry.protocol,
+    baseURL: entry.baseURL,
+    apiKeyEnv: entry.apiKeyEnv[0] ?? 'MENG_LLM_API_KEY',
+    models: [],
+    modelOverrides: {},
+    defaultContextWindow: 262144,
+    defaultMaxTokens: 32768,
+    defaultInput: ['text'],
+    headers: {},
+  })
 
   /** deepseek 绑的环境变量名。密钥行存的是**名字**, 不是值 */
   const dsKeyEnv = (): string => String(val('llm.deepseek.apiKey', 'DEEPSEEK_API_KEY'))
@@ -520,12 +538,7 @@ export function createFixtureKernel(name: FixtureName, options: FixtureOptions =
       id,
       name: profile.displayName ?? id,
       protocol: profile.protocol,
-      // 没声明模型时: 在内置目录里就用目录（zai），否则兜底那一条
-      models: (profile.models.length > 0
-        ? profile.models
-        : id === 'zai'
-          ? ZAI_MODELS
-          : FALLBACK_MODELS) as FixtureModel[],
+      models: modelsOfRoute(id, profile),
       available: usable(profile),
       ...(builtin.has(id) ? {} : { declared: true }),
       configScope: 'llm.openai',
@@ -542,38 +555,29 @@ export function createFixtureKernel(name: FixtureName, options: FixtureOptions =
       missing: [],
     },
     /**
-     * **还没激活**的那一家。这一段就是"可添加"态: 有模型清单、有模板
-     * (`template` 原样写进 `routes.zai` 就行), 但没有 `available` ——
-     * 界面上应该是一个添加按钮 + 它会带来哪些模型, 不是一张缺 key 的表单。
+     * **还没激活**的那些: 内置目录里有、配置里还没有。
      *
-     * **只在 routes 里还没有它时才出现。** 真内核是这个语义（dormant =
-     * "目录里有、配置里没加"）, 这里漏判的话, 点完添加会同时出现两条 id 相同的
-     * 供应商 —— React 报重复 key, 而界面上看起来像"添加没生效, 又多了一条"。
+     * 这一段**直接遍历 `CATALOG`**, 不再手写某一家 —— 手写的话, 假数据只有
+     * 4 条而真内核有 13 条, 于是"设置页里只有两家供应商"这种幻觉会一路带进
+     * 截图和验收（实际发生过一次: 前端看着像没接目录）。
+     *
+     * `dormant` 的语义与真内核一致: 目录里有、配置里没加。所以这里必须
+     * `filter` 掉已经在 `routes()` 里的 —— 否则点完添加会同时出现两条 id
+     * 相同的供应商, React 报重复 key, 界面上看起来像"添加没生效, 又多了一条"。
      */
-    ...(routes().zai
-      ? []
-      : [
-          {
-            id: 'zai',
-            name: 'Z.AI',
-            protocol: 'openai-completions',
-            models: ZAI_MODELS,
-            available: false,
-            dormant: true,
-            configScope: 'llm.openai',
-            configPath: ['routes', 'zai'],
-            template: {
-              displayName: 'Z.AI',
-              protocol: 'openai-completions',
-              baseURL: 'https://api.z.ai/api/coding/paas/v4',
-              apiKeyEnv: 'ZAI_API_KEY',
-              models: [],
-              modelOverrides: {},
-            },
-            config: [],
-            missing: ['还没添加 —— 在设置页点"添加"即可'],
-          },
-        ]),
+    ...CATALOG.filter((entry) => routes()[entry.id] === undefined).map((entry) => ({
+      id: entry.id,
+      name: entry.name,
+      protocol: entry.protocol,
+      models: entry.models as FixtureModel[],
+      available: false,
+      dormant: true,
+      configScope: 'llm.openai',
+      configPath: ['routes', entry.id],
+      template: templateOf(entry),
+      config: [],
+      missing: ['还没添加 —— 在设置页点"添加"即可'],
+    })),
   ]
 
   const events: StreamEvent[] = []

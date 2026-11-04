@@ -17,6 +17,161 @@
   letter-spacing: 0.02em;
 }
 
+/*
+  段标题行: 标题 + 右侧动作（「＋ 新建」）。
+  动作跟标题同一行 —— 它属于这一段, 不属于下面那张表。
+*/
+.sectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 9px;
+}
+
+.sectionHead .sectionTitle {
+  margin: 0;
+}
+
+.newButton {
+  font: inherit;
+  font-size: 12.5px;
+  padding: 3px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--meng-alias-border-l2);
+  background: transparent;
+  color: var(--meng-alias-fg-secondary);
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    color 0.15s;
+}
+
+.newButton:hover {
+  border-color: var(--meng-alias-accent);
+  color: var(--meng-alias-accent);
+  background: var(--meng-alias-accent-subtle);
+}
+
+/* ── 新建自定义 API 的表单 ── */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: var(--meng-specific-radius-xl);
+  background: var(--meng-alias-bg-surface);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fieldLabel {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--meng-alias-fg-primary);
+}
+
+.input {
+  font: inherit;
+  font-size: 13px;
+  font-family: var(--meng-specific-font-mono);
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--meng-alias-border-l2);
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-primary);
+  outline: none;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.input:focus {
+  border-color: var(--meng-alias-accent);
+  background: var(--meng-alias-bg-surface);
+}
+
+.input::placeholder {
+  color: var(--meng-alias-fg-muted);
+  font-family: var(--meng-specific-font-mono);
+}
+
+.hint,
+.fieldError {
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.hint {
+  color: var(--meng-alias-fg-muted);
+}
+
+.fieldError {
+  color: var(--meng-alias-danger);
+}
+
+.formError {
+  margin: 0;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: var(--meng-alias-danger-subtle);
+  color: var(--meng-alias-danger);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.primary,
+.ghost {
+  font: inherit;
+  font-size: 12.5px;
+  padding: 6px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    opacity 0.15s;
+}
+
+.primary {
+  border: 1px solid var(--meng-alias-accent);
+  background: var(--meng-alias-accent);
+  color: var(--meng-alias-fg-on-accent);
+}
+
+.primary:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.ghost {
+  border: 1px solid var(--meng-alias-border-l2);
+  background: transparent;
+  color: var(--meng-alias-fg-secondary);
+}
+
+.ghost:hover:not(:disabled) {
+  background: var(--meng-alias-bg-hover);
+}
+
+.primary:disabled,
+.ghost:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
 .empty {
   margin: 0;
   padding: 14px 16px;

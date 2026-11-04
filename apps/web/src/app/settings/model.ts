@@ -115,12 +115,14 @@ export function modelSummary(models: ModelInfo[], max = 3): string {
   return names.join(' · ') + (rest > 0 ? ` +${rest}` : '')
 }
 
-/** `200000` → `200K`，`1000000` → `1M`。**不知道就返回 undefined**，不返回 `—` */
+/** `200000` → `196K`，`1048576` → `1M`（1024 的倍数不该说成 "1.0M"）。**不知道就返回 undefined** */
 export function formatTokens(n?: number): string | undefined {
   if (n === undefined || !Number.isFinite(n) || n <= 0) return undefined
   if (n >= 1_000_000) {
-    const m = n / 1_000_000
-    return `${Number.isInteger(m) ? m : m.toFixed(1)}M`
+    // 先四舍五入到一位再拼 —— `1.048576.toFixed(1)` 得到 "1.0", 那个 ".0"
+    // 会让人以为"精确到 1.0M", 而实际是 1048576。整数值就别带小数
+    const m = Math.round((n / 1_000_000) * 10) / 10
+    return `${m}M`
   }
   if (n >= 1000) return `${Math.round(n / 1024)}K`
   return String(n)
@@ -197,3 +199,106 @@ export function messageOf(err: unknown): string {
 export function shownProviders(list: CatalogProvider[]): CatalogProvider[] {
   return list.filter((p) => p.dormant === true || p.configScope !== undefined)
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 自定义 API: 表单 → 路由
+//
+// 后端**不需要新接口**: `routes` 是 `z.record(string, RouteSchema)`,
+// 写一个新的键就是多一家供应商（`config.set` 一条就够）。所以这一整块
+// 是纯前端的事 —— 但换算规则必须是纯函数, 否则"填了保存不了"只能靠手点。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 「新建自定义 API」表单里的四个格子。`models` 是逗号/空白分隔的一行文本 */
+export interface CustomDraft {
+  name: string
+  baseURL: string
+  apiKeyEnv: string
+  models: string
+}
+
+export const EMPTY_DRAFT: CustomDraft = {
+  name: '',
+  baseURL: '',
+  apiKeyEnv: 'CUSTOM_API_KEY',
+  models: '',
+}
+
+/** 环境变量名。**只收合法标识符** —— 写错了它永远是"没有值", 而界面上看不出区别 */
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
+
+export type DraftErrors = Partial<Record<keyof CustomDraft, string>>
+
+/**
+ * 表单校验。空对象 = 可以保存。
+ *
+ * 判据全部来自后端的 `RouteSchema`, 一条都不多: `baseURL` 有 `minLength: 1`
+ * （这里再要求 `http(s)://` 是因为"填个 `api.xxx.com`"是最常见的错,
+ * 而它会在发请求时才炸, 报错离现场很远）。
+ *
+ * 名称**不能空**: 它是界面上的标题, 也是路由 id 的来源。允许空的话会掉到
+ * `custom` 这种名字上, 用户之后没法分辨哪个是自己的哪一个。
+ */
+export function draftErrors(draft: CustomDraft): DraftErrors {
+  const out: DraftErrors = {}
+  if (draft.name.trim() === '') out.name = '给它起个名字，之后你靠这个名字认它'
+  if (draft.baseURL.trim() === '') out.baseURL = '填接口地址，例如 https://api.example.com/v1'
+  else if (!/^https?:\/\//i.test(draft.baseURL.trim())) out.baseURL = '要以 http:// 或 https:// 开头'
+  if (!ENV_NAME.test(draft.apiKeyEnv.trim())) out.apiKeyEnv = '变量名只能用字母、数字、下划线，且不能以数字开头'
+  return out
+}
+
+/**
+ * 路由 id —— 用户填的名字到配置键。
+ *
+ * **为什么要 slug 而不是让用户填路由名**: 路由名是给程序看的（`model` 点名、
+ * 日志里显形）。让用户理解"键名不能有空格和中文"是在为我们的数据结构收税。
+ * 中文/纯符号的名字 slug 出来是空的, 那时回落 `custom` + 序号 —— 宁可是个
+ * 没意义的名字, 也不能是空键（空键在 JSON 里合法, 但设置页会画不出来）。
+ */
+export function routeIdOf(name: string, taken: readonly string[]): string {
+  const base =
+    name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'custom'
+
+  const used = new Set(taken)
+  if (!used.has(base)) return base
+  let n = 2
+  while (used.has(`${base}-${n}`)) n += 1
+  return `${base}-${n}`
+}
+
+/** 模型那一行: 逗号 / 空格 / 换行都算分隔。空字符串 = 一个都不填（合法） */
+export function parseModelIds(text: string): string[] {
+  return [...new Set(text.split(/[,\s，、]+/).map((s) => s.trim()).filter(Boolean))]
+}
+
+/**
+ * 表单 → 写进 `routes[id]` 的那份 profile。
+ *
+ * 只写**用户真填了的** + 后端 schema 里有 `.default()` 的那几个。后者要写全,
+ * 因为带 default 的字段在输出类型里是必填 —— 漏了它, 后端 parse 会补上默认值,
+ * 但那是后端的假设, 不该由前端"以为"。
+ */
+export function profileOfDraft(draft: CustomDraft, id: string): Record<string, unknown> {
+  const ids = parseModelIds(draft.models)
+  return {
+    displayName: draft.name.trim() || id,
+    // 目前后端只实现了这一种 wire 协议（`RouteSchema` 里 enum 只有它）。
+    // 等它多一种, 这里要跟着改成表单里的一个选择框 —— 那时 schema 的 enum 就是选项源。
+    protocol: 'openai-completions',
+    baseURL: draft.baseURL.trim(),
+    apiKeyEnv: draft.apiKeyEnv.trim(),
+    // 一条模型都不填也行: 后端会用目录/兜底（`modelsOf`），但界面上会显示成
+    // 兜底那一条的名字。填了才是用户想要的清单，所以提示里让他填。
+    models: ids.map((id2) => ({ id: id2 })),
+    modelOverrides: {},
+    defaultContextWindow: 262144,
+    defaultMaxTokens: 32768,
+    defaultInput: ['text'],
+    headers: {},
+  }
+}
+

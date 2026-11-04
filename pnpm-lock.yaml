@@ -103,6 +103,9 @@ importers:
       '@meng/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@meng/llm-catalog':
+        specifier: workspace:*
+        version: link:../../packages/llm-catalog
       '@meng/modules':
         specifier: workspace:*
         version: link:../../packages/modules
