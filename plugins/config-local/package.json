@@ -6,6 +6,7 @@
   "main": "./src/index.ts",
   "dependencies": {
     "@meng/config": "workspace:*",
-    "@meng/core": "workspace:*"
+    "@meng/core": "workspace:*",
+    "zod": "^4.6.7"
   }
 }

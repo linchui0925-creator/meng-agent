@@ -21,6 +21,12 @@
  * 代价: **换密钥要重启进程**。env 是进程启动时读入的, 运行中的进程看不到
  * 新的 env。这是安全换来的代价, 写在文档里, 不藏着。
  *
+ * ## 两种声明写法, 一条处理路径
+ *
+ * 扁平声明 (`{ type: 'number' }`) 在这里被 `plainToZod()` 转成 zod schema,
+ * 之后取值 / 校验 / 序列化只看 schema。所以两种写法不会有两套行为 ——
+ * 这是"能给老的四十五个键一行不改地接上 zod"的前提。
+ *
  * ## manifest 层
  *
  * 清单里的 `config:` 值走的是插件 `apply(ctx, config)` 参数, 不走这一层。
@@ -31,6 +37,7 @@
 
 import { readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
+import * as z from 'zod'
 import {
   CONFIG_CODE,
   ConfigError,
@@ -39,9 +46,11 @@ import {
   type ConfigDecl,
   type ConfigEntry,
   type ConfigField,
+  type ConfigItem,
   type ConfigScope,
   type ConfigService,
   type ConfigSource,
+  type ConfigType,
 } from '@meng/config'
 import type { Ctx, Disposer } from '@meng/core'
 import { defineInvariant } from '@meng/core'
@@ -52,31 +61,140 @@ function envNameOf(scope: string, key: string): string {
   return `MENG_${raw.replace(/[^A-Za-z0-9]+/g, '_').toUpperCase()}`
 }
 
-/** 把字符串按声明类型转过去。转不过去就抛 —— 静默给默认值会让错配置永远查不出来 */
-function coerce(field: ConfigField, raw: unknown, full: string): string | number | boolean {
-  if (field.type === 'string') {
-    if (typeof raw === 'string') return raw
+/**
+ * 判断"这是 schema 还是扁平声明"。
+ *
+ * 用鸭子类型而不是 `instanceof z.ZodType`: 缝里也要做同样的判断, 而缝不能
+ * import zod 运行时。同一条判据两边共用, 才不会出现"缝认得出、实现认不出"。
+ */
+function isSchema(item: ConfigItem): item is z.ZodType {
+  return typeof (item as z.ZodType).parse === 'function'
+}
+
+/**
+ * 扁平声明 → zod schema。
+ *
+ * 这是"两种写法一条路径"的那座桥。转过去之后, 校验、默认值、JSON Schema
+ * 全都只有一份实现, 不存在"扁平声明走 if、zod 走 parse"这种双轨。
+ */
+function plainToZod(field: ConfigField): z.ZodType {
+  let schema: z.ZodType =
+    field.type === 'number' ? z.number() : field.type === 'boolean' ? z.boolean() : z.string()
+
+  // 有 default 就交给 zod —— 取值的"最后一层"因此只有一处实现。
+  // required 且无 default 时不加, `parse(undefined)` 会抛, 正好对应"缺了就报错"
+  if (field.default !== undefined) {
+    schema = schema.default(field.default)
+  }
+
+  // 我们的元信息 (secret / env / required / desc) 挂在 meta 上。
+  // 选 meta 而不是另建字段, 是因为 `z.toJSONSchema()` 会把 meta 原样带进
+  // JSON Schema —— 设置页拿到 schema 就同时知道"这是密钥、它绑哪个 env",
+  // 不需要第二条通道
+  const meta: Record<string, unknown> = {}
+  if (field.secret === true) meta['secret'] = true
+  if (field.env !== undefined) meta['env'] = field.env
+  if (field.required === true) meta['required'] = true
+  if (field.desc !== undefined) meta['description'] = field.desc
+
+  return Object.keys(meta).length > 0 ? schema.meta(meta) : schema
+}
+
+/**
+ * 把线上来的原始值转成 schema 期望的形状。
+ *
+ * 为什么必须做这一步: **env 里一切都是字符串**。不做转换, `MENG_PORT=4721`
+ * 会被 `z.number()` 直接拒掉 —— 那不是配置错了, 是运输层只有字符串。
+ * 同理 YAML 会把 `4721` 解析成 number, 而配置项是 string。
+ *
+ * 只按 schema 的顶层类型转, 不做递归: 组合配置 (object/array) 在 env 里
+ * 应该是 JSON 字符串, 那不是"类型转换"而是"反序列化", 属于另一件事。
+ * 现在没有这种配置项, 有的话在声明里用 `z.string().transform(JSON.parse)` 表达,
+ * 语义更清楚。
+ */
+function shapeForWire(json: Record<string, unknown>, raw: unknown): unknown {
+  const t = json['type']
+
+  if (t === 'string') {
     // 数字/布尔也该能当字符串用: 用户把端口写成 4721, YAML 会解析成 number
     if (typeof raw === 'number' || typeof raw === 'boolean') return String(raw)
-    throw new ConfigError(CONFIG_CODE.TYPE, full, `${full} 应该是字符串, 拿到 ${typeof raw}`)
+    return raw
   }
-  if (field.type === 'number') {
-    if (typeof raw === 'number' && Number.isFinite(raw)) return raw
+  if (t === 'number' || t === 'integer') {
     if (typeof raw === 'string' && raw.trim() !== '') {
       const n = Number(raw)
       if (Number.isFinite(n)) return n
     }
-    throw new ConfigError(CONFIG_CODE.TYPE, full, `${full} 应该是数字, 拿到 ${JSON.stringify(raw)}`)
+    return raw
   }
-  if (typeof raw === 'boolean') return raw
-  if (raw === 'true' || raw === '1') return true
-  if (raw === 'false' || raw === '0') return false
-  throw new ConfigError(CONFIG_CODE.TYPE, full, `${full} 应该是布尔值, 拿到 ${JSON.stringify(raw)}`)
+  if (t === 'boolean') {
+    if (raw === 'true' || raw === '1') return true
+    if (raw === 'false' || raw === '0') return false
+    return raw
+  }
+  return raw
+}
+
+/** 从 JSON Schema 的顶层类型推 `ConfigEntry.type`。推不出就当联合 */
+function typeOf(json: Record<string, unknown>): ConfigType {
+  const t = json['type']
+  if (t === 'string' || t === 'boolean' || t === 'object' || t === 'array') return t
+  if (t === 'number' || t === 'integer') return 'number'
+  if (Array.isArray(json['anyOf']) || Array.isArray(json['oneOf'])) return 'union'
+  return 'string'
+}
+
+interface SlotMeta {
+  secret: boolean
+  env?: string
+  required: boolean
+  desc?: string
 }
 
 interface Slot {
-  field: ConfigField
+  schema: z.ZodType
+  meta: SlotMeta
+  /** 标准 JSON Schema。算一次, 取值和 list() 共用 */
+  json: Record<string, unknown>
+  /** 声明的默认值。`parse(undefined)` 的结果, 算一次 */
+  defaultValue: unknown
   scope: string
+}
+
+/** 把一个声明条目归一成 slot(不含 scope)。扁平声明和 zod schema 在这里合流 */
+function normalize(item: ConfigItem): Omit<Slot, 'scope'> {
+  const schema = isSchema(item) ? item : plainToZod(item)
+
+  let json: Record<string, unknown> = {}
+  try {
+    json = z.toJSONSchema(schema) as Record<string, unknown>
+  } catch {
+    // 有些 zod 类型本来就无法表示成 JSON Schema (bigint / date / transform)。
+    // **不阻断启动**: 取值照样能走, 只是设置页画不出控件 —— 那比整个内核起不来好
+    json = {}
+  }
+
+  // 元信息: 扁平声明写在字段上, zod 写在 `.meta()` 里。归一之后一视同仁
+  const rawMeta = (schema.meta?.() ?? {}) as Record<string, unknown>
+  const plain = isSchema(item) ? undefined : item
+  const desc = plain?.desc ?? (typeof rawMeta['description'] === 'string' ? rawMeta['description'] : undefined)
+  const env = plain?.env ?? (typeof rawMeta['env'] === 'string' ? rawMeta['env'] : undefined)
+
+  const meta: SlotMeta = {
+    secret: plain?.secret === true || rawMeta['secret'] === true,
+    required: plain?.required === true || rawMeta['required'] === true,
+  }
+  if (env !== undefined) meta.env = env
+  if (desc !== undefined) meta.desc = desc
+
+  let defaultValue: unknown
+  try {
+    defaultValue = schema.parse(undefined)
+  } catch {
+    defaultValue = undefined
+  }
+
+  return { schema, meta, json, defaultValue }
 }
 
 export async function apply(
@@ -115,29 +233,40 @@ export async function apply(
 
   /** 解析一层来源。返回 undefined 表示这层没给值 */
   const fromEnv = (slot: Slot, name: string): string | undefined => {
-    const envName = slot.field.env ?? envNameOf(slot.scope, name)
+    const envName = slot.meta.env ?? envNameOf(slot.scope, name)
     const raw = process.env[envName]
     // 空串按"没配"处理。这一条是**统一**的: 老代码一半 `??` 一半 `||`,
     // 空串在一半地方算有效值, 于是 `MENG_WORKSPACE=` 这种写法行为随机
     return raw === undefined || raw === '' ? undefined : raw
   }
 
+  /** 交给 schema 做最终校验。失败转成 ConfigError, 不把 zod 的类泄漏给调用方 */
+  const parseVia = (slot: Slot, raw: unknown, full: string): unknown => {
+    const shaped = shapeForWire(slot.json, raw)
+    const result = slot.schema.safeParse(shaped)
+    if (result.success) return result.data
+    // zod 的错误消息带路径, 对"哪个键写错了"这个问题来说是最有用的信息
+    const first = result.error.issues[0]
+    const where = first && first.path.length > 0 ? `.${first.path.join('.')}` : ''
+    const why = first ? first.message : '不符合声明'
+    throw new ConfigError(CONFIG_CODE.TYPE, full, `${full}${where} ${why} (拿到 ${JSON.stringify(raw)})`)
+  }
+
   const resolveOne = (
     scope: string,
     key: string,
-  ): { value: string | number | boolean | undefined; source?: ConfigSource; secretRef?: string } => {
+  ): { value: unknown; source?: ConfigSource; secretRef?: string } => {
     const slot = slotOf(scope, key)
     if (!slot) return { value: undefined }
     const full = `${scope}.${key}`
-    const field = slot.field
 
-    if (field.secret) {
+    if (slot.meta.secret) {
       // 密钥: settings 里存的是**名字**, 值只从环境读
       const bound = settings[full]
       const envName =
         typeof bound === 'string' && bound.trim() !== ''
           ? bound.trim()
-          : (field.env ?? envNameOf(scope, key))
+          : (slot.meta.env ?? envNameOf(scope, key))
       const value = process.env[envName]
       return {
         // 空串也是空 —— 密钥是空串等于没配
@@ -152,16 +281,20 @@ export async function apply(
     // 清空一个输入框就会得到一个空字符串, 而不是"回到默认值" ——
     // 那是设置页上最容易被当成 bug 的行为
     if (fromSettings !== undefined && fromSettings !== null && fromSettings !== '') {
-      return { value: coerce(field, fromSettings, full), source: 'settings' }
+      return { value: parseVia(slot, fromSettings, full), source: 'settings' }
     }
 
     const raw = fromEnv(slot, key)
-    if (raw !== undefined) return { value: coerce(field, raw, full), source: 'env' }
+    if (raw !== undefined) return { value: parseVia(slot, raw, full), source: 'env' }
 
-    if (field.default !== undefined) return { value: field.default, source: 'default' }
+    if (slot.defaultValue !== undefined) return { value: slot.defaultValue, source: 'default' }
 
-    if (field.required) {
-      throw new ConfigError(CONFIG_CODE.MISSING, full, `缺少必填配置 ${full} (环境变量 ${field.env ?? envNameOf(scope, key)})`)
+    if (slot.meta.required) {
+      throw new ConfigError(
+        CONFIG_CODE.MISSING,
+        full,
+        `缺少必填配置 ${full} (环境变量 ${slot.meta.env ?? envNameOf(scope, key)})`,
+      )
     }
     return { value: undefined }
   }
@@ -181,20 +314,21 @@ export async function apply(
     const self: ConfigScope = {
       name: scope,
       declare(decl: ConfigDecl) {
-        const mine: Array<[string, ConfigField]> = []
+        const mine: Array<[string, Slot]> = []
         for (const key of Object.keys(decl)) {
-          const field = decl[key]
-          if (!field) continue
+          const item = decl[key]
+          if (!item) continue
           const full = `${scope}.${key}`
-          slots.set(full, { field, scope })
-          mine.push([full, field])
+          const slot: Slot = { ...normalize(item), scope }
+          slots.set(full, slot)
+          mine.push([full, slot])
         }
         return () => {
-          for (const [full, field] of mine) {
+          for (const [full, slot] of mine) {
             // 只回收自己那一版: 后来者覆盖过的声明不该被先来者的 disposer 干掉,
             // 否则热重载时会出现"新的声明被旧的卸载顺手删了"
             const cur = slots.get(full)
-            if (cur && cur.field === field) slots.delete(full)
+            if (cur && cur.schema === slot.schema) slots.delete(full)
           }
           if (mine.length > 0 && ![...slots.values()].some((s) => s.scope === scope)) {
             scopes.delete(scope)
@@ -202,7 +336,7 @@ export async function apply(
         }
       },
       get<T = string | number | boolean>(key: string): T | undefined {
-        if (slotOf(scope, key)?.field.secret) refuseSecret(key, 'get')
+        if (slotOf(scope, key)?.meta.secret) refuseSecret(key, 'get')
         return resolveOne(scope, key).value as T | undefined
       },
       require<T = string | number | boolean>(key: string): T {
@@ -212,18 +346,18 @@ export async function apply(
         }
         return v
       },
-      secret(key: string) {
+      secret(key) {
         const slot = slotOf(scope, key)
-        if (!slot?.field.secret) return undefined
+        if (!slot?.meta.secret) return undefined
         return resolveOne(scope, key).value as string | undefined
       },
       secretRef(key: string) {
         const slot = slotOf(scope, key)
-        if (!slot?.field.secret) return undefined
+        if (!slot?.meta.secret) return undefined
         return resolveOne(scope, key).secretRef
       },
       sourceOf(key: string) {
-        if (slotOf(scope, key)?.field.secret) {
+        if (slotOf(scope, key)?.meta.secret) {
           // 密钥的来源恒为 env —— 说"settings"会让人以为值存在文件里
           return resolveOne(scope, key).value === undefined ? undefined : 'env'
         }
@@ -248,15 +382,21 @@ export async function apply(
           key: full,
           scope,
           name,
-          type: slot.field.type,
-          secret: slot.field.secret === true,
-          required: slot.field.required === true,
+          type: typeOf(slot.json),
+          secret: slot.meta.secret,
+          required: slot.meta.required,
+          // 标准 JSON Schema, 设置页画控件靠它。前端不用装 zod
+          schema: slot.json,
         }
-        if (slot.field.default !== undefined) entry.default = slot.field.default
-        if (slot.field.desc !== undefined) entry.desc = slot.field.desc
+        // 组合配置的默认值是对象/数组, 类型对不上 `default?: 标量` —— 不给,
+        // 前端从 schema.default 拿得到同样的东西
+        if (typeof slot.defaultValue === 'string' || typeof slot.defaultValue === 'number' || typeof slot.defaultValue === 'boolean') {
+          entry.default = slot.defaultValue
+        }
+        if (slot.meta.desc !== undefined) entry.desc = slot.meta.desc
         // 密钥行的 value **恒不给**: 这条 if 是这一层唯一的安全边界
-        if (slot.field.secret !== true) {
-          if (r.value !== undefined) entry.value = r.value
+        if (!slot.meta.secret) {
+          if (r.value !== undefined) entry.value = r.value as string | number | boolean
           if (r.source !== undefined) entry.source = r.source
         } else if (r.secretRef !== undefined) {
           entry.secretRef = r.secretRef
@@ -317,6 +457,24 @@ export const invariant = defineInvariant('@meng/plugin-config-local', [
       for (const entry of svc.list()) {
         if (entry.secret && entry.value !== undefined) {
           throw new Error(`${entry.key} 是密钥, 但 list() 把值带出来了`)
+        }
+      }
+    },
+  },
+  {
+    id: 'every-entry-has-schema',
+    run(ctx) {
+      const svc = ctx.get<ConfigService>('config')
+      if (!svc) throw new Error('能力面 config 未注册')
+      // 设置页只认 schema 一种输入也能画。任何一项没有 schema, 就意味着
+      // 那一项在界面上会变成一个没有控件可用的死格子 —— 而且不会有报错
+      for (const entry of svc.list()) {
+        const schema = entry.schema as Record<string, unknown> | undefined
+        if (!schema || typeof schema !== 'object' || Object.keys(schema).length === 0) {
+          throw new Error(
+            `${entry.key} 没有 JSON Schema —— 设置页画不出控件。` +
+              `如果是无法表示的类型 (date/transform), 在声明里换成可表示的写法`,
+          )
         }
       }
     },

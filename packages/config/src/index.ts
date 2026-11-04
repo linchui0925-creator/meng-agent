@@ -40,17 +40,41 @@
  * ## 这条缝**不含**的判断 (留在上层)
  *   · 两套设置冲突时怎么提示用户 —— 那是设置页
  *   · 改完要不要立刻生效 —— 那是热更新, 现在没有"变的地方", 也就没有它
- *   · 配置值的合法性校验 (端口范围、路径存在) —— 那要等真有设置页再谈,
- *     现在手写 30 行够了, 不值得为 3 个 provider 引入一个 schema 库
+ *
+ * ## 声明有**两种写法**, 但只有一条处理路径
+ *
+ * 简单项写扁平声明 (`{ type: 'number', default: 4721 }`), 组合项写 zod
+ * (`z.union([z.object({...}), z.object({...})])`)。实现层把扁平声明归一成
+ * zod schema, 内部只走 `parse()` 一条路 —— 所以两种写法不会产生两套语义。
+ *
+ * **为什么是 zod 而不是 dsh 用的 schemastery**: 后者的 `toJSONSchema()` 等价物
+ * 输出的是 `{ uid, refs }` 私有信封, 前端必须 `new Schema(...)` 才能还原 ——
+ * 等于把设置页也焊死在一个 vendor 包里。zod 4 的 `z.toJSONSchema()` 输出
+ * 标准 draft 2020-12, 前端连 zod 都不用装。
+ *
+ * **缝本身仍然零运行时依赖**: 这里只有 `import type`, 编译后被擦掉。
+ * 真正 `import * as z` 的是 config-local —— 换成别的库只改那一处。
  */
 
 import { resolve } from 'node:path'
+import type { ZodType } from 'zod'
 import type { Ctx, Disposer } from '@meng/core'
 
 /** 能力面名。故意和包名一致, 免得又多一个记不住的字符串 */
 export const CONFIG_CAPABILITY = 'config'
 
-export type ConfigType = 'string' | 'number' | 'boolean'
+/**
+ * 设置页画控件用的粗分类。
+ *
+ * 前三个是标量 (输入框 / 数字框 / 开关), 后三个是组合:
+ *   · `object` — 键值表或分组表单 (看 schema 里有没有 `additionalProperties`)
+ *   · `array`  — 列表
+ *   · `union`  — "选一种", 选中后再按选中项的 schema 展开
+ *
+ * 这只是**给前端省一次 switch 的提示**, 真值在 `ConfigEntry.schema` 里。
+ * 认不出的类型降级成 `string` 也不会崩, 但那说明声明写得不该这么写。
+ */
+export type ConfigType = 'string' | 'number' | 'boolean' | 'object' | 'array' | 'union'
 
 /**
  * 一个配置项的声明。**插件声明, 设置页消费** —— 两边互不认识。
@@ -83,7 +107,33 @@ export interface ConfigField {
   desc?: string
 }
 
-export type ConfigDecl = Record<string, ConfigField>
+/**
+ * 一个配置项。两种写法:
+ *
+ *   · `ConfigField` —— 标量简写。四十五个既有键都是这个, 一行不用改
+ *   · `ZodType`    —— 组合参数。MCP 那种"两种 transport 二选一 + env 键值表"
+ *                     手写不出来, 也不该手写
+ *
+ * 两者由实现层归一到 zod schema, 之后只有一条取值/校验/序列化路径。
+ * 所以"两套写法"只是书写上的便利, 不会长出两套行为。
+ */
+export type ConfigItem = ConfigField | ZodType
+
+export type ConfigDecl = Record<string, ConfigItem>
+
+/**
+ * 判断一个声明是 schema 还是扁平字段。
+ *
+ * 用鸭子类型 (有没有 `parse` 方法) 而不是 `instanceof`: **缝不能 import zod
+ * 运行时**, 那会把零依赖这条线破掉。任何 schema 库的 schema 都满足这个判据,
+ * 所以将来换库也不用改这里。
+ *
+ * 判据必须和 config-local 里那条一致 —— 两边不一致就会出现"缝以为它是字段、
+ * 实现以为它是 schema"这种既没有报错也没有正常值的错。
+ */
+export function isSchemaItem(item: ConfigItem): item is ZodType {
+  return typeof (item as ZodType).parse === 'function'
+}
 
 /** 给设置页的一行。密钥行的 value 恒为 undefined —— 值不出这层 */
 export interface ConfigEntry {
@@ -103,6 +153,16 @@ export interface ConfigEntry {
   source?: ConfigSource
   /** 密钥行: 当前绑定到哪个环境变量名。非密钥行恒为 undefined */
   secretRef?: string
+  /**
+   * 这一项的**标准 JSON Schema** (draft 2020-12)。
+   *
+   * 设置页画控件靠它: 标量画输入框, `object` + `additionalProperties` 画键值表,
+   * `anyOf` 画"选一种"然后按选中项展开。**前端不需要装 zod** —— 它拿到的就是
+   * 普通 JSON, 这是选 zod 而不是 schemastery 的唯一理由。
+   *
+   * 扁平声明也会有这个字段 (由实现层生成), 所以设置页只认它一种也行。
+   */
+  schema?: unknown
 }
 
 export type ConfigSource = 'settings' | 'env' | 'manifest' | 'default'
@@ -235,7 +295,8 @@ export function sandboxRoot(ctx: Ctx): string {
   const svc = getConfig(ctx)
   if (svc) return resolveRoot(svc.scope('sandbox'))
 
-  const envName = KERNEL_CONFIG['sandbox']?.['root']?.env
+  const item = KERNEL_CONFIG['sandbox']?.['root']
+  const envName = item && !isSchemaItem(item) ? item.env : undefined
   const raw = envName ? process.env[envName] : undefined
   // 空串按"没配"处理 —— 和 config-local 同一条规则
   return resolve(raw === undefined || raw === '' ? '.' : raw)
@@ -252,15 +313,35 @@ export function sandboxRoot(ctx: Ctx): string {
  * config-local"和"装了但没配"两种状态变得不可区分, 排查时是灾难。
  */
 export function fallbackScope(name: string): ConfigScope {
-  const decls = new Map<string, { field: ConfigField; scope: string }>()
-  const fieldOf = (key: string): ConfigField | undefined => decls.get(key)?.field
+  const decls = new Map<string, { item: ConfigItem; scope: string }>()
 
-  const read = (key: string): { value: string | number | boolean | undefined; source: ConfigSource | undefined } => {
-    const field = fieldOf(key)
-    if (!field) return { value: undefined, source: undefined }
-    if (field.secret) return { value: undefined, source: undefined }
-    if (field.default !== undefined) return { value: field.default, source: 'default' }
-    return { value: undefined, source: undefined }
+  const plainOf = (key: string): ConfigField | undefined => {
+    const item = decls.get(key)?.item
+    return item && !isSchemaItem(item) ? item : undefined
+  }
+
+  const read = (
+    key: string,
+  ): { value: string | number | boolean | undefined; source: ConfigSource | undefined } => {
+    const plain = plainOf(key)
+    if (plain) {
+      if (plain.secret) return { value: undefined, source: undefined }
+      if (plain.default !== undefined) return { value: plain.default, source: 'default' }
+      return { value: undefined, source: undefined }
+    }
+
+    const item = decls.get(key)?.item
+    if (!item || !isSchemaItem(item)) return { value: undefined, source: undefined }
+    // schema 的默认值可以直接问它: parse(undefined) 有 default 就返回、
+    // 没 default 就抛。不需要知道是哪个库。
+    try {
+      const v: unknown = item.parse(undefined)
+      // 组合配置 (object / array) 不是标量, 兜底 scope 不做值语义, 只报"有"
+      if (v !== null && typeof v === 'object') return { value: undefined, source: undefined }
+      return { value: v as string | number | boolean, source: 'default' }
+    } catch {
+      return { value: undefined, source: undefined }
+    }
   }
 
   const refuseSecret = (key: string, via: string): never => {
@@ -276,20 +357,19 @@ export function fallbackScope(name: string): ConfigScope {
     declare(decl) {
       const mine = Object.keys(decl)
       for (const key of mine) {
-        const field = decl[key]
-        if (field) decls.set(key, { field, scope: name })
+        const item = decl[key]
+        if (item) decls.set(key, { item, scope: name })
       }
       return () => {
         for (const key of mine) {
           // 只删自己那份: 后来者覆盖过的声明不该被先来者的 disposer 干掉
           const cur = decls.get(key)
-          if (cur && cur.field === decl[key]) decls.delete(key)
+          if (cur && cur.item === decl[key]) decls.delete(key)
         }
       }
     },
     get<T = string | number | boolean>(key: string): T | undefined {
-      const field = fieldOf(key)
-      if (field?.secret) refuseSecret(key, 'get')
+      if (plainOf(key)?.secret) refuseSecret(key, 'get')
       return read(key).value as T | undefined
     },
     require<T = string | number | boolean>(key: string): T {
@@ -300,13 +380,13 @@ export function fallbackScope(name: string): ConfigScope {
       return v
     },
     secret(key) {
-      const field = fieldOf(key)
+      const field = plainOf(key)
       if (!field?.secret) return undefined
       // 兜底 scope 不读 env: 见上面的注释
       return undefined
     },
     secretRef(key) {
-      const field = fieldOf(key)
+      const field = plainOf(key)
       return field?.secret ? field.env : undefined
     },
     sourceOf(key) {

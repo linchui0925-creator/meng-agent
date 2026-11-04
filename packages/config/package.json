@@ -6,5 +6,8 @@
   "main": "./src/index.ts",
   "dependencies": {
     "@meng/core": "workspace:*"
+  },
+  "devDependencies": {
+    "zod": "^4.6.7"
   }
 }
