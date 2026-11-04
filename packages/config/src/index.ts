@@ -41,23 +41,29 @@
  *   · 两套设置冲突时怎么提示用户 —— 那是设置页
  *   · 改完要不要立刻生效 —— 那是热更新, 现在没有"变的地方", 也就没有它
  *
- * ## 声明有**两种写法**, 但只有一条处理路径
+ * ## 声明只有**一种写法**: zod schema
  *
- * 简单项写扁平声明 (`{ type: 'number', default: 4721 }`), 组合项写 zod
- * (`z.union([z.object({...}), z.object({...})])`)。实现层把扁平声明归一成
- * zod schema, 内部只走 `parse()` 一条路 —— 所以两种写法不会产生两套语义。
+ * 标量写 `z.number().default(4721)`, 组合写
+ * `z.union([z.object({...}), z.object({...})])` —— 大配置小配置同一套语法。
+ *
+ * 曾经并存过两种写法: 扁平简写 (`{ type: 'number', default: 4721 }`) 加 zod,
+ * 由实现层把前者归一成后者。**那条路已经删掉了。** 原因是"两种写法"必然
+ * 长出第三件事: 一个新人要读两遍文档才能判断该用哪个, 而这个判断标准写不进
+ * 类型系统 —— 于是写错不报错, 只是风格分裂。统一之后声明就是 schema,
+ * 系统里没有"先转换再使用"这一步。
  *
  * **为什么是 zod 而不是 dsh 用的 schemastery**: 后者的 `toJSONSchema()` 等价物
  * 输出的是 `{ uid, refs }` 私有信封, 前端必须 `new Schema(...)` 才能还原 ——
  * 等于把设置页也焊死在一个 vendor 包里。zod 4 的 `z.toJSONSchema()` 输出
  * 标准 draft 2020-12, 前端连 zod 都不用装。
  *
- * **缝本身仍然零运行时依赖**: 这里只有 `import type`, 编译后被擦掉。
- * 真正 `import * as z` 的是 config-local —— 换成别的库只改那一处。
+ * **代价 (明知而为)**: 这条缝不再零运行时依赖 —— `KERNEL_CONFIG` 要真的构造
+ * schema, 所以 zod 进了 dependencies。对外仍是类型 + 几个纯函数, 换库只改
+ * 本文件和 config-local 两处。
  */
 
 import { resolve } from 'node:path'
-import type { ZodType } from 'zod'
+import * as z from 'zod'
 import type { Ctx, Disposer } from '@meng/core'
 
 /** 能力面名。故意和包名一致, 免得又多一个记不住的字符串 */
@@ -77,62 +83,49 @@ export const CONFIG_CAPABILITY = 'config'
 export type ConfigType = 'string' | 'number' | 'boolean' | 'object' | 'array' | 'union'
 
 /**
- * 一个配置项的声明。**插件声明, 设置页消费** —— 两边互不认识。
- */
-export interface ConfigField {
-  type: ConfigType
-  /** 没配时用它。required 为真时不该同时写 default */
-  default?: string | number | boolean
-  /**
-   * 密钥。为真时:
-   *   · settings 层存的是**环境变量名**(如 DEEPSEEK_API_KEY), 不是密钥本身
-   *   · 值只从 process.env 读
-   *   · `get()` 拿不到它, 必须走 `secret()`
-   *   · 不会出现在 sourceOf / 任何对外快照的值里
-   */
-  secret?: boolean
-  /**
-   * 这个配置项对应的**环境变量名**。
-   *
-   * 普通键: 缺省按 `MENG_<SCOPE>_<KEY>` 推导, 写它就是为了**兼容老名字**
-   * (比如 `sandbox.root` 的老名字是 `MENG_WORKSPACE`, 已经散在部署脚本里了)。
-   *
-   * 密钥: 这是**缺省**绑定的环境变量名 —— 配了它, 用户什么都不设也能从
-   * 环境变量工作; 用户在界面上改了, 就是换绑到另一个环境变量名。
-   */
-  env?: string
-  /** 缺了就报错, 而不是静默给默认值。启动期失败比第一句话才失败好查 */
-  required?: boolean
-  /** 给设置页显示的说明 */
-  desc?: string
-}
-
-/**
- * 一个配置项。两种写法:
+ * 一个配置项的声明: **zod schema**。插件声明, 设置页消费 —— 两边互不认识。
  *
- *   · `ConfigField` —— 标量简写。四十五个既有键都是这个, 一行不用改
- *   · `ZodType`    —— 组合参数。MCP 那种"两种 transport 二选一 + env 键值表"
- *                     手写不出来, 也不该手写
+ * 只有一种写法。标量和组合用同一套语法:
  *
- * 两者由实现层归一到 zod schema, 之后只有一条取值/校验/序列化路径。
- * 所以"两套写法"只是书写上的便利, 不会长出两套行为。
+ *     root: z.string().default('.').meta({ env: 'MENG_WORKSPACE', description: '…' })
+ *     port: z.number().int().min(1).max(65535).default(4721)
+ *     mcp:  z.union([z.object({ transport: z.literal('stdio'), … }), …])
+ *
+ * ## 元信息挂在 `.meta()` 上, 不另建一套字段
+ *
+ * 认得的四个键, 其余原样进 JSON Schema:
+ *
+ *   · `secret: true`   —— 密钥。语义见下, 这是本层唯一的安全边界
+ *   · `env: 'NAME'`    —— 绑定的环境变量名 (写它是为了兼容老名字)
+ *   · `required: true` —— 给设置页显示的"必填"标记 (真正的必填由"没有 default"
+ *                        决定: `parse(undefined)` 抛错, 天然就是缺了不行)
+ *   · `description`    —— 界面说明。用**标准名**, 因为我们直接吃 JSON Schema
+ *
+ * 为什么用 meta 而不是自定义接口: `z.toJSONSchema()` 会把 meta 原样带进
+ * JSON Schema, 于是**同一条通道同时喂界面和安全边界** —— 不会出现
+ * "界面上说它是密钥、取值层却不知道"这种两处声明打架的情况。
+ *
+ * ## `secret: true` 的语义
+ *
+ *   · settings 层存的是**环境变量名**(如 DEEPSEEK_API_KEY), 不是密钥本身
+ *   · 值只从 `process.env` 读
+ *   · `get()` 拿不到它, 必须走 `secret()`
+ *   · 不会出现在 sourceOf / 任何对外快照的值里
  */
-export type ConfigItem = ConfigField | ZodType
+export type ConfigItem = z.ZodType
 
 export type ConfigDecl = Record<string, ConfigItem>
 
 /**
- * 判断一个声明是 schema 还是扁平字段。
+ * 读一个 schema 上挂的元信息。
  *
- * 用鸭子类型 (有没有 `parse` 方法) 而不是 `instanceof`: **缝不能 import zod
- * 运行时**, 那会把零依赖这条线破掉。任何 schema 库的 schema 都满足这个判据,
- * 所以将来换库也不用改这里。
- *
- * 判据必须和 config-local 里那条一致 —— 两边不一致就会出现"缝以为它是字段、
- * 实现以为它是 schema"这种既没有报错也没有正常值的错。
+ * 全仓只有这一处从 schema 里掏 meta —— 换成别的库只改这个函数。
+ * 声明是 schema 而不是"schema + 一个并行字段表", 正是为了避免
+ * "界面上标了密钥、取值层没标"这种两处声明不一致。
  */
-export function isSchemaItem(item: ConfigItem): item is ZodType {
-  return typeof (item as ZodType).parse === 'function'
+function metaOf(schema: ConfigItem): Record<string, unknown> {
+  const raw: unknown = schema.meta?.()
+  return raw !== null && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
 }
 
 /** 给设置页的一行。密钥行的 value 恒为 undefined —— 值不出这层 */
@@ -256,13 +249,11 @@ export function getConfig(ctx: Ctx): ConfigService | undefined {
  */
 export const KERNEL_CONFIG: Record<string, ConfigDecl> = {
   sandbox: {
-    root: {
-      type: 'string',
-      default: '.',
+    root: z.string().default('.').meta({
       // 老名字。已经写进部署脚本和文档里了, 改掉就是静默失效 —— 比报错难查得多
       env: 'MENG_WORKSPACE',
-      desc: '工作区根目录。文件读写、搜索、bash 的 cwd 都不能越过它',
-    },
+      description: '工作区根目录。文件读写、搜索、bash 的 cwd 都不能越过它',
+    }),
   },
 }
 
@@ -296,8 +287,8 @@ export function sandboxRoot(ctx: Ctx): string {
   if (svc) return resolveRoot(svc.scope('sandbox'))
 
   const item = KERNEL_CONFIG['sandbox']?.['root']
-  const envName = item && !isSchemaItem(item) ? item.env : undefined
-  const raw = envName ? process.env[envName] : undefined
+  const envName = item ? metaOf(item)['env'] : undefined
+  const raw = typeof envName === 'string' ? process.env[envName] : undefined
   // 空串按"没配"处理 —— 和 config-local 同一条规则
   return resolve(raw === undefined || raw === '' ? '.' : raw)
 }
@@ -313,27 +304,22 @@ export function sandboxRoot(ctx: Ctx): string {
  * config-local"和"装了但没配"两种状态变得不可区分, 排查时是灾难。
  */
 export function fallbackScope(name: string): ConfigScope {
-  const decls = new Map<string, { item: ConfigItem; scope: string }>()
+  const decls = new Map<string, ConfigItem>()
 
-  const plainOf = (key: string): ConfigField | undefined => {
-    const item = decls.get(key)?.item
-    return item && !isSchemaItem(item) ? item : undefined
+  const metaAt = (key: string): Record<string, unknown> => {
+    const item = decls.get(key)
+    return item ? metaOf(item) : {}
   }
 
   const read = (
     key: string,
   ): { value: string | number | boolean | undefined; source: ConfigSource | undefined } => {
-    const plain = plainOf(key)
-    if (plain) {
-      if (plain.secret) return { value: undefined, source: undefined }
-      if (plain.default !== undefined) return { value: plain.default, source: 'default' }
-      return { value: undefined, source: undefined }
-    }
-
-    const item = decls.get(key)?.item
-    if (!item || !isSchemaItem(item)) return { value: undefined, source: undefined }
-    // schema 的默认值可以直接问它: parse(undefined) 有 default 就返回、
-    // 没 default 就抛。不需要知道是哪个库。
+    const item = decls.get(key)
+    if (!item) return { value: undefined, source: undefined }
+    // 密钥不出值 —— 和 config-local 同一条规则, 兜底层也不能破
+    if (metaAt(key)['secret'] === true) return { value: undefined, source: undefined }
+    // 默认值直接问 schema: parse(undefined) 有 default 就返回、没 default 就抛。
+    // 不需要知道是哪个库 —— 换库时这个函数不用改
     try {
       const v: unknown = item.parse(undefined)
       // 组合配置 (object / array) 不是标量, 兜底 scope 不做值语义, 只报"有"
@@ -358,18 +344,17 @@ export function fallbackScope(name: string): ConfigScope {
       const mine = Object.keys(decl)
       for (const key of mine) {
         const item = decl[key]
-        if (item) decls.set(key, { item, scope: name })
+        if (item) decls.set(key, item)
       }
       return () => {
         for (const key of mine) {
           // 只删自己那份: 后来者覆盖过的声明不该被先来者的 disposer 干掉
-          const cur = decls.get(key)
-          if (cur && cur.item === decl[key]) decls.delete(key)
+          if (decls.get(key) === decl[key]) decls.delete(key)
         }
       }
     },
     get<T = string | number | boolean>(key: string): T | undefined {
-      if (plainOf(key)?.secret) refuseSecret(key, 'get')
+      if (metaAt(key)['secret'] === true) refuseSecret(key, 'get')
       return read(key).value as T | undefined
     },
     require<T = string | number | boolean>(key: string): T {
@@ -380,14 +365,14 @@ export function fallbackScope(name: string): ConfigScope {
       return v
     },
     secret(key) {
-      const field = plainOf(key)
-      if (!field?.secret) return undefined
-      // 兜底 scope 不读 env: 见上面的注释
+      // 兜底 scope 不读 env: 见上面的注释。密钥声明在这里也只是"不报错",
+      // 值恒空 —— 不会因为没装 config-local 就悄悄从 env 泄漏出来
+      void key
       return undefined
     },
     secretRef(key) {
-      const field = plainOf(key)
-      return field?.secret ? field.env : undefined
+      const env = metaAt(key)['env']
+      return metaAt(key)['secret'] === true && typeof env === 'string' ? env : undefined
     },
     sourceOf(key) {
       return read(key).source

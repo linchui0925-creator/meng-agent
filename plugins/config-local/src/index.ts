@@ -45,8 +45,6 @@ import {
   provideConfig,
   type ConfigDecl,
   type ConfigEntry,
-  type ConfigField,
-  type ConfigItem,
   type ConfigScope,
   type ConfigService,
   type ConfigSource,
@@ -59,45 +57,6 @@ import { defineInvariant } from '@meng/core'
 function envNameOf(scope: string, key: string): string {
   const raw = `${scope}.${key}`
   return `MENG_${raw.replace(/[^A-Za-z0-9]+/g, '_').toUpperCase()}`
-}
-
-/**
- * 判断"这是 schema 还是扁平声明"。
- *
- * 用鸭子类型而不是 `instanceof z.ZodType`: 缝里也要做同样的判断, 而缝不能
- * import zod 运行时。同一条判据两边共用, 才不会出现"缝认得出、实现认不出"。
- */
-function isSchema(item: ConfigItem): item is z.ZodType {
-  return typeof (item as z.ZodType).parse === 'function'
-}
-
-/**
- * 扁平声明 → zod schema。
- *
- * 这是"两种写法一条路径"的那座桥。转过去之后, 校验、默认值、JSON Schema
- * 全都只有一份实现, 不存在"扁平声明走 if、zod 走 parse"这种双轨。
- */
-function plainToZod(field: ConfigField): z.ZodType {
-  let schema: z.ZodType =
-    field.type === 'number' ? z.number() : field.type === 'boolean' ? z.boolean() : z.string()
-
-  // 有 default 就交给 zod —— 取值的"最后一层"因此只有一处实现。
-  // required 且无 default 时不加, `parse(undefined)` 会抛, 正好对应"缺了就报错"
-  if (field.default !== undefined) {
-    schema = schema.default(field.default)
-  }
-
-  // 我们的元信息 (secret / env / required / desc) 挂在 meta 上。
-  // 选 meta 而不是另建字段, 是因为 `z.toJSONSchema()` 会把 meta 原样带进
-  // JSON Schema —— 设置页拿到 schema 就同时知道"这是密钥、它绑哪个 env",
-  // 不需要第二条通道
-  const meta: Record<string, unknown> = {}
-  if (field.secret === true) meta['secret'] = true
-  if (field.env !== undefined) meta['env'] = field.env
-  if (field.required === true) meta['required'] = true
-  if (field.desc !== undefined) meta['description'] = field.desc
-
-  return Object.keys(meta).length > 0 ? schema.meta(meta) : schema
 }
 
 /**
@@ -161,9 +120,23 @@ interface Slot {
   scope: string
 }
 
-/** 把一个声明条目归一成 slot(不含 scope)。扁平声明和 zod schema 在这里合流 */
-function normalize(item: ConfigItem): Omit<Slot, 'scope'> {
-  const schema = isSchema(item) ? item : plainToZod(item)
+/**
+ * 一个声明 → slot (不含 scope)。
+ *
+ * 声明本身就是 schema, 所以这里没有"先转换成 schema"的步骤 —— 只做
+ * "把后面要反复用的三样东西算一次缓存起来": JSON Schema、元信息、默认值。
+ */
+function normalize(schema: z.ZodType, full: string): Omit<Slot, 'scope'> {
+  // 运行时再挡一次: 类型系统只覆盖编译期, 而插件是动态加载的。
+  // 万一有人从旧文档抄了 `{ type: 'string' }` 那种已经删掉的写法, 要在这里
+  // 说清楚, 否则接下去会是 "schema.meta is not a function" —— 一条完全
+  // 指不出问题所在的报错
+  if (typeof (schema as { parse?: unknown }).parse !== 'function') {
+    throw new Error(
+      `${full}: 配置声明必须是 zod schema (如 z.string().default('.')), ` +
+        `不再是 { type: 'string' } 那种写法 —— 后者已从接口删除`,
+    )
+  }
 
   let json: Record<string, unknown> = {}
   try {
@@ -174,18 +147,16 @@ function normalize(item: ConfigItem): Omit<Slot, 'scope'> {
     json = {}
   }
 
-  // 元信息: 扁平声明写在字段上, zod 写在 `.meta()` 里。归一之后一视同仁
+  // 元信息只从 `.meta()` 一处来。声明是 schema 而不是"schema + 一张平行字段表",
+  // 所以不会出现"界面上说它是密钥、取值层却不知道"这种两处声明打架
   const rawMeta = (schema.meta?.() ?? {}) as Record<string, unknown>
-  const plain = isSchema(item) ? undefined : item
-  const desc = plain?.desc ?? (typeof rawMeta['description'] === 'string' ? rawMeta['description'] : undefined)
-  const env = plain?.env ?? (typeof rawMeta['env'] === 'string' ? rawMeta['env'] : undefined)
 
   const meta: SlotMeta = {
-    secret: plain?.secret === true || rawMeta['secret'] === true,
-    required: plain?.required === true || rawMeta['required'] === true,
+    secret: rawMeta['secret'] === true,
+    required: rawMeta['required'] === true,
   }
-  if (env !== undefined) meta.env = env
-  if (desc !== undefined) meta.desc = desc
+  if (typeof rawMeta['env'] === 'string') meta.env = rawMeta['env']
+  if (typeof rawMeta['description'] === 'string') meta.desc = rawMeta['description']
 
   let defaultValue: unknown
   try {
@@ -319,7 +290,7 @@ export async function apply(
           const item = decl[key]
           if (!item) continue
           const full = `${scope}.${key}`
-          const slot: Slot = { ...normalize(item), scope }
+          const slot: Slot = { ...normalize(item, full), scope }
           slots.set(full, slot)
           mine.push([full, slot])
         }
