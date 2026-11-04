@@ -670,8 +670,20 @@ export function createFixtureKernel(name: FixtureName, options: FixtureOptions =
          * 全给已知的就验不出来。
          */
         case 'llm.discoverModels': {
-          const { baseURL } = (payload ?? {}) as { baseURL?: string }
-          if (!baseURL) throw new Error('fixture: llm.discoverModels 需要 baseURL 或 provider')
+          const { provider, baseURL } = (payload ?? {}) as { provider?: string; baseURL?: string }
+          // 真内核有两条认法: 先按路由 id 认目录 (零网络), 认不出才 GET /models。
+          // fixture 不打网络, 所以第一条路照抄, 第二条路给一份固定的"端点回报"
+          // —— 只有 baseURL 时就是这条路 (新建路由时手里正好只有 baseURL)
+          const known = catalog().find((p) => p.id === provider)
+          if (known) {
+            return known.models.map((m) => ({
+              id: m.id,
+              name: m.name,
+              ...(m.contextWindow === undefined ? {} : { contextWindow: m.contextWindow }),
+              ...(m.maxTokens === undefined ? {} : { maxTokens: m.maxTokens }),
+            }))
+          }
+          if (!baseURL) throw new Error('fixture: llm.discoverModels 至少要 provider 或 baseURL')
           return [
             { id: 'glm-4.7', name: 'GLM-4.7', contextWindow: 204800, maxTokens: 131072 },
             { id: 'glm-5.2', name: 'GLM-5.2', contextWindow: 1000000, maxTokens: 131072 },
