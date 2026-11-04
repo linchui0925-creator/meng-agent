@@ -4,33 +4,87 @@
   扫读时眼睛一直在被边框打断。
 */
 
-/* 两段: 供应商 / 自定义 API。段间距比行间距大得多 —— 它们是两种来路, 不是两组状态 */
+/* 一个分区只有一组控件了（下拉 + 详情）, 段间距不用再撑开 */
 .section {
   margin-bottom: 24px;
 }
 
-.sectionTitle {
-  margin: 0 0 9px;
+/*
+  一个下拉, 两个分组。**不是一张长表** —— 12 行要滚一屏才看得完, 而这一页
+  每次只需要看一家: 挑一家, 看它缺什么。原生 `<select>` 的 optgroup 免费
+  带来键盘、读屏、移动端选择器, 不用自己造一个浮层。
+*/
+.pickerRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.pickerLabel {
+  flex: none;
   font-size: 12.5px;
   font-weight: 600;
   color: var(--meng-alias-fg-primary);
-  letter-spacing: 0.02em;
+}
+
+.pickerWrap {
+  position: relative;
+  /* 不撑满通栏 —— 通栏的下拉在设置页里会被读成搜索框。
+     380 是"最长的那个名字 + 状态"还能放下、又不像输入框的宽度 */
+  flex: 0 1 380px;
+  min-width: 0;
+}
+
+.picker {
+  width: 100%;
+  min-height: 32px;
+  font: inherit;
+  font-size: 13px;
+  /* 右侧留给箭头。原生箭头在深色下是黑块, 所以 appearance: none 自己画 */
+  padding: 7px 30px 7px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--meng-alias-border-l2);
+  background: var(--meng-alias-bg-surface);
+  color: var(--meng-alias-fg-primary);
+  appearance: none;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.picker:hover {
+  border-color: var(--meng-alias-border-l3);
+}
+
+.picker:focus-visible {
+  outline: none;
+  border-color: var(--meng-alias-accent);
 }
 
 /*
-  段标题行: 标题 + 右侧动作（「＋ 新建」）。
-  动作跟标题同一行 —— 它属于这一段, 不属于下面那张表。
+  自己画的箭头。**不用 `▾` 字符** —— 它在不同字体的字号差别很大（实测在
+  13px 下会缩成一个小点, 看起来像渲染失败）。三角形用 border 画, 尺寸精确,
+  颜色走 token。
 */
-.sectionHead {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 9px;
+.caret {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  margin-top: -2px;
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--meng-alias-fg-muted);
+  pointer-events: none;
 }
 
-.sectionHead .sectionTitle {
-  margin: 0;
+/* 和左边的下拉同高 —— 差几像素时按钮会看起来"陷进去" */
+.pickerRow .newButton {
+  min-height: 32px;
+  padding: 0 12px;
 }
 
 .newButton {

@@ -197,7 +197,31 @@ export function messageOf(err: unknown): string {
  * 散在 JSX 里的一个 `if`。
  */
 export function shownProviders(list: CatalogProvider[]): CatalogProvider[] {
-  return list.filter((p) => p.dormant === true || p.configScope !== undefined)
+  return list.filter((p) => !HIDDEN_IDS.has(p.id) && (p.dormant === true || p.configScope !== undefined))
+}
+
+/**
+ * 用户明确要求不显示的。
+ *
+ * `openai` 是 `DEFAULT_ROUTES` 里那条**声明自带的默认路由** —— 它不是"用户接的
+ * 供应商", 而是"什么都还没配时内核自己用的那条"。把它和 Z.AI / Groq 并排摆着,
+ * 会让人以为它也是一个可以挑的品牌。
+ *
+ * 和上面 `mock` 那类过滤一样, 这只是**界面投影**: `llm.catalog` 一个字段没少,
+ * 诊断面板 / 内核自检照样看得见它。代价是这条规则藏在渲染层 ——
+ * 所以它必须是一个能被单测钉住的纯函数, 不是 JSX 里的一个 `if`。
+ */
+const HIDDEN_IDS = new Set(['openai'])
+
+/**
+ * 下拉框里的一行字。
+ *
+ * 原生 `<option>` 不能带样式（没有徽章、没有颜色），所以状态**只能写进文案**。
+ * 不写状态的后果很具体: 下拉里 12 个名字长得一样, 用户不知道哪家缺 key、
+ * 哪家还没添加, 得挨个点开看。
+ */
+export function optionLabelOf(p: CatalogProvider): string {
+  return `${p.name}（${STATE_LABEL[stateOf(p)]}）`
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

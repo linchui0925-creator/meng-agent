@@ -31,6 +31,7 @@ import {
   formatTokens,
   messageOf,
   modelSummary,
+  optionLabelOf,
   parseModelIds,
   profileOfDraft,
   routeIdOf,
@@ -136,6 +137,9 @@ export function ModelSection({ invoke }: SectionApi) {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string>()
 
+  /** 下拉里当前选的是谁。**undefined 时回落到第一个** —— 不额外存一份"初始值" */
+  const [selectedId, setSelectedId] = useState<string>()
+
   /**
    * 往哪儿写。**从目录里读, 不硬编码 `llm.openai`** —— 哪一天换一个插件管路由表,
    * 这里跟着数据走就行。`configPath[0]` 是字典名（`routes`）, `[1]` 是键。
@@ -167,6 +171,9 @@ export function ModelSection({ invoke }: SectionApi) {
     try {
       await putRoute(routeSlot.configScope, routeSlot.configPath[0]!, id, profileOfDraft(draft, id))
       setCreating(false)
+      // 存完把下拉切到刚建的那家 —— 否则用户看到的是自己刚填的表单消失了,
+      // 而屏幕上还是上一家（会以为没存上）
+      setSelectedId(id)
       await load()
     } catch (err) {
       setSaveError(messageOf(err))
@@ -176,21 +183,20 @@ export function ModelSection({ invoke }: SectionApi) {
   }, [draft, load, providers, putRoute, routeSlot])
 
   /**
-   * 两段: **自定义 API** 和 **供应商**。
+   * 一个下拉, 两个分组: **内置供应商** / **自定义 API**。
    *
-   * 这不是"已添加 / 可添加"那种按状态分的段 —— 状态是同一条列表里靠形状区分的
-   * （可添加的行矮一半、右边是按钮）。段是按**这家的来路**分的:
-   *   · 自定义 API = 用户自己填地址的网关（`declared: true`，不在目录里）
-   *   · 供应商 = 内置目录里的（有品牌、有默认地址，用户只需要给个 key）
-   * 分开的理由: 用户想接自己的中转站时, 要一眼看见"我该往哪儿填"，
-   * 而不是在十几个品牌名字里找。
+   * 分组按**来路**分, 不按状态分（可用 / 未配置 / 可添加）—— 状态是同一家的
+   * 三种处境, 升级成一级结构会让"这家到底是哪来的"变得看不出来。状态写进
+   * 每一项的文案里（`optionLabelOf`）, 因为原生 `<option>` 不能带徽章。
    *
-   * **自定义在前**是因为它是短的那一段（空态一行 / 或几条自己加的），
-   * 而内置目录是十来条的长表 —— 长表在后面才不会把入口推到折叠线以下。
+   * 选中的那家**不存"初始值"**: `selectedId` 为空就回落到第一个。
+   * 这样目录刷新（比如刚添加完一条）时不需要 effect 去纠正选中项 ——
+   * 掉了就自动回到第一个, 不会出现"选中一个已经不存在的东西"。
    */
   const shown = shownProviders(providers)
   const vendors = shown.filter((p) => !p.declared)
   const customs = shown.filter((p) => p.declared)
+  const current = shown.find((p) => p.id === selectedId) ?? shown[0]
 
   return (
     <div data-model-list="">
@@ -206,31 +212,69 @@ export function ModelSection({ invoke }: SectionApi) {
       {!loaded ? <div className={styles.loading}>正在读供应商目录…</div> : null}
 
       <section className={styles.section}>
-        <div className={styles.sectionHead}>
-          <h3 className={styles.sectionTitle}>自定义 API</h3>
-          {creating ? null : (
-            <button type="button" className={styles.newButton} onClick={openForm}>
-              ＋ 新建
-            </button>
-          )}
+        <div className={styles.pickerRow}>
+          <label className={styles.pickerLabel} htmlFor="provider-picker">
+            供应商
+          </label>
+
+          {/*
+            一个下拉, 两个分组。**不再是一张 12 行的长表** —— 那张表要滚 800px
+            才能看全, 而这一页真正要做的事只有一件: 挑一家, 看它缺什么。
+            `optgroup` 是原生的分组, 不引入任何自定义控件: 键盘、读屏、移动端
+            的选择器全都免费。
+          */}
+          <div className={styles.pickerWrap}>
+            <select
+              id="provider-picker"
+              className={styles.picker}
+              value={current?.id ?? ''}
+              onChange={(e) => setSelectedId(e.target.value)}
+            >
+              <optgroup label="内置供应商">
+                {vendors.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {optionLabelOf(p)}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="自定义 API">
+                {customs.length > 0 ? (
+                  customs.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {optionLabelOf(p)}
+                    </option>
+                  ))
+                ) : (
+                  <option value="" disabled>
+                    还没有 —— 点右边「新建」
+                  </option>
+                )}
+              </optgroup>
+            </select>
+            <span className={styles.caret} aria-hidden="true" />
+          </div>
+
+          <button type="button" className={styles.newButton} onClick={openForm}>
+            ＋ 新建
+          </button>
         </div>
 
-        {customs.length > 0 ? (
+        {/*
+          选中的那一家。行还是原来那行 —— 事实、徽章、添加按钮都不变。
+          **正在新建时把它藏起来**: 表单和"另一家的事实"并排摆着, 会让人
+          以为这张表单是在改上面那家。
+        */}
+        {creating ? null : current ? (
           <div className={styles.list}>
-            {customs.map((p) => (
-              <ProviderRow
-                key={p.id}
-                provider={p}
-                busy={busy === p.id}
-                error={rowError[p.id]}
-                onAdd={() => void add(p)}
-              />
-            ))}
+            <ProviderRow
+              provider={current}
+              busy={busy === current.id}
+              error={rowError[current.id]}
+              onAdd={() => void add(current)}
+            />
           </div>
-        ) : creating ? null : (
-          <p className={styles.empty}>
-            还没有自定义 API。中转站、局域网网关、公司内网的兼容接口都填在这里 —— 一个地址加一个环境变量名就能用。
-          </p>
+        ) : !loaded ? null : (
+          <p className={styles.empty}>供应商目录是空的。</p>
         )}
 
         {creating ? (
@@ -317,30 +361,9 @@ export function ModelSection({ invoke }: SectionApi) {
         ) : null}
       </section>
 
-      {/*
-        「供应商」在下面 —— 顺序是**按这一段的长度排的**, 不是按重要性。
-        内置目录有十来家, 一张长表放在上面会把自定义入口推到折叠线以下
-        （实测 1180×1000 要滚 800px 才看得见）。自定义段是带表单的那个,
-        它必须第一眼就在, 所以它在上面。
-      */}
-      <section className={styles.section}>
-        <h3 className={styles.sectionTitle}>供应商</h3>
-        <div className={styles.list}>
-          {vendors.map((p) => (
-            <ProviderRow
-              key={p.id}
-              provider={p}
-              busy={busy === p.id}
-              error={rowError[p.id]}
-              onAdd={() => void add(p)}
-            />
-          ))}
-        </div>
-      </section>
-
       <Note>
-        标「添加」的是内置目录里装好的供应商 —— 点一下就会出现在上面，它带来的模型同时进「可用模型」清单。
-        改动写到内核的配置里，立刻生效；只有密钥的值是进程启动时读的，换值要重启。
+        内置供应商点「添加」就接进来，它带的模型同时进「可用模型」清单；自定义 API
+        填的是你自己的地址。改动立刻生效，只有密钥的值是进程启动时读的 —— 换值要重启。
       </Note>
     </div>
   )
