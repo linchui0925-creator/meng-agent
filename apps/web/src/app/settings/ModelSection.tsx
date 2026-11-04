@@ -30,6 +30,7 @@ import {
   messageOf,
   modelSummary,
   secretOf,
+  shownProviders,
   stampOf,
   stateOf,
   widestContext,
@@ -103,8 +104,22 @@ export function ModelSection({ invoke }: SectionApi) {
     [invoke, load],
   )
 
+  /**
+   * 只有两段: **供应商** 和 **自定义 API**。
+   *
+   * 这不是"已添加 / 可添加"那种按状态分的段 —— 状态是同一条列表里靠形状区分的
+   * （可添加的行矮一半、右边是按钮）。段是按**这家的来路**分的:
+   *   · 供应商 = 内置目录里的（有品牌、有默认地址，用户只需要给个 key）
+   *   · 自定义 API = 用户自己填地址的网关（`declared: true`，不在目录里）
+   * 分开的理由: 用户想接自己的中转站时, 要一眼看见"我该往哪儿填"，
+   * 而不是在十几个品牌名字里找。
+   */
+  const shown = shownProviders(providers)
+  const vendors = shown.filter((p) => !p.declared)
+  const customs = shown.filter((p) => p.declared)
+
   return (
-    <div>
+    <div data-model-list="">
       {error !== undefined ? (
         <div className={styles.error} role="alert">
           <span>{error}</span>
@@ -116,17 +131,39 @@ export function ModelSection({ invoke }: SectionApi) {
 
       {!loaded ? <div className={styles.loading}>正在读供应商目录…</div> : null}
 
-      <div className={styles.list} data-model-list="">
-        {providers.map((p) => (
-          <ProviderRow
-            key={p.id}
-            provider={p}
-            busy={busy === p.id}
-            error={rowError[p.id]}
-            onAdd={() => void add(p)}
-          />
-        ))}
-      </div>
+      <section className={styles.section}>
+        <h3 className={styles.sectionTitle}>供应商</h3>
+        <div className={styles.list}>
+          {vendors.map((p) => (
+            <ProviderRow
+              key={p.id}
+              provider={p}
+              busy={busy === p.id}
+              error={rowError[p.id]}
+              onAdd={() => void add(p)}
+            />
+          ))}
+        </div>
+      </section>
+
+      <section className={styles.section}>
+        <h3 className={styles.sectionTitle}>自定义 API</h3>
+        {customs.length > 0 ? (
+          <div className={styles.list}>
+            {customs.map((p) => (
+              <ProviderRow
+                key={p.id}
+                provider={p}
+                busy={busy === p.id}
+                error={rowError[p.id]}
+                onAdd={() => void add(p)}
+              />
+            ))}
+          </div>
+        ) : (
+          <p className={styles.empty}>还没有自定义 API。</p>
+        )}
+      </section>
 
       <Note>
         标「添加」的是内置目录里装好的供应商 —— 点一下就会出现在上面，它带来的模型同时进「可用模型」清单。
@@ -202,7 +239,6 @@ function ProviderRow({
               {secret.env}
             </span>
           ) : null}
-          {state === 'fixed' ? <span className={styles.quiet}>装着就能用，没有可配的东西</span> : null}
         </div>
       )}
 

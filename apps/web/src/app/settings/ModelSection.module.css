@@ -4,6 +4,28 @@
   扫读时眼睛一直在被边框打断。
 */
 
+/* 两段: 供应商 / 自定义 API。段间距比行间距大得多 —— 它们是两种来路, 不是两组状态 */
+.section {
+  margin-bottom: 24px;
+}
+
+.sectionTitle {
+  margin: 0 0 9px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--meng-alias-fg-primary);
+  letter-spacing: 0.02em;
+}
+
+.empty {
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px dashed var(--meng-alias-border-l2);
+  border-radius: var(--meng-specific-radius-xl);
+  font-size: 12.5px;
+  color: var(--meng-alias-fg-muted);
+}
+
 .list {
   border: 1px solid var(--meng-alias-border-l1);
   border-radius: var(--meng-specific-radius-xl);
@@ -70,9 +92,10 @@
   color: var(--meng-alias-warning);
 }
 
-/* 还没加进来的: 虚线空心。和"配置错了"的黄底必须一眼分开 */
+/* 还没加进来的: 虚线 + 淡底。底色留着才不像"少画了一块" ——
+   空心框在三个实心章旁边会读成渲染失败, 而不是"这家还没进来" */
 .stamp[data-state='dormant'] {
-  background: transparent;
+  background: var(--meng-alias-bg-inset);
   border: 1px dashed var(--meng-alias-border-l2);
   color: var(--meng-alias-fg-muted);
 }
@@ -130,8 +153,7 @@
   color: var(--meng-alias-fg-muted);
 }
 
-.badge[data-state='available'],
-.badge[data-state='fixed'] {
+.badge[data-state='available'] {
   background: var(--meng-alias-positive-subtle);
   color: var(--meng-alias-positive);
 }
@@ -207,11 +229,6 @@
 .dot[data-present] {
   border: 0;
   background: var(--meng-alias-positive);
-}
-
-.quiet {
-  font-size: 11.5px;
-  color: var(--meng-alias-fg-muted);
 }
 
 /* 后端原话。黄而不是红: 它是"还没配", 不是"配错了" */

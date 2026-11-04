@@ -75,6 +75,10 @@ export interface CatalogProvider {
  *
  * `dormant` 必须最先判 —— 它同时满足 `available: false`，判晚了就会被
  * 画成"缺 key 的供应商"，而两者要给的行动完全不同（一个点添加，一个去配 key）。
+ *
+ * `fixed`（没有 `configScope`）在设置页里**不渲染** —— `shownProviders` 会先滤掉它。
+ * 这里仍然判出来, 是因为它是数据层真实存在的一种态: 诊断面板、内核自检要能回答
+ * "这家为什么不可配"。界面不画 ≠ 数据里没有。
  */
 export type ProviderState = 'available' | 'unconfigured' | 'dormant' | 'fixed'
 
@@ -176,4 +180,20 @@ export function messageOf(err: unknown): string {
   if (err instanceof Error) return err.message
   if (typeof err === 'string') return err
   return '不知道出了什么错'
+}
+
+/**
+ * 设置页里真正要画出来的供应商。
+ *
+ * 滤掉「没有配置项、也没有模板」的那一类 —— `mock` 就是这种: 装着就能用,
+ * 没有任何可配的东西。它在设置页里**什么事都做不了**, 占一行只制造两个误解:
+ * 「这家是不是缺了什么」和「为什么它跟我一样是供应商」。
+ *
+ * 判断放在前端而不是求后端别下发, 因为这只是**界面投影**: `llm.catalog`
+ * 一个字段都没少, 换一个界面（诊断面板 / 内核自检）照样能看见它。
+ * 代价是规则藏在渲染层 —— 所以它必须是一个能被单测钉住的纯函数, 而不是
+ * 散在 JSX 里的一个 `if`。
+ */
+export function shownProviders(list: CatalogProvider[]): CatalogProvider[] {
+  return list.filter((p) => p.dormant === true || p.configScope !== undefined)
 }
