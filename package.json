@@ -16,7 +16,7 @@
     "test:slots": "node --experimental-strip-types packages/slots/test/registry.ts",
     "test:theme": "node --experimental-strip-types packages/ui/test/theme.ts",
     "test:chain": "node scripts/check-chain.mjs",
-    "test": "pnpm test:shell && pnpm test:slots && pnpm test:theme && pnpm test:contrast && pnpm test:modules && pnpm test:resolve && pnpm test:config && pnpm test:zod && pnpm test:deepseek && pnpm test:openai && pnpm test:ws && pnpm test:fixture && pnpm test:projection && pnpm test:sessions && pnpm test:prefs && pnpm test:whisper && pnpm check:contrast && pnpm lint:tokens",
+    "test": "pnpm test:shell && pnpm test:slots && pnpm test:theme && pnpm test:contrast && pnpm test:modules && pnpm test:resolve && pnpm test:config && pnpm test:zod && pnpm test:config-write && pnpm test:llm && pnpm test:provider && pnpm test:catalog && pnpm test:deepseek && pnpm test:openai && pnpm test:ws && pnpm test:fixture && pnpm test:projection && pnpm test:sessions && pnpm test:prefs && pnpm test:whisper && pnpm test:schema-form && pnpm check:contrast && pnpm lint:tokens",
     "check:contrast": "node scripts/check-contrast.mjs",
     "dev": "node --use-env-proxy --experimental-strip-types apps/server/src/main.ts",
     "graph": "node --experimental-strip-types apps/server/src/main.ts --graph",
@@ -46,7 +46,12 @@
     "test:whisper": "node --experimental-strip-types apps/web/src/app/whisper.test.ts",
     "test:whisper:browser": "node scripts/check-whisper.mjs",
     "test:prefs": "node --experimental-strip-types apps/web/src/prefs.test.ts",
-    "test:prefs:browser": "node scripts/check-prefs.mjs"
+    "test:prefs:browser": "node scripts/check-prefs.mjs",
+    "test:config-write": "MENG_QUIET=1 node --experimental-strip-types packages/config/test/write.ts",
+    "test:llm": "MENG_QUIET=1 node --experimental-strip-types packages/llm/test/routing.ts",
+    "test:catalog": "MENG_QUIET=1 node --experimental-strip-types packages/web/test/catalog.ts",
+    "test:provider": "MENG_QUIET=1 node --experimental-strip-types plugins/provider-deepseek/test/config.ts",
+    "test:schema-form": "node --experimental-strip-types apps/web/src/app/settings/schema-form.test.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
