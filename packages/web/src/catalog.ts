@@ -28,16 +28,34 @@
  */
 
 import type { ConfigEntry } from '@meng/config'
-import type { ProviderInfo } from '@meng/llm'
+import { toModelInfo, type ConfigurableProvider, type ModelInfo, type ProviderInfo } from '@meng/llm'
 
 export interface CatalogProvider {
   /** 路由 id, 也是 `GenerateOptions.model` 之外唯一能点名它的东西 */
   id: string
   /** 给人看的名字 */
   name: string
-  models: string[]
+  /** wire 协议。设置页显示/分组用, 不参与路由 */
+  protocol?: string
+  /**
+   * 模型条目。**从 2026-11-04 起是对象数组** —— 名字之外的上下文窗口 /
+   * 最大输出 / 模态都在里面。前端不能再用 `models.join(', ')` 当纯字符串。
+   */
+  models: ModelInfo[]
   /** 现在能不能真的发请求 */
   available: boolean
+  /**
+   * `true` = **还没激活**: 内置目录里有这一家, 但配置里还没加。
+   * 界面上应该画成"可添加"（一个添加按钮 + 它会带来哪些模型），
+   * 而不是一张"缺 key"的表单。
+   */
+  dormant?: boolean
+  /** 这条路由是用户自己加的 (不在内置目录里) */
+  declared?: boolean
+  /** profile 在配置里的地址 (`['routes', id]`)。点"添加"/"保存"时写这里 */
+  configPath?: string[]
+  /** 激活它时要写进去的初始 profile（不透明, 后端怎么给就怎么写） */
+  template?: Record<string, unknown>
   /**
    * 它的配置在哪个 scope。设置页拿它去 `config.list()` 里捞同一 scope 的行。
    * 没有就是 `undefined` 且 `config` 为空数组 —— 比如 mock, 它没有可配的东西。
@@ -58,14 +76,22 @@ export interface CatalogProvider {
  * 顺序 = 注册顺序 (= 插件的装载顺序)。**不排序**: 界面上供应商的次序
  * 应该和"谁先装的"一致, 排序会让它每次启动都可能换位置。
  */
-export function catalogOf(providers: readonly ProviderInfo[], entries: readonly ConfigEntry[]): CatalogProvider[] {
-  return providers.map((p) => {
+export function catalogOf(
+  providers: readonly ProviderInfo[],
+  entries: readonly ConfigEntry[],
+  directory: readonly ConfigurableProvider[] = [],
+): CatalogProvider[] {
+  const active = new Set(providers.map((p) => p.id))
+
+  const out: CatalogProvider[] = providers.map((p) => {
     const config = p.configScope ? entries.filter((e) => e.scope === p.configScope) : []
     return {
       id: p.id,
       name: p.name,
       models: [...p.models],
       available: p.available,
+      ...(p.protocol ? { protocol: p.protocol } : {}),
+      ...(p.declared ? { declared: true } : {}),
       ...(p.configScope ? { configScope: p.configScope } : {}),
       config,
       // **provider 自己说的优先。** 它知道每条路由绑的是哪个变量名;
@@ -74,6 +100,32 @@ export function catalogOf(providers: readonly ProviderInfo[], entries: readonly 
       missing: p.available ? [] : p.missing && p.missing.length > 0 ? p.missing : missingOf(config),
     }
   })
+
+  /**
+   * 补上**还没激活**的。没有这一段, 设置页只知道"现在有什么",
+   * 不知道"可以加什么" —— 用户永远加不了第二家供应商。
+   *
+   * 顺序: 已激活的在前（它们是用户现在真能用的）, 可添加的在后。
+   * 目录里的顺序 = adapter 声明的顺序（内置在前, 用户自加的在后）。
+   */
+  for (const item of directory) {
+    if (active.has(item.provider)) continue
+    out.push({
+      id: item.provider,
+      name: item.displayName,
+      models: (item.models ?? []).map(toModelInfo),
+      available: false,
+      dormant: true,
+      ...(item.declared ? { declared: true } : {}),
+      configScope: item.configScope,
+      configPath: [...item.configPath],
+      ...(item.template ? { template: item.template } : {}),
+      config: [],
+      missing: ['还没添加 —— 在设置页点"添加"即可'],
+    })
+  }
+
+  return out
 }
 
 /**

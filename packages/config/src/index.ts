@@ -140,8 +140,19 @@ export interface ConfigEntry {
   secret: boolean
   required: boolean
   desc?: string
-  /** 当前生效的值。密钥行恒为 undefined */
-  value?: string | number | boolean
+  /**
+   * 当前生效的值。密钥行恒为 undefined。
+   *
+   * **类型是 `unknown` 而不是标量。** 声明层早就允许 `object` / `array`
+   * (`ConfigType` 里就有这两项), 而 `provider-openai` 的 `routes` 是一张
+   * 路由字典 —— 它的值是个对象。这里写窄了, 实现层只能靠一句
+   * `as string | number | boolean` 把它塞进去: 类型说不会发生, 运行时天天发生,
+   * 于是任何 `String(entry.value)` 都会静默得到 `[object Object]`。
+   *
+   * 真正的形状由 `schema` 描述, 消费方按 schema 收窄 —— 和写通道同一个立场
+   * (那里早就是 `unknown` 了)。
+   */
+  value?: unknown
   /** 这个值从哪一层来的: settings / env / manifest / default */
   source?: ConfigSource
   /** 密钥行: 当前绑定到哪个环境变量名。非密钥行恒为 undefined */

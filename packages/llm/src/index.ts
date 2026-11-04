@@ -163,6 +163,10 @@ export const LLM_CODE = {
   SERVER: 'SERVER',
   AUTH: 'AUTH',
   BAD_REQUEST: 'BAD_REQUEST',
+  /** 探测供应商的模型列表失败（连不上 / 返回不是模型清单） */
+  DISCOVERY_FAILED: 'DISCOVERY_FAILED',
+  /** 这个协议没有可读的模型列表（比如 anthropic 的 /models 形状不同） */
+  DISCOVERY_UNSUPPORTED: 'DISCOVERY_UNSUPPORTED',
 } as const
 
 /** 默认可重试码。重试策略插件还没落地, 但词表先定死, 免得各家自己编 */
@@ -246,6 +250,14 @@ export type StreamChunk =
 
 export interface StreamRequest {
   model: string
+  /**
+   * 点名哪条路由。**不传 = 按模型名猜** (老行为)。
+   *
+   * 为什么要有它: 两家供应商都有 `gpt-4o` 时, 一个模型名是歧义的。
+   * dsh 的 `GenerateOptions.provider` 是必填; 我们留可选, 因为
+   * "只有一个 provider"的部署不该被迫背这个字段。
+   */
+  provider?: string
   messages: Message[]
   tools?: ToolSpec[]
   signal?: AbortSignal
@@ -396,67 +408,277 @@ export async function collectBlocks(chunks: AsyncIterable<StreamChunk>): Promise
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 服务
+// 模型条目
 // ─────────────────────────────────────────────────────────────────────────────
 
+export type ModelModality = 'text' | 'image'
+
+/**
+ * 一条模型。**这是设置页与模型选择器读的东西**, 不是 wire 格式。
+ *
+ * 为什么不能只有名字: 上下文窗口决定"这段历史塞不塞得下", 最大输出决定
+ * "要不要压缩", 模态决定"这张图能不能发"。dsh 的 `LlmModelInfo` /
+ * `LlmResolvedModelInfo` 就是这一层。
+ *
+ * 除 `id` 外都可缺省 —— 缺 = **未知**, 不是不支持。编码时别把"未知"写成
+ * "不支持": 前者可以试, 后者会拒。
+ */
+export interface ModelInfo {
+  id: string
+  /** 显示名。缺省 = id (界面上不该出现空白) */
+  name: string
+  /** 上下文总容量 (输入 + 输出), 单位 token。未知就不给 */
+  contextWindow?: number
+  /** 单轮最大输出 token。未知就不给 */
+  maxTokens?: number
+  /** 接受的输入模态。缺省 = 未知 */
+  input?: ModelModality[]
+  /** 是否支持推理档位 (effort / thinking)。缺省 = 未知 */
+  reasoning?: boolean
+  /** 给用户看的一句区别说明 */
+  description?: string
+}
+
+/**
+ * 模型的两种写法: 只给名字, 或者给全。
+ *
+ * 这是**同一个东西的两种输入格式**, 不是两套机制 —— 归一只有
+ * `toModelInfo()` 一处。单路由插件 (mock / deepseek 的早期写法) 写
+ * `['deepseek-chat']` 不必编造容量; 多路由插件给全字段。
+ */
+export type ModelEntry = string | ModelInfo
+
+export function toModelInfo(entry: ModelEntry): ModelInfo {
+  if (typeof entry === 'string') return { id: entry, name: entry }
+  return { ...entry, name: entry.name || entry.id }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 路由与适配器
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 一条路由的静态事实。**全部现读, 不缓存** —— 回调实现里读配置即可,
+ * 于是"改显示名 / 改凭据变量名"这类值的改动下一个请求就生效。
+ */
+export interface RouteFacts {
+  /** 给人看的名字。缺省用路由名 */
+  name?: string
+  /**
+   * wire 协议 (`openai-completions` / `deepseek-chat` / ...)。
+   *
+   * 缝**不解释**它, 只透传给设置页显示 —— 协议语义属于 adapter。
+   * 让 llm 认识协议表, 就等于让它认识厂商。
+   */
+  protocol?: string
+  /** 它的配置在哪个 config scope。设置页靠它把路由和配置行连起来 */
+  configScope?: string
+  /**
+   * 这条路由**只因为配置才存在** (用户自己加的网关), 不是内置目录里的。
+   * 设置页据此把"内置"和"自定义"分开画。
+   */
+  declared?: boolean
+  /** 现在能不能真发请求。缺省恒 true */
+  available?: boolean
+  /** 还差什么。人话, 直接显示。只在不可用时有意义 */
+  missing?: string[]
+}
+
+/**
+ * 一个 adapter 服务**多条**路由。
+ *
+ * 这是 dsh `LlmAdapter` 的形状, 也是"自由配置供应商"的地基: 一个插件
+ * 不该为每家厂商各写一份 stream。`provider-openai` 用它把配置里
+ * `routes` 字典的每个 key 变成一条路由。
+ *
+ * 只有 `stream` 是必填 —— 其余都可缺省, 缺省即"没有额外事实", 而不是
+ * "没实现"。
+ */
+export interface Adapter {
+  info?(route: string): RouteFacts
+  /** 这条路由能服务的模型。**advisory**: 在列表里不等于只能用它 */
+  models?(route: string): ModelEntry[]
+  /** 精确路由的模型能力。未知就不给 —— 别返回编造的容量 */
+  resolveModel?(route: string, model: string): ModelInfo | undefined
+  stream(route: string, req: StreamRequest): AsyncIterable<StreamChunk>
+}
+
+/**
+ * `registerAdapter()` 的返回值: 既能卸装, 也能**原子换**路由集合。
+ *
+ * `replace()` 的价值: 配置里增删一条供应商, 不必"先卸光再重注册" ——
+ * 那个中间态会被并发请求看到 (表现为"模型列表突然空了")。
+ */
+export interface AdapterHandle {
+  (): void
+  replace(routes: readonly string[]): void
+}
+
+/**
+ * 单路由的便捷形态。**它会在内部被包成 Adapter**, 不是另一套机制。
+ *
+ * 保留它是因为大多数插件只有一条路由 (mock / deepseek), 让它们去写
+ * `(route, req) => ...` 只是多一层噪音。
+ */
 export interface Provider {
   id: string
-  /**
-   * 给人看的名字 (`DeepSeek` / `OpenAI 兼容`)。选择器与设置页用;
-   * 留空回落到 id —— 但那样界面上出现的是一串路由名, 不是人话。
-   */
   displayName?: string
-  /**
-   * 这个 provider 的配置在哪个 scope 里。设置页靠它把"供应商"和"它的配置项"
-   * 连起来 (`ctx.config.list()` 只认 scope, 不认插件)。
-   *
-   * 留空 = 这个 provider 没有可配的东西 (比如 mock)。
-   */
+  protocol?: string
   configScope?: string
-  models: string[]
-  /**
-   * **现在能不能真的发请求**。凭据缺失时返回 false。
-   *
-   * 为什么这件事必须由 provider 自己回答: 只有它知道自己的凭据从哪来
-   * (环境变量名 / 将来的凭据服务)。让路由层去猜, 就等于把"每个厂商怎么
-   * 拿 key"的知识写进 llm 包 —— 那正是它要坚持中立的东西。
-   *
-   * 留空 = 恒可用。缺省不是"没实现", 而是"没有会缺失的前提"。
-   */
+  models: ModelEntry[]
   available?: () => boolean
-  /**
-   * **还差什么才能用**。人话, 直接显示在设置页上。
-   *
-   * 为什么不由出口层从"哪些配置项缺了"推: 配置项现在是 `routes` 一个字典,
-   * 缺的是**字典里某一条的某个字段**, 而那件事只有 provider 自己知道 ——
-   * 和 `available()` 是同一个问题的两半, 答案必须来自同一处。分开算,
-   * 就会出现"设置页说有 key、发请求却报没凭据"这种自相矛盾的界面。
-   *
-   * 只在 `available()` 为 false 时有意义; 可用时返回空数组, 别制造噪音。
-   */
   missing?: () => string[]
   /** 原始流: block-start / delta / usage / finish。组装不由你做 */
   stream(req: StreamRequest): AsyncIterable<StreamChunk>
 }
 
-/** 路由的对外描述。`llm.catalog` 与设置页读它, 不碰 provider 本体 */
+/** 路由的对外描述。`llm.catalog` 与设置页读它, 不碰 adapter 本体 */
 export interface ProviderInfo {
   id: string
   name: string
-  models: string[]
-  /** 见 `Provider.available`。没实现 `available()` 的恒为 true */
+  protocol?: string
+  /** 已归一成对象。**顺序 = adapter 给的顺序** */
+  models: ModelInfo[]
+  /** 见 `RouteFacts.available`。没实现的恒为 true */
   available: boolean
-  /** 见 `Provider.missing`。不可用时才有内容 */
+  /** 见 `RouteFacts.missing`。不可用时才有内容 */
   missing?: string[]
   configScope?: string
+  declared?: boolean
+}
+
+/**
+ * 一条**可以被配置激活**的路由。目录与注册表的区别是这一对问题的答案:
+ *
+ *   · 注册表 (`listProviders()`) = **现在**能发请求的路由
+ *   · 目录 (`listConfigurableProviders()`) = adapter 装了之后**可能**有的路由
+ *
+ * 为什么两本账都要: 内置供应商 (智谱 / 月之暗面 / Groq) 在用户填 key、
+ * 写进配置之前不会出现在注册表里 —— 只靠注册表, 设置页就没有"添加一家"
+ * 的入口。dsh 的 `LlmConfigurableProvider` 就是解决这件事的。
+ */
+export interface ConfigurableProvider {
+  /** 路由 id。配置里 `routes` 的键就是它 */
+  provider: string
+  displayName: string
+  /** 配置在哪个 scope */
+  configScope: string
+  /**
+   * 这条路由的 profile 在那个 scope 里的地址。我们是 `['routes', id]`。
+   * 设置页靠它知道"该写哪个键", 而不是硬记形状。
+   */
+  configPath: readonly string[]
+  /** adapter 自己也不认识这条路由 (用户自加的自定义供应商) */
+  declared?: boolean
+  /** 激活之后会有的模型。给设置页显示"这家能用什么", 不必先写配置 */
+  models?: ModelEntry[]
+  /**
+   * 激活这条路由时要写进去的初始 profile（用户点"添加"时整条写）。
+   * **不透明**: `@meng/llm` 不认识里面的字段, 只负责转交。
+   */
+  template?: Record<string, unknown>
+}
+
+/**
+ * 一次"问供应商它有哪些模型"的请求。
+ *
+ * 关键: 它是**草稿态**的 —— 请求描述的是用户正在编辑的那一条, 可能还没
+ * 存进配置。所以它带 baseURL / 协议 / 密钥变量名, 而不是一个路由 id。
+ * 一条已经存过的路由可以只给 provider, 让 adapter 从自己的目录里答
+ * （零网络请求, 而且比端点更准）。
+ */
+export interface ModelDiscoveryRequest {
+  /** 已经在配置里的路由 id。给了就能走"已知答案"这条快路 */
+  provider?: string
+  /** 要问的端点。路由不认识时必须给 */
+  baseURL?: string
+  /** wire 协议。缺省由 adapter 决定 */
+  protocol?: string
+  /**
+   * **密钥绑定的环境变量名**, 不是密钥值。
+   *
+   * dsh 的对应字段是 `apiKey`（一次性凭据）。我们刻意不同: 值不过 HTTP,
+   * 因为这条链路的后端没有凭据存储 —— 让它接受明文密钥, 就等于开了一条
+   * "密钥可以穿过设置页"的路, 与"只存变量名"的规则冲突。
+   */
+  apiKeyEnv?: string
+  signal?: AbortSignal
+}
+
+/** 端点自己报出来的一条模型。除 id 外都可能缺 —— 大多数端点只报 id */
+export interface DiscoveredModel {
+  id: string
+  name?: string
+  contextWindow?: number
+  maxTokens?: number
+}
+
+/** `registerModelDiscovery()` 的返回值 */
+export type DiscoveryDisposer = () => void
+
+/** `registerConfigurableProviders()` 的返回值, 和 AdapterHandle 同形 */
+export interface DirectoryHandle {
+  (): void
+  replace(entries: readonly ConfigurableProvider[]): void
+}
+
+/** `resolve()` 的结果: 一条确切的路由 + 这一次要用的模型 */
+export interface ResolvedRoute {
+  /** 路由 id。老代码读 `.id`, 保留 */
+  readonly id: string
+  /** 这一次请求实际用的模型 id (调用方没点名时 = 该路由第一个) */
+  readonly model: string
+  readonly adapter: Adapter
+}
+
+interface Registration {
+  routes: string[]
+  adapter: Adapter
 }
 
 export interface LLMService {
+  /** 单路由注册。等价于 `registerAdapter([p.id], providerAdapter(p))` */
   register(provider: Provider): Disposer
+  /**
+   * 一个 adapter 注册多条路由。`routes` 里的每个名字都会出现在
+   * `listProviders()` 里, 也都能被 `resolve(model, route)` 点名。
+   *
+   * 冲突是**全或无**: 任何一条已被别处占用, 整个注册被拒, 注册表不变。
+   */
+  registerAdapter(routes: readonly string[], adapter: Adapter): AdapterHandle
+  /**
+   * 声明本插件**可配置**的路由（含还没激活的）。
+   *
+   * 与 `registerAdapter` 的区别: 后者说"这些路由现在能发请求", 前者说
+   * "这些路由可以被配置出来"。内置供应商靠它进设置页的"添加"列表。
+   *
+   * 冲突是**全或无**: 同一个 provider 被两个注册声明 → 整个注册被拒。
+   */
+  registerConfigurableProviders(entries: readonly ConfigurableProvider[]): DirectoryHandle
+  /** 全部已声明的可配置路由, 含激活的和还没激活的。顺序 = 声明顺序 */
+  listConfigurableProviders(): ConfigurableProvider[]
+  /**
+   * 声明"这个 scope 的供应商, 模型列表怎么问"。
+   *
+   * 按 **config scope** 而不是 provider 注册: 设置页手里只有 scope
+   * （从 catalog 的 `configScope` 来）, 而草稿态的那条路由还没有 id。
+   * dsh 用 settings namespace 做键, 是同一个理由。
+   */
+  registerModelDiscovery(
+    scope: string,
+    discover: (request: ModelDiscoveryRequest) => Promise<readonly DiscoveredModel[]>,
+  ): DiscoveryDisposer
+  /** 问一个 scope 的供应商要模型列表。没人注册 = 抛 DISCOVERY_UNSUPPORTED */
+  discoverModels(scope: string, request: ModelDiscoveryRequest): Promise<DiscoveredModel[]>
   /** 已注册的全部路由, 含**不可用**的 (设置页要列出"装了但没配"的那些) */
   listProviders(): ProviderInfo[]
-  resolve(model?: string): Provider
-  /** **可用** provider 的模型。它是"选模型"的输入, 所以不给用不了的 */
+  /**
+   * 点名到一条确切的路由。
+   * @param model 模型 id。留空 = 该路由的第一个模型
+   * @param provider 路由 id。留空 = 按模型名猜 (老行为)
+   */
+  resolve(model?: string, provider?: string): ResolvedRoute
+  /** **可用** provider 的模型 id。它是"选模型"的输入, 所以不给用不了的 */
   models(): string[]
   /** 未经组装的原始流。调试 provider 时用 */
   raw(req: StreamRequest): AsyncIterable<StreamChunk>
@@ -464,13 +686,53 @@ export interface LLMService {
   stream(req: StreamRequest): AsyncIterable<StreamChunk>
 }
 
+/** 把单路由的 `Provider` 包成 `Adapter`。唯一的一处归一 */
+function providerAdapter(p: Provider): Adapter {
+  return {
+    info: () => ({
+      ...(p.displayName === undefined ? {} : { name: p.displayName }),
+      ...(p.protocol === undefined ? {} : { protocol: p.protocol }),
+      ...(p.configScope === undefined ? {} : { configScope: p.configScope }),
+      ...(p.available === undefined ? {} : { available: p.available() }),
+      ...(p.missing === undefined ? {} : { missing: p.missing() }),
+    }),
+    models: () => p.models,
+    stream: (_route, req) => p.stream(req),
+  }
+}
+
 export function apply(ctx: Ctx, config: { defaultModel?: string }): Disposer {
-  const providers = new Map<string, Provider>()
+  /** 路由 → 它的归属。一个 adapter 可以出现在多个 key 上 */
+  const regs = new Map<string, Registration>()
+  /** 可配置路由的登记: 每个注册一份, 便于 replace / 卸装 */
+  const dirs: { entries: ConfigurableProvider[] }[] = []
+  /** scope → 探测器。一个 scope 一个实现 (一个插件一个 scope) */
+  const discoveries = new Map<string, (request: ModelDiscoveryRequest) => Promise<readonly DiscoveredModel[]>>()
   let defaultModel = config.defaultModel ?? ''
 
-  const usable = (p: Provider): boolean => (p.available ? p.available() : true)
+  const usable = (route: string): boolean => {
+    const reg = regs.get(route)
+    if (!reg) return false
+    return reg.adapter.info?.(route).available ?? true
+  }
 
-  const resolve = (model?: string): Provider => {
+  const modelList = (route: string): ModelInfo[] => {
+    const reg = regs.get(route)
+    if (!reg) return []
+    return (reg.adapter.models?.(route) ?? []).map(toModelInfo)
+  }
+
+  const resolve = (model?: string, provider?: string): ResolvedRoute => {
+    // 点名了路由: 不再猜。**模型不必在列表里** —— catalog 是 advisory,
+    // 新发布的模型名可以直接发, 这是 dsh 明确写下的语义
+    if (provider) {
+      const reg = regs.get(provider)
+      if (!reg) {
+        throw new LlmError(`没有路由 ${provider} (已注册: ${[...regs.keys()].join(', ') || '无'})`, LLM_CODE.NO_ADAPTER)
+      }
+      return { id: provider, model: model || modelList(provider)[0]?.id || '', adapter: reg.adapter }
+    }
+
     // 用 || 而不是 ?? : 调用方传空字符串是常态(agent 的 defaultModel 没配时就是 ''),
     // ?? 只在 null/undefined 时回退, 空串会直接走到"找不到 provider" ——
     // 而且异常被 agent 的 try 吞掉后表现为"一句话也不说", 极难定位
@@ -480,11 +742,13 @@ export function apply(ctx: Ctx, config: { defaultModel?: string }): Disposer {
     const explicit = typeof model === 'string' && model !== ''
 
     if (wanted) {
-      // 模型名优先, 其次 provider id —— 别要求插件记住 provider↔model 的映射。
-      // **点名的不筛可用性**: 没配 key 的 provider 也要路由过去, 让它抛出
+      // 模型名优先, 其次路由名 —— 别要求插件记住 provider↔model 的映射。
+      // **点名的不筛可用性**: 没配 key 的路由也要路由过去, 让它抛出
       // "没凭据"这个准确的错。在这里改成"找不到 provider", 用户会去翻模型名
-      for (const provider of providers.values()) {
-        if (provider.models.includes(wanted) || provider.id === wanted) return provider
+      for (const [route, reg] of regs) {
+        if (modelList(route).some((m) => m.id === wanted) || route === wanted) {
+          return { id: route, model: wanted, adapter: reg.adapter }
+        }
       }
       if (explicit) throw new LlmError(`没有 provider 能提供模型 ${wanted}`, LLM_CODE.NO_ADAPTER)
       // 默认模型指向的那条路由不在了 (用户删了一条供应商路由, 或改了模型名)。
@@ -492,13 +756,16 @@ export function apply(ctx: Ctx, config: { defaultModel?: string }): Disposer {
       // 默认值的语义本来就是这个: 没点名时用第一个能用的
     }
 
-    // 没点名: 只挑能用的。装了但没配 key 的 provider 排在前面时,
+    // 没点名: 只挑能用的。装了但没配 key 的路由排在前面时,
     // 不能用它顶默认 —— 那会让用户第一句话就撞上"没凭据",
     // 而他其实配好了另一家
-    const first = [...providers.values()].find(usable)
-    if (first) return first
+    const first = [...regs.keys()].find(usable)
+    if (first) {
+      const picked = modelList(first)[0]?.id ?? ''
+      return { id: first, model: picked || defaultModel, adapter: regs.get(first)!.adapter }
+    }
 
-    const known = [...providers.values()].map((p) => p.id)
+    const known = [...regs.keys()]
     throw new LlmError(
       known.length === 0
         ? '一个 provider 都没装'
@@ -507,52 +774,164 @@ export function apply(ctx: Ctx, config: { defaultModel?: string }): Disposer {
     )
   }
 
-  const infoOf = (p: Provider): ProviderInfo => {
-    const available = usable(p)
+  const infoOf = (route: string): ProviderInfo => {
+    const reg = regs.get(route)!
+    const facts = reg.adapter.info?.(route) ?? {}
+    const available = facts.available ?? true
     // missing 只在不可用时算: 可用却报"缺东西"是最让人怀疑界面的那种矛盾
-    const missing = available ? [] : (p.missing?.() ?? [])
+    const missing = available ? [] : (facts.missing ?? [])
     return {
-      id: p.id,
-      name: p.displayName ?? p.id,
-      models: [...p.models],
+      id: route,
+      name: facts.name || route,
+      models: modelList(route),
       available,
       ...(missing.length > 0 ? { missing } : {}),
-      ...(p.configScope ? { configScope: p.configScope } : {}),
+      ...(facts.protocol ? { protocol: facts.protocol } : {}),
+      ...(facts.configScope ? { configScope: facts.configScope } : {}),
+      ...(facts.declared ? { declared: true } : {}),
     }
+  }
+
+  /** 冲突检查 + 落表。全或无 */
+  const commit = (routes: readonly string[], adapter: Adapter, owner: Registration): void => {
+    const seen = new Set<string>()
+    for (const route of routes) {
+      if (!route) throw new Error('路由名不能是空字符串')
+      if (seen.has(route)) throw new Error(`路由 ${route} 在一个注册里出现了两次`)
+      seen.add(route)
+      const held = regs.get(route)
+      if (held && held !== owner) throw new Error(`provider ${route} 已被另一个 adapter 占用`)
+    }
+    // 先撤掉这个 owner 现在持有的全部, 再按新集合落 —— 中间不 await,
+    // 别处看不到"半张表"
+    for (const [route, reg] of regs) if (reg === owner) regs.delete(route)
+    owner.routes = [...routes]
+    for (const route of routes) regs.set(route, owner)
   }
 
   const service: LLMService = {
     register(provider) {
-      if (providers.has(provider.id)) throw new Error(`provider ${provider.id} 重复注册`)
-      providers.set(provider.id, provider)
-      // 只在"能用"的 provider 上落默认模型: 一个没配 key 的 provider 抢走默认,
+      return service.registerAdapter([provider.id], providerAdapter(provider))
+    },
+
+    registerAdapter(routes, adapter) {
+      const owner: Registration = { routes: [], adapter }
+      commit(routes, adapter, owner)
+      // 只在"能用"的路由上落默认模型: 一个没配 key 的 provider 抢走默认,
       // 表现为"用户配好的那家永远用不上"
-      if (!defaultModel && usable(provider) && provider.models[0]) defaultModel = provider.models[0]
-      ctx.emit('llm/provider-added', provider.id)
+      if (!defaultModel) {
+        const usableRoute = routes.find(usable)
+        const first = usableRoute ? modelList(usableRoute)[0]?.id : undefined
+        if (first) defaultModel = first
+      }
+      for (const route of routes) ctx.emit('llm/provider-added', route)
       ctx.emit('llm/providers-updated')
-      return () => {
-        providers.delete(provider.id)
-        ctx.emit('llm/provider-removed', provider.id)
+      ctx.emit('llm/adapters-updated')
+
+      let disposed = false
+      const handle = (() => {
+        if (disposed) return
+        disposed = true
+        const mine = [...regs.entries()].filter(([, reg]) => reg === owner).map(([route]) => route)
+        for (const route of mine) regs.delete(route)
+        for (const route of mine) ctx.emit('llm/provider-removed', route)
         ctx.emit('llm/providers-updated')
+        ctx.emit('llm/adapters-updated')
+      }) as AdapterHandle
+
+      handle.replace = (next) => {
+        if (disposed) throw new Error('这个注册已经卸装, 不能再 replace')
+        commit(next, adapter, owner)
+        ctx.emit('llm/providers-updated')
+        ctx.emit('llm/adapters-updated')
+      }
+
+      return handle
+    },
+
+    registerConfigurableProviders(entries) {
+      const owner = { entries: [] as ConfigurableProvider[] }
+      const commitDirectory = (next: readonly ConfigurableProvider[]): void => {
+        const seen = new Set<string>()
+        for (const entry of next) {
+          if (!entry.provider) throw new Error('目录条目的 provider 不能为空')
+          if (seen.has(entry.provider)) throw new Error(`目录里 ${entry.provider} 出现了两次`)
+          seen.add(entry.provider)
+          for (const other of dirs) {
+            if (other === owner) continue
+            if (other.entries.some((e) => e.provider === entry.provider)) {
+              throw new Error(`可配置路由 ${entry.provider} 已被另一个注册声明`)
+            }
+          }
+        }
+        owner.entries = [...next]
+        if (!dirs.includes(owner)) dirs.push(owner)
+        ctx.emit('llm/adapters-updated')
+      }
+
+      commitDirectory(entries)
+
+      let disposed = false
+      const handle = (() => {
+        if (disposed) return
+        disposed = true
+        const at = dirs.indexOf(owner)
+        if (at >= 0) dirs.splice(at, 1)
+        ctx.emit('llm/adapters-updated')
+      }) as DirectoryHandle
+      handle.replace = (next) => {
+        if (disposed) throw new Error('这个目录注册已经卸装, 不能再 replace')
+        commitDirectory(next)
+      }
+      return handle
+    },
+
+    listConfigurableProviders() {
+      return dirs.flatMap((d) => d.entries).map((e) => ({ ...e, configPath: [...e.configPath] }))
+    },
+
+    registerModelDiscovery(scope, discover) {
+      discoveries.set(scope, discover)
+      return () => {
+        // 只有还是自己那一个时才删 —— 后注册者覆盖前一个, 前一个的卸装
+        // 不该把后一个也带走
+        if (discoveries.get(scope) === discover) discoveries.delete(scope)
       }
     },
 
+    async discoverModels(scope, request) {
+      const discover = discoveries.get(scope)
+      if (!discover) {
+        throw new LlmError(`scope ${scope} 没有注册模型发现 (没人知道怎么问它要模型列表)`, LLM_CODE.DISCOVERY_UNSUPPORTED)
+      }
+      const found = await discover(request)
+      // 端点经常把同一个 id 报两次; 去重保持顺序
+      const seen = new Set<string>()
+      return found.filter((m) => {
+        if (!m.id || seen.has(m.id)) return false
+        seen.add(m.id)
+        return true
+      })
+    },
+
     listProviders() {
-      return [...providers.values()].map(infoOf)
+      return [...regs.keys()].map(infoOf)
     },
 
     resolve,
 
     models() {
-      return [...providers.values()].filter(usable).flatMap((p) => p.models)
+      return [...regs.keys()].filter(usable).flatMap((route) => modelList(route).map((m) => m.id))
     },
 
     raw(req) {
-      return resolve(req.model).stream(req)
+      const target = resolve(req.model, req.provider)
+      return target.adapter.stream(target.id, { ...req, model: target.model })
     },
 
     stream(req) {
-      return assemble(resolve(req.model).stream(req))
+      const target = resolve(req.model, req.provider)
+      return assemble(target.adapter.stream(target.id, { ...req, model: target.model }))
     },
   }
 
@@ -560,7 +939,9 @@ export function apply(ctx: Ctx, config: { defaultModel?: string }): Disposer {
   ctx.emit('llm/ready', { models: service.models() })
 
   return () => {
-    providers.clear()
+    regs.clear()
+    dirs.length = 0
+    discoveries.clear()
   }
 }
 

@@ -408,7 +408,9 @@ export async function apply(
     if (slot.meta.desc !== undefined) entry.desc = slot.meta.desc
     // 密钥行的 value **恒不给**: 这条 if 是这一层唯一的安全边界
     if (!slot.meta.secret) {
-      if (r.value !== undefined) entry.value = r.value as string | number | boolean
+      // 原样给。形状由 schema 说, 这层不做转述 —— 也**转述不了**:
+      // `routes` 是一张字典, 转成字符串就再也改不回去了
+      if (r.value !== undefined) entry.value = r.value
       if (r.source !== undefined) entry.source = r.source
     } else {
       if (r.secretRef !== undefined) entry.secretRef = r.secretRef

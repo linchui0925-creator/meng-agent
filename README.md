@@ -226,6 +226,7 @@ invariants: 25 / 25 通过
 | M6 | platform 三份实现 + Electron 桌面端 | 本地内核 + 本地 fs 可用 |
 | M7 | Capacitor 移动端 | 同一插件在 iOS/Android 跑通 |
 | **M5g** | **供应商目录 + 自由配置供应商**: Provider 带 `displayName` / `configScope` / `available` / `missing`; `llm.openai` 是**一张 `routes` 字典**（一个 key 一条路由，加一条就多一家供应商，写完立刻生效）; `llm.catalog` + `config.list/set/unset`（后端） | 没配 key 的那家也出现在目录里且标"未配置"; 自己加一条第三方网关不用重启也不用改代码; 密钥只以变量名落盘 ✓ |
+| **M5h** | **内置供应商目录 + 模型容量 + 模型发现**: `@meng/llm-catalog`（10 家 / 90 款，只收已实现协议的）; 模型条目从名字变成对象（上下文窗口 / 最大输出 / 模态 / 推理）; `registerAdapter(routes[], adapter)` 原子换路由; **协议成为配置字段**; `llm.discoverModels`（目录认识就零网络答，不认识才 `GET /models`） | 设置页能列出"还能添加的 10 家"并一键激活; 模型选择器显示 128k / 支持图片; 编辑内置供应商时「获取可用模型」19ms 返回且不打网络 ✓ |
 | M8 | 真 provider 联网验证 | 配好 key 后 `meng chat` 出字（不再需要 `MENG_PROVIDER`） |
 
 M4（后端）与 M5（前端）**无依赖, 可双线并行** —— 前端只需对着 `docs/06` 的契约实现,

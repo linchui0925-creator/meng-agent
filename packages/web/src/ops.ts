@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto'
 import type { Ctx, Disposer } from '@meng/core'
 import type { ConfigService, ConfigWriteResult } from '@meng/config'
 import type { SessionService } from '@meng/session'
-import type { LLMService } from '@meng/llm'
+import { LlmError, type LLMService } from '@meng/llm'
 import type { ToolService } from '@meng/tools'
 import type { LoopService } from '@meng/loop'
 import { HttpError, type OpHandler, type WebService } from './index.ts'
@@ -118,7 +118,35 @@ export function registerBuiltinOps(
    * 为什么现在不能用 (missing)。所以前端不需要自己拼 llm 和 config 两份数据,
    * 也不需要认识任何 provider 插件。
    */
-  op('llm.catalog', () => catalogOf(llm().listProviders(), config()?.list() ?? []))
+  op('llm.catalog', () =>
+    catalogOf(llm().listProviders(), config()?.list() ?? [], llm().listConfigurableProviders()),
+  )
+
+  /**
+   * 模型发现 —— 设置页的「获取可用模型」。
+   *
+   * payload 是**草稿**: 编辑一条已有路由时给 `provider`; 新建一条时给
+   * `baseURL` / `protocol` / `apiKeyEnv`（此时它还没有路由 id）。
+   * `scope` 用来找"谁负责探测这类供应商"—— 探测器由插件按 scope 注册,
+   * 出口层不认识任何厂商。
+   */
+  op('llm.discoverModels', async (payload) => {
+    const scope = typeof payload.scope === 'string' ? payload.scope.trim() : ''
+    if (!scope) throw new HttpError('bad-request', '缺 scope（这些供应商属于哪个插件）')
+    try {
+      return await llm().discoverModels(scope, {
+        ...(typeof payload.provider === 'string' ? { provider: payload.provider } : {}),
+        ...(typeof payload.baseURL === 'string' ? { baseURL: payload.baseURL } : {}),
+        ...(typeof payload.protocol === 'string' ? { protocol: payload.protocol } : {}),
+        ...(typeof payload.apiKeyEnv === 'string' ? { apiKeyEnv: payload.apiKeyEnv } : {}),
+      })
+    } catch (err) {
+      // 这条链路最需要的是"为什么没拉到": 401 / 连不上 / 不是模型清单。
+      // 原样冒会变成 500 的通用壳, 那句话就丢了
+      if (err instanceof LlmError) throw new HttpError(err.failure.code.toLowerCase(), err.message, 400)
+      throw err
+    }
+  })
 
   op('tools.list', () => tools().list())
 

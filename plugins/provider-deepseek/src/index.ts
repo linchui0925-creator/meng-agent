@@ -27,7 +27,9 @@ import {
   LLM_CODE,
   LlmError,
   httpErrorCode,
+  toModelInfo,
   type LLMService,
+  type ModelInfo,
   type Provider,
   type StreamChunk,
   type StreamRequest,
@@ -56,6 +58,33 @@ export const CONFIG_SCOPE = 'llm.deepseek'
 const DEFAULT_BASE_URL = 'https://api.deepseek.com'
 const DEFAULT_MODELS = ['deepseek-chat', 'deepseek-reasoner']
 const DEFAULT_IDLE_TIMEOUT_MS = 300_000
+
+/**
+ * 官方两款的容量。**只有这两个是"知道"的** —— 用户改成一个我们没听说过的
+ * 模型名时, 返回 `{id, name}` 而不编容量: 未知可以试, 编错了会让压缩
+ * 策略按一个假的上下文窗口做决定。
+ *
+ * 放常量而不是配置: 它是厂商事实, 不是部署选择。要覆盖就改 `models`
+ * 里那一项（第 2 步给 `provider-openai` 做的那种对象写法）—— 这个插件
+ * 的 `models` 还是字符串数组, 因为 DeepSeek 官方只有这两款。
+ */
+const KNOWN_MODELS: Record<string, ModelInfo> = {
+  'deepseek-chat': {
+    id: 'deepseek-chat',
+    name: 'DeepSeek Chat',
+    contextWindow: 128_000,
+    maxTokens: 8192,
+    input: ['text'],
+  },
+  'deepseek-reasoner': {
+    id: 'deepseek-reasoner',
+    name: 'DeepSeek Reasoner',
+    contextWindow: 128_000,
+    maxTokens: 65_536,
+    input: ['text'],
+    reasoning: true,
+  },
+}
 
 /**
  * 这个 provider 的配置声明。**写在这里, 不写在清单里。**
@@ -141,9 +170,10 @@ export function apply(ctx: Ctx): Disposer {
 
     // getter 而不是快照: 模型名是用户在设置页里能改的东西, 改完
     // 选择器和路由要立刻跟着变。快照会变成"重启才生效"的黑洞
-    get models(): string[] {
+    get models(): ModelInfo[] {
       const list = scope.get<string[]>('models')
-      return Array.isArray(list) && list.length > 0 ? list : DEFAULT_MODELS
+      const names = Array.isArray(list) && list.length > 0 ? list : DEFAULT_MODELS
+      return names.map((name) => KNOWN_MODELS[name] ?? { id: name, name })
     },
 
     /** 凭据在不在。设置页据此显示"可用 / 未配置" */
@@ -201,7 +231,11 @@ export function apply(ctx: Ctx): Disposer {
     const cfg = read()
     const think = cfg.thinking ? ` · thinking=${cfg.thinking}` : ''
     const key = cfg.apiKey ? '' : ` · 未配置 (${cfg.keyEnv} 为空)`
-    console.log(`[meng] provider ${ROUTE} · ${provider.models.join(', ')} · ${cfg.baseURL}${think}${key}`)
+    // `toModelInfo` 不能省: `models` 从 2026-11-04 起是 `ModelEntry[]`
+    // (`string | ModelInfo`), 直接拼会打出 "[object Object], [object Object]",
+    // 而这行日志是排查"为什么模型选不到"的第一现场
+    const names = provider.models.map((m) => toModelInfo(m).id).join(', ')
+    console.log(`[meng] provider ${ROUTE} · ${names} · ${cfg.baseURL}${think}${key}`)
   }
   return () => {
     off()

@@ -311,13 +311,75 @@ export function createFixtureKernel(name: FixtureName, options: FixtureOptions =
    * 设置页的假数据。**故意做成"可写"的**: `config.set` 改完, 下一次
    * `llm.catalog` 要能看见新值 —— 否则前端只能验"渲染", 验不了"保存后
    * 那一行有没有跟着变", 而后者才是设置页最容易画错的地方。
+   *
+   * **形状跟真内核一致** (`plugins/provider-openai/src/index.ts` 的 `CONFIG`)。
+   * 从 2026-11-04 起 `llm.openai` 只有一项 `routes` —— 一张路由字典。
+   * 原来是 baseURL / apiKey / temperature 三个扁平字段, 那套只能描述**一家**
+   * 供应商: 用户想同时接官方和自建网关时, 第二个地方都没有。
    */
-  /** 哪些密钥项"环境变量里有值"。fixture 里用集合模拟, 真内核是进程 env */
-  const present = new Set(['llm.openai.apiKey'])
-  const settings: Record<string, string | number | boolean> = {
+  /** 哪些环境变量"有值"。fixture 用集合模拟; 真内核读的是 process.env */
+  const env = new Set(['MENG_LLM_API_KEY'])
+
+  const settings: Record<string, unknown> = {
     'llm.deepseek.baseURL': 'https://api.deepseek.com',
-    'llm.deepseek.models': 'deepseek-chat, deepseek-reasoner',
+    'llm.deepseek.models': ['deepseek-chat', 'deepseek-reasoner'],
   }
+
+  /** 当前值: 写过的从 settings 来, 没写过的回落默认 */
+  const val = <T>(key: string, fallback: T): T => (key in settings ? (settings[key] as T) : fallback)
+  /** 来源: 设置页要画"这个值是你填的, 还是默认的" */
+  const src = (key: string): 'settings' | 'default' => (key in settings ? 'settings' : 'default')
+
+  type FixtureModel = {
+    id: string
+    name?: string
+    contextWindow?: number
+    maxTokens?: number
+    input?: string[]
+    reasoning?: boolean
+  }
+
+  /**
+   * `openai` 那条默认路由的 profile。字段抄自真内核的 `DEFAULT_ROUTES` ——
+   * 那边每个字段都带 `.default()`, 所以是写全的; 这里也一样写全, 否则
+   * "编辑这条路由"的表单会缺格子。
+   */
+  const OPENAI_ROUTE = {
+    displayName: 'OpenAI',
+    protocol: 'openai-completions',
+    baseURL: 'https://api.openai.com/v1',
+    apiKeyEnv: 'MENG_LLM_API_KEY',
+    models: [] as FixtureModel[],
+    modelOverrides: {} as Record<string, Partial<FixtureModel>>,
+    defaultContextWindow: 262144,
+    defaultMaxTokens: 32768,
+    defaultInput: ['text'] as string[],
+    headers: {} as Record<string, string>,
+  }
+  type FixtureRoute = typeof OPENAI_ROUTE
+
+  /** 声明自带的路由名。它们不算"用户自己加的" */
+  const builtin = new Set(['openai'])
+
+  /** 路由表现读 settings —— 写完立刻能看见, 前端才验得了"加一条" */
+  const routes = (): Record<string, FixtureRoute> =>
+    val('llm.openai.routes', { openai: OPENAI_ROUTE }) as Record<string, FixtureRoute>
+
+  /** 一条路由能不能用: 只看它绑的那个环境变量里有没有值 (真内核同一判据) */
+  const usable = (route: FixtureRoute): boolean => env.has(route.apiKeyEnv)
+
+  /**
+   * **兜底那一条模型**。真内核是 `FALLBACK_MODELS`: 既没声明、也不在内置
+   * 目录里时才用它 (`openai` 自己不在目录里, 目录只收第三方)。
+   * 容量是**知道的真值**, 不是路由的 default* —— 后者只是"没写容量时的假设"。
+   */
+  const FALLBACK_MODELS: FixtureModel[] = [
+    { id: 'gpt-4o-mini', name: 'GPT-4o mini', contextWindow: 128000, maxTokens: 16384, input: ['text'] },
+  ]
+
+  /** deepseek 绑的环境变量名。密钥行存的是**名字**, 不是值 */
+  const dsKeyEnv = (): string => String(val('llm.deepseek.apiKey', 'DEEPSEEK_API_KEY'))
+
   const configEntries = () => [
     {
       key: 'llm.deepseek.apiKey',
@@ -327,9 +389,8 @@ export function createFixtureKernel(name: FixtureName, options: FixtureOptions =
       secret: true,
       required: true,
       desc: '密钥绑定的环境变量名。值是进程启动时读的, 换 key 要重启',
-      // fixture 里假设"环境变量是空的" —— 正好演示未配置态
-      secretRef: String(settings['llm.deepseek.apiKey'] ?? 'DEEPSEEK_API_KEY'),
-      present: present.has('llm.deepseek.apiKey'),
+      secretRef: dsKeyEnv(),
+      present: env.has(dsKeyEnv()),
       schema: { type: 'string' },
     },
     {
@@ -341,8 +402,8 @@ export function createFixtureKernel(name: FixtureName, options: FixtureOptions =
       required: false,
       desc: '接口地址。第三方代理填它自己那一份, 不要带结尾斜杠',
       default: 'https://api.deepseek.com',
-      value: settings['llm.deepseek.baseURL'],
-      source: 'settings',
+      value: val('llm.deepseek.baseURL', 'https://api.deepseek.com'),
+      source: src('llm.deepseek.baseURL'),
       schema: { type: 'string', default: 'https://api.deepseek.com' },
     },
     {
@@ -353,76 +414,145 @@ export function createFixtureKernel(name: FixtureName, options: FixtureOptions =
       secret: false,
       required: false,
       desc: '这个路由能用的模型名。改完立刻生效, 不用重启',
-      schema: { type: 'array', items: { type: 'string' }, default: ['deepseek-chat', 'deepseek-reasoner'] },
+      value: val('llm.deepseek.models', ['deepseek-chat', 'deepseek-reasoner']),
+      source: src('llm.deepseek.models'),
+      schema: {
+        type: 'array',
+        items: { type: 'string' },
+        default: ['deepseek-chat', 'deepseek-reasoner'],
+      },
     },
     {
-      key: 'llm.openai.apiKey',
+      /**
+       * **整个 scope 只有这一项。** 设置页要画的是"一张键值表, 每个值是一个
+       * profile 表单", 而不是三行扁平输入框 —— 加一家供应商 = 加一个键。
+       *
+       * 值是**对象**, 所以 `ConfigEntry.value` 是 `unknown`: 消费方按 schema
+       * 收窄, 别对它做字符串拼接。
+       */
+      key: 'llm.openai.routes',
       scope: 'llm.openai',
-      name: 'apiKey',
-      type: 'string',
-      secret: true,
-      required: true,
-      desc: '密钥绑定的环境变量名。也认 OPENAI_API_KEY',
-      secretRef: String(settings['llm.openai.apiKey'] ?? 'MENG_LLM_API_KEY'),
-      // 这一家初始就是"绑好了" —— 两种状态都要能画出来
-      present: present.has('llm.openai.apiKey'),
-      schema: { type: 'string' },
-    },
-    {
-      key: 'llm.openai.baseURL',
-      scope: 'llm.openai',
-      name: 'baseURL',
-      type: 'string',
+      name: 'routes',
+      type: 'object',
       secret: false,
       required: false,
-      desc: '接口地址 (/v1 结尾)',
-      default: 'https://api.openai.com/v1',
-      value: 'https://api.openai.com/v1',
-      source: 'default',
-      schema: { type: 'string', default: 'https://api.openai.com/v1' },
-    },
-    {
-      key: 'llm.openai.temperature',
-      scope: 'llm.openai',
-      name: 'temperature',
-      type: 'number',
-      secret: false,
-      required: false,
-      desc: '采样温度。0 = 稳定, 2 = 发散',
-      default: 0.7,
-      value: 0.7,
-      source: 'default',
-      schema: { type: 'number', minimum: 0, maximum: 2, default: 0.7 },
+      desc: '一组 OpenAI 协议路由: 键是路由名, 值是它的协议 / 地址 / 密钥变量名 / 模型。加一条就是多一家供应商, 不用重启',
+      value: routes(),
+      source: src('llm.openai.routes'),
+      schema: {
+        type: 'object',
+        additionalProperties: {
+          type: 'object',
+          required: ['baseURL'],
+          properties: {
+            displayName: { type: 'string' },
+            protocol: { type: 'string', enum: ['openai-completions'], default: 'openai-completions' },
+            baseURL: { type: 'string', minLength: 1 },
+            apiKeyEnv: { type: 'string', minLength: 1, default: 'MENG_LLM_API_KEY' },
+            models: { type: 'array', items: { type: 'object' }, default: [] },
+            modelOverrides: { type: 'object', additionalProperties: { type: 'object' }, default: {} },
+            defaultContextWindow: { type: 'number', default: 262144 },
+            defaultMaxTokens: { type: 'number', default: 32768 },
+            defaultInput: { type: 'array', items: { type: 'string', enum: ['text', 'image'] }, default: ['text'] },
+            headers: { type: 'object', additionalProperties: { type: 'string' }, default: {} },
+            temperature: { type: 'number', minimum: 0, maximum: 2 },
+            streamIdleTimeoutMs: { type: 'number' },
+          },
+        },
+        default: { openai: OPENAI_ROUTE },
+      },
     },
   ]
 
+  /**
+   * `llm.catalog` 的输出。**顺序 = 注册顺序**: 活着的在前, 目录里还没加的
+   * 在后 —— 前端不该自己排序, 排序会让供应商每次启动都可能换位置。
+   *
+   * 三态各来一个, 一张屏就能看全:
+   *   · deepseek  未配置 (缺 key)  · openai 可用  · zai **还没添加** (`dormant`)
+   * mock 是"没有可配的东西"的那种, 界面上要画成不可配, 而不是空表单。
+   */
   const catalog = () => [
     {
       id: 'deepseek',
       name: 'DeepSeek',
-      models: ['deepseek-chat', 'deepseek-reasoner'],
-      available: false,
+      // 模型条目从 2026-11-04 起是**对象**: 名字之外的容量/模态都在里面。
+      // 前端不能再 `models.join(', ')`
+      models: [
+        { id: 'deepseek-chat', name: 'DeepSeek Chat', contextWindow: 128000, maxTokens: 8192, input: ['text'] },
+        {
+          id: 'deepseek-reasoner',
+          name: 'DeepSeek Reasoner',
+          contextWindow: 128000,
+          maxTokens: 65536,
+          input: ['text'],
+          reasoning: true,
+        },
+      ] as FixtureModel[],
+      available: env.has(dsKeyEnv()),
       configScope: 'llm.deepseek',
       config: configEntries().filter((e) => e.scope === 'llm.deepseek'),
-      missing: ['DEEPSEEK_API_KEY 里没有值'],
+      missing: env.has(dsKeyEnv()) ? [] : [`${dsKeyEnv()} 里没有值`],
     },
-    {
-      id: 'openai',
-      name: 'OpenAI 兼容',
-      models: ['gpt-4o-mini'],
-      available: true,
+    // 路由表里的每一条都是一家供应商。默认只有 `openai`, 用户加一条就多一行
+    ...Object.entries(routes()).map(([id, profile]) => ({
+      id,
+      name: profile.displayName ?? id,
+      protocol: profile.protocol,
+      // 没声明模型、也不在内置目录里 → 兜底那一条 (真内核是 `modelsOf`)
+      models: (profile.models.length > 0 ? profile.models : FALLBACK_MODELS) as FixtureModel[],
+      available: usable(profile),
+      ...(builtin.has(id) ? {} : { declared: true }),
       configScope: 'llm.openai',
       config: configEntries().filter((e) => e.scope === 'llm.openai'),
-      missing: [],
-    },
+      missing: usable(profile) ? [] : [`环境变量 ${profile.apiKeyEnv} 里没有值`],
+    })),
     {
       // 没有 configScope 的那种: 界面上要能画成"不可配", 而不是一个空表单
       id: 'mock',
       name: 'mock',
-      models: ['mock-1'],
+      models: [{ id: 'mock-1', name: 'mock-1' }] as FixtureModel[],
       available: true,
       config: [],
       missing: [],
+    },
+    {
+      /**
+       * **还没激活**的那一家。这一段就是"可添加"态: 有模型清单、有模板
+       * (`template` 原样写进 `routes.zai` 就行), 但没有 `available` ——
+       * 界面上应该是一个添加按钮 + 它会带来哪些模型, 不是一张缺 key 的表单。
+       *
+       * 数据取自 `@meng/llm-catalog` 的 `zai`。
+       */
+      id: 'zai',
+      name: 'Z.AI',
+      protocol: 'openai-completions',
+      models: [
+        { id: 'glm-4.7', name: 'GLM-4.7', contextWindow: 204800, maxTokens: 131072, input: ['text'], reasoning: true },
+        { id: 'glm-5.2', name: 'GLM-5.2', contextWindow: 1000000, maxTokens: 131072, input: ['text'], reasoning: true },
+        {
+          id: 'glm-5v-turbo',
+          name: 'GLM-5V-Turbo',
+          contextWindow: 200000,
+          maxTokens: 131072,
+          input: ['text', 'image'],
+          reasoning: true,
+        },
+      ] as FixtureModel[],
+      available: false,
+      dormant: true,
+      configScope: 'llm.openai',
+      configPath: ['routes', 'zai'],
+      template: {
+        displayName: 'Z.AI',
+        protocol: 'openai-completions',
+        baseURL: 'https://api.z.ai/api/coding/paas/v4',
+        apiKeyEnv: 'ZAI_API_KEY',
+        models: [],
+        modelOverrides: {},
+      },
+      config: [],
+      missing: ['还没添加 —— 在设置页点"添加"即可'],
     },
   ]
 
@@ -530,16 +660,35 @@ export function createFixtureKernel(name: FixtureName, options: FixtureOptions =
         case 'llm.catalog':
           return catalog()
 
+        /**
+         * 模型发现 —— 设置页的「获取可用模型」。
+         *
+         * 真内核有两条路: 内置目录认识这家就**直接答 (零网络)**, 不认识的
+         * 才去 `GET <base>/models`。fixture 不联网, 所以只演"直接答"那一路,
+         * 而且**故意混进一条目录里没有的** —— 前端要验的是"发现结果怎么和
+         * 现有清单合并"(新的加进去、有的更新容量、没再返回的留着还是删掉),
+         * 全给已知的就验不出来。
+         */
+        case 'llm.discoverModels': {
+          const { baseURL } = (payload ?? {}) as { baseURL?: string }
+          if (!baseURL) throw new Error('fixture: llm.discoverModels 需要 baseURL 或 provider')
+          return [
+            { id: 'glm-4.7', name: 'GLM-4.7', contextWindow: 204800, maxTokens: 131072 },
+            { id: 'glm-5.2', name: 'GLM-5.2', contextWindow: 1000000, maxTokens: 131072 },
+            { id: 'glm-6-preview', name: 'GLM-6 Preview' },
+          ]
+        }
+
         case 'config.list':
           return configEntries()
 
         case 'config.set': {
           const { key, value } = (payload ?? {}) as { key?: string; value?: unknown }
           if (!key || value === undefined) throw new Error('fixture: config.set 缺 key 或 value')
-          settings[key] = value as string | number | boolean
-          // 密钥行写的是变量名, 写完就当"那个变量里有值"—— 真内核去读 env,
-          // fixture 只能这样表达"绑定变了, 状态跟着变"
-          if (key.endsWith('.apiKey')) present.add(key)
+          settings[key] = value
+          // 密钥行写的是**变量名**, 不是值 —— 所以这里不需要"记住用户填过 key"。
+          // 把绑定改成 MY_KEY 之后 env 里没有这个名字, 那一行自然变红,
+          // 正好是真内核对"我明明填了却没生效"的表达方式
           const entry = configEntries().find((e) => e.key === key)
           return { entry, scopeEntries: configEntries().filter((e) => e.scope === entry?.scope) }
         }
@@ -548,7 +697,6 @@ export function createFixtureKernel(name: FixtureName, options: FixtureOptions =
           const { key } = (payload ?? {}) as { key?: string }
           if (!key) throw new Error('fixture: config.unset 缺 key')
           delete settings[key]
-          if (key.endsWith('.apiKey')) present.delete(key)
           const entry = configEntries().find((e) => e.key === key)
           return { entry, scopeEntries: configEntries().filter((e) => e.scope === entry?.scope) }
         }
