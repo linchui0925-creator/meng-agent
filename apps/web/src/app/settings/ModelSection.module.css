@@ -1,100 +1,222 @@
 /*
-  模型分区。列表是一个**整块容器**, 行与行之间只有 1px 分隔线 ——
-  「一张长表」而不是一节一张卡: 13 家各占一张卡会有 13 个圆角和 13 道阴影,
-  扫读时眼睛一直在被边框打断。
+  模型分区 = 三栏里的后两栏: **列表（rail）+ 详情（panel）**。
+  设置导航是第一栏, 由 SettingsView 管。
+
+  列表窄、详情宽, 这个比例是刻意的: 列表只需要"认出是哪一家"（章 + 名字 +
+  一个小点）, 详情才是真正要读的东西（地址、变量名、模型容量）。
+  两边等宽会让 11 个名字各占一半屏幕, 而名字后面全是空白。
 */
 
-/* 一个分区只有一组控件了（下拉 + 详情）, 段间距不用再撑开 */
-.section {
-  margin-bottom: 24px;
+[data-model-list] {
+  --rail-w: 226px;
+  --split-gap: 26px;
 }
 
-/*
-  一个下拉, 两个分组。**不是一张长表** —— 12 行要滚一屏才看得完, 而这一页
-  每次只需要看一家: 挑一家, 看它缺什么。原生 `<select>` 的 optgroup 免费
-  带来键盘、读屏、移动端选择器, 不用自己造一个浮层。
-*/
-.pickerRow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 12px;
+.split {
+  display: grid;
+  grid-template-columns: var(--rail-w) minmax(0, 1fr);
+  gap: var(--split-gap);
+  align-items: start;
 }
 
-.pickerLabel {
-  flex: none;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--meng-alias-fg-primary);
+/* 注脚跟着详情面板那一列, 不跟整页 —— 它说的是面板里的事 */
+.noteWrap {
+  margin-left: calc(var(--rail-w) + var(--split-gap));
 }
 
-.pickerWrap {
-  position: relative;
-  /* 不撑满通栏 —— 通栏的下拉在设置页里会被读成搜索框。
-     380 是"最长的那个名字 + 状态"还能放下、又不像输入框的宽度 */
-  flex: 0 1 380px;
+/* ── 列表 ── */
+
+.rail {
   min-width: 0;
 }
 
-.picker {
-  width: 100%;
-  min-height: 32px;
+/* 两段之间的间距比行间距大得多 —— 它们是两种来路, 不是两组状态 */
+.railSection + .railSection {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--meng-alias-border-l1);
+}
+
+.railHead {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 8px 6px;
+}
+
+.railTitle {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--meng-alias-fg-muted);
+  text-transform: uppercase;
+}
+
+.railCount {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--meng-alias-fg-muted);
+  opacity: 0.75;
+}
+
+/* 「＋」贴着右边缘 —— 它属于这一段, 不属于某一行 */
+.railHead .railAdd {
+  margin-left: auto;
+}
+
+.railAdd {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font: inherit;
   font-size: 13px;
-  /* 右侧留给箭头。原生箭头在深色下是黑块, 所以 appearance: none 自己画 */
-  padding: 7px 30px 7px 11px;
-  border-radius: 8px;
-  border: 1px solid var(--meng-alias-border-l2);
-  background: var(--meng-alias-bg-surface);
-  color: var(--meng-alias-fg-primary);
-  appearance: none;
+  line-height: 1;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--meng-alias-fg-muted);
   cursor: pointer;
   transition:
-    border-color 0.15s,
-    background 0.15s;
+    background 0.15s,
+    color 0.15s;
 }
 
-.picker:hover {
-  border-color: var(--meng-alias-border-l3);
+.railAdd:hover {
+  background: var(--meng-alias-accent-subtle);
+  color: var(--meng-alias-accent);
 }
 
-.picker:focus-visible {
-  outline: none;
-  border-color: var(--meng-alias-accent);
+.railList {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 
 /*
-  自己画的箭头。**不用 `▾` 字符** —— 它在不同字体的字号差别很大（实测在
-  13px 下会缩成一个小点, 看起来像渲染失败）。三角形用 border 画, 尺寸精确,
-  颜色走 token。
+  一行 = 章 + 名字 + 状态点。
+  **行内没有按钮**: 一行里塞两个可点区域, 点偏了就变成"我明明点的是添加,
+  却切走了"。动作全在右边的详情里。
 */
-.caret {
-  position: absolute;
-  right: 12px;
-  top: 50%;
-  margin-top: -2px;
-  width: 0;
-  height: 0;
-  border-left: 4px solid transparent;
-  border-right: 4px solid transparent;
-  border-top: 5px solid var(--meng-alias-fg-muted);
-  pointer-events: none;
-}
-
-/* 和左边的下拉同高 —— 差几像素时按钮会看起来"陷进去" */
-.pickerRow .newButton {
-  min-height: 32px;
-  padding: 0 12px;
-}
-
-.newButton {
+.railRow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 5px 8px 5px 6px;
   font: inherit;
-  font-size: 12.5px;
-  padding: 3px 10px;
+  text-align: left;
+  border: 0;
   border-radius: 7px;
-  border: 1px solid var(--meng-alias-border-l2);
   background: transparent;
+  color: var(--meng-alias-fg-primary);
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.railRow:hover {
+  background: var(--meng-alias-bg-hover);
+}
+
+/* 选中: 淡底 + 字重 + 左边一道 2px 的 accent 竖线。只靠底色的话, 深色下几乎看不出 */
+.railRow[data-active] {
+  background: var(--meng-alias-accent-subtle);
+  box-shadow: inset 2px 0 0 var(--meng-alias-accent);
+}
+
+.railRow[data-active] .railName {
+  font-weight: 600;
+  color: var(--meng-alias-accent);
+}
+
+.railStamp {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  background: var(--meng-alias-bg-inset);
   color: var(--meng-alias-fg-secondary);
+}
+
+.railStamp[data-state='available'] {
+  background: var(--meng-alias-accent-subtle);
+  color: var(--meng-alias-accent);
+}
+
+.railStamp[data-state='unconfigured'] {
+  background: var(--meng-alias-warning-subtle);
+  color: var(--meng-alias-warning);
+}
+
+/* 还没加进来的: 虚线 + 淡字。空心框在实心章旁边会读成渲染失败,
+   所以底色留着 */
+.railStamp[data-state='dormant'] {
+  background: var(--meng-alias-bg-inset);
+  border: 1px dashed var(--meng-alias-border-l2);
+  color: var(--meng-alias-fg-muted);
+}
+
+.railName {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--meng-alias-fg-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+  状态点。**用点不用字**: 11 行右边各挂一个「未配置」徽章, 那一列字会变成
+  第二列列表, 而且每行看起来一样重。点只有 6px, 一眼扫过去就知道哪几行活着。
+  具体是哪种态, 右边的详情里有字。
+*/
+.railDot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.railDot[data-state='available'] {
+  background: var(--meng-alias-positive);
+}
+
+.railDot[data-state='unconfigured'] {
+  background: var(--meng-alias-warning);
+}
+
+.railDot[data-state='dormant'] {
+  border: 1px solid var(--meng-alias-border-l3);
+}
+
+.railEmpty {
+  margin: 0;
+  padding: 4px 8px;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--meng-alias-fg-muted);
+}
+
+.railNew {
+  margin-top: 4px;
+  width: 100%;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  border: 1px dashed var(--meng-alias-border-l2);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--meng-alias-fg-muted);
   cursor: pointer;
   transition:
     background 0.15s,
@@ -102,41 +224,197 @@
     color 0.15s;
 }
 
-.newButton:hover {
+.railNew:hover {
   border-color: var(--meng-alias-accent);
   color: var(--meng-alias-accent);
   background: var(--meng-alias-accent-subtle);
 }
 
-/* ── 新建自定义 API 的表单 ── */
-.form {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 16px;
+/* ── 详情面板 ── */
+
+.panel {
+  min-width: 0;
+  padding: 18px 20px 20px;
   border: 1px solid var(--meng-alias-border-l1);
   border-radius: var(--meng-specific-radius-xl);
   background: var(--meng-alias-bg-surface);
 }
 
+.panelHead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.panelStamp {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 11px;
+  font-size: 17px;
+  font-weight: 700;
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-secondary);
+}
+
+.panelStamp[data-state='available'] {
+  background: var(--meng-alias-accent-subtle);
+  color: var(--meng-alias-accent);
+}
+
+.panelStamp[data-state='unconfigured'] {
+  background: var(--meng-alias-warning-subtle);
+  color: var(--meng-alias-warning);
+}
+
+.panelStamp[data-state='dormant'] {
+  background: var(--meng-alias-bg-inset);
+  border: 1px dashed var(--meng-alias-border-l2);
+  color: var(--meng-alias-fg-muted);
+}
+
+.panelTitleGroup {
+  flex: 1;
+  min-width: 0;
+}
+
+.panelNameLine {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.panelName {
+  margin: 0;
+  font-size: 15.5px;
+  font-weight: 650;
+  color: var(--meng-alias-fg-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tag {
+  flex: none;
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-muted);
+}
+
+.panelSub {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--meng-alias-fg-muted);
+}
+
+.panelSub code {
+  font-family: var(--meng-specific-font-mono);
+}
+
+.badge {
+  flex: none;
+  font-size: 11.5px;
+  padding: 3px 9px;
+  border-radius: 99px;
+  white-space: nowrap;
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-muted);
+}
+
+.badge[data-state='available'] {
+  background: var(--meng-alias-positive-subtle);
+  color: var(--meng-alias-positive);
+}
+
+.badge[data-state='unconfigured'] {
+  background: var(--meng-alias-warning-subtle);
+  color: var(--meng-alias-warning);
+}
+
+.add {
+  flex: none;
+  font: inherit;
+  font-size: 12.5px;
+  padding: 5px 15px;
+  border-radius: 7px;
+  border: 1px solid var(--meng-alias-accent);
+  background: transparent;
+  color: var(--meng-alias-accent);
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    color 0.15s;
+}
+
+.add:hover:not(:disabled) {
+  background: var(--meng-alias-accent-subtle);
+}
+
+.add:disabled {
+  cursor: default;
+  border-color: var(--meng-alias-border-l2);
+  color: var(--meng-alias-fg-muted);
+  background: var(--meng-alias-bg-inset);
+}
+
+/* 后端原话。黄而不是红: 它是"还没配", 不是"配错了" */
+.missing {
+  margin: -4px 0 14px;
+  padding: 8px 11px;
+  border-radius: 8px;
+  background: var(--meng-alias-warning-subtle);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--meng-alias-warning);
+}
+
+.dormantNote {
+  margin: 0 0 16px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--meng-alias-fg-muted);
+}
+
+/* ── 可编辑的三格 ── */
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  margin-bottom: 4px;
+}
+
 .field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
+  min-width: 0;
 }
 
 .fieldLabel {
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
-  color: var(--meng-alias-fg-primary);
+  color: var(--meng-alias-fg-secondary);
 }
 
 .input {
+  width: 100%;
   font: inherit;
-  font-size: 13px;
+  font-size: 12.5px;
   font-family: var(--meng-specific-font-mono);
-  padding: 7px 10px;
-  border-radius: 8px;
+  padding: 6px 10px;
+  border-radius: 7px;
   border: 1px solid var(--meng-alias-border-l2);
   background: var(--meng-alias-bg-inset);
   color: var(--meng-alias-fg-primary);
@@ -153,12 +431,11 @@
 
 .input::placeholder {
   color: var(--meng-alias-fg-muted);
-  font-family: var(--meng-specific-font-mono);
 }
 
 .hint,
 .fieldError {
-  font-size: 11.5px;
+  font-size: 11px;
   line-height: 1.5;
 }
 
@@ -171,7 +448,7 @@
 }
 
 .formError {
-  margin: 0;
+  margin: 12px 0 0;
   padding: 9px 11px;
   border-radius: 8px;
   background: var(--meng-alias-danger-subtle);
@@ -184,7 +461,7 @@
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 2px;
+  margin-top: 14px;
 }
 
 .primary,
@@ -226,236 +503,111 @@
   opacity: 0.6;
 }
 
-.empty {
-  margin: 0;
-  padding: 14px 16px;
-  border: 1px dashed var(--meng-alias-border-l2);
-  border-radius: var(--meng-specific-radius-xl);
-  font-size: 12.5px;
-  color: var(--meng-alias-fg-muted);
-}
+/* ── 模型清单 ── */
 
-.list {
-  border: 1px solid var(--meng-alias-border-l1);
-  border-radius: var(--meng-specific-radius-xl);
-  overflow: hidden;
-  background: var(--meng-alias-bg-surface);
-  /* 和 Group 同一档: 表 → 注脚之间 16, 不是 Group 之间的 30（注脚属于这张表） */
-  margin-bottom: 16px;
-}
-
-.item {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  padding: 13px 14px;
-}
-
-.item + .item {
+.modelBlock {
+  margin-top: 20px;
+  padding-top: 16px;
   border-top: 1px solid var(--meng-alias-border-l1);
 }
 
-/*
-  可添加的那一行**明显更矮**: 无第二行、无 missing、padding 更小。
-  高度差本身就是"这家还没进来"的表达 —— 不用再多一个说明文字。
-*/
-.item[data-state='dormant'] {
-  gap: 0;
-  padding: 8px 14px;
-  transition: background 0.15s;
-}
-
-.item[data-state='dormant']:hover {
-  background: var(--meng-alias-bg-hover);
-}
-
-.head {
+.modelHead {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 
-/* ── 字母章 ── */
-.stamp {
-  flex: none;
-  width: 28px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  font-size: 12.5px;
-  font-weight: 700;
-  background: var(--meng-alias-bg-inset);
+.modelTitle {
+  font-size: 12px;
+  font-weight: 600;
   color: var(--meng-alias-fg-secondary);
 }
 
-.stamp[data-state='available'] {
-  background: var(--meng-alias-accent-subtle);
-  color: var(--meng-alias-accent);
-}
-
-.stamp[data-state='unconfigured'] {
-  background: var(--meng-alias-warning-subtle);
-  color: var(--meng-alias-warning);
-}
-
-/* 还没加进来的: 虚线 + 淡底。底色留着才不像"少画了一块" ——
-   空心框在三个实心章旁边会读成渲染失败, 而不是"这家还没进来" */
-.stamp[data-state='dormant'] {
-  background: var(--meng-alias-bg-inset);
-  border: 1px dashed var(--meng-alias-border-l2);
+.modelCount {
+  font-size: 11.5px;
   color: var(--meng-alias-fg-muted);
 }
 
-/* ── 名字 + 模型摘要 ── */
-.titleGroup {
+.modelList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: 9px;
+  overflow: hidden;
+}
+
+.modelRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 11px;
+  min-width: 0;
+}
+
+.modelRow + .modelRow {
+  border-top: 1px solid var(--meng-alias-border-l1);
+}
+
+.modelName {
   flex: 1;
   min-width: 0;
+  font-family: var(--meng-specific-font-mono);
+  font-size: 12px;
+  color: var(--meng-alias-fg-code);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.modelMeta {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--meng-alias-fg-muted);
+}
+
+.modelFlag {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--meng-alias-bg-inset);
+  font-size: 10px;
+}
+
+/* ── 新建表单 ── */
+
+.form {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 14px;
+  padding: 18px 20px 20px;
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: var(--meng-specific-radius-xl);
+  background: var(--meng-alias-bg-surface);
 }
 
-.nameLine {
-  display: flex;
-  align-items: baseline;
-  gap: 7px;
-  min-width: 0;
-}
-
-.name {
-  font-size: 13.5px;
-  font-weight: 600;
+.formTitle {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
   color: var(--meng-alias-fg-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.tag {
-  flex: none;
-  font-size: 10.5px;
-  padding: 1px 6px;
-  border-radius: 5px;
-  background: var(--meng-alias-bg-inset);
-  color: var(--meng-alias-fg-muted);
-}
-
-.modelLine {
-  font-size: 12px;
-  color: var(--meng-alias-fg-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* ── 右侧: 徽章 / 添加按钮 ── */
-.badge {
-  flex: none;
-  font-size: 11.5px;
-  padding: 3px 9px;
-  border-radius: 99px;
-  white-space: nowrap;
-  background: var(--meng-alias-bg-inset);
-  color: var(--meng-alias-fg-muted);
-}
-
-.badge[data-state='available'] {
-  background: var(--meng-alias-positive-subtle);
-  color: var(--meng-alias-positive);
-}
-
-.badge[data-state='unconfigured'] {
-  background: var(--meng-alias-warning-subtle);
-  color: var(--meng-alias-warning);
-}
-
-.add {
-  flex: none;
-  font: inherit;
-  font-size: 12.5px;
-  padding: 4px 14px;
-  border-radius: 7px;
-  border: 1px solid var(--meng-alias-accent);
-  background: transparent;
-  color: var(--meng-alias-accent);
-  cursor: pointer;
-  transition:
-    background 0.15s,
-    border-color 0.15s,
-    color 0.15s;
-}
-
-.add:hover:not(:disabled) {
-  background: var(--meng-alias-accent-subtle);
-}
-
-.add:disabled {
-  cursor: default;
-  border-color: var(--meng-alias-border-l2);
-  color: var(--meng-alias-fg-muted);
-  background: var(--meng-alias-bg-inset);
-}
-
-/* ── 事实行 (地址 / 变量名) ── */
-.facts {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
-  /* 对齐名字, 跳过字母章: 38 = 28 章 + 10 间距 */
-  padding-left: 38px;
-  font-size: 11.5px;
-  color: var(--meng-alias-fg-muted);
-}
-
-.fact {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-family: var(--meng-specific-font-mono);
-  color: var(--meng-alias-fg-code);
-  background: var(--meng-alias-bg-inset);
-  border-radius: 6px;
-  padding: 2px 7px;
-  max-width: 320px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 有值/没值。空心圈不是灰点 —— 它必须看起来像"缺" */
-.dot {
-  flex: none;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  border: 1.5px dashed var(--meng-alias-border-l3);
-}
-
-.dot[data-present] {
-  border: 0;
-  background: var(--meng-alias-positive);
-}
-
-/* 后端原话。黄而不是红: 它是"还没配", 不是"配错了" */
-.missing {
-  padding-left: 38px;
-  font-size: 11.5px;
-  color: var(--meng-alias-warning);
-  line-height: 1.5;
-}
-
-.rowError {
-  padding-left: 38px;
-  font-size: 11.5px;
-  color: var(--meng-alias-danger);
-  line-height: 1.5;
 }
 
 /* ── 整页级状态 ── */
+
+.empty {
+  margin: 0;
+  padding: 20px;
+  border: 1px dashed var(--meng-alias-border-l2);
+  border-radius: var(--meng-specific-radius-xl);
+  font-size: 12.5px;
+  color: var(--meng-alias-fg-muted);
+}
+
 .loading {
   padding: 18px 2px;
   font-size: 12.5px;
@@ -489,11 +641,24 @@
   background: var(--meng-alias-bg-surface);
 }
 
-/* 窄屏: 事实行换行后不再缩进对齐, 太窄时对齐反而像错位 */
-@media (max-width: 720px) {
-  .facts,
-  .missing,
-  .rowError {
-    padding-left: 0;
+/*
+  窄屏: 列表折到上面、详情在下面。**不折成一栏的两个 tabs** ——
+  折起来之后"这一家和上一家比谁缺 key"就做不到了, 而那是窄屏下唯一还能
+  横着看的机会（一行一个, 勉强还能扫）。
+*/
+@media (max-width: 900px) {
+  .split {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+
+  /* 折成一栏后注脚不再缩进 —— 那时候缩进看起来像错位 */
+  .noteWrap {
+    margin-left: 0;
+  }
+
+  .railSection + .railSection {
+    margin-top: 12px;
+    padding-top: 12px;
   }
 }

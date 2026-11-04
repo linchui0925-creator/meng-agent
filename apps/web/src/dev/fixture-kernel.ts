@@ -318,8 +318,14 @@ export function createFixtureKernel(name: FixtureName, options: FixtureOptions =
    * 原来是 baseURL / apiKey / temperature 三个扁平字段, 那套只能描述**一家**
    * 供应商: 用户想同时接官方和自建网关时, 第二个地方都没有。
    */
-  /** 哪些环境变量"有值"。fixture 用集合模拟; 真内核读的是 process.env */
-  const env = new Set(['MENG_LLM_API_KEY'])
+  /**
+   * 哪些环境变量"有值"。fixture 用集合模拟; 真内核读的是 process.env。
+   *
+   * `DEEPSEEK_API_KEY` 是**故意给的** —— 它是列表里唯一看得见的"可用"态
+   * （绿章 / 绿点）。不给的话三种态里少一种: `MENG_LLM_API_KEY` 属于 openai
+   * 那条默认路由, 而它在设置页里被隐藏了, 于是界面上永远看不到"配好了"长什么样。
+   */
+  const env = new Set(['MENG_LLM_API_KEY', 'DEEPSEEK_API_KEY'])
 
   const settings: Record<string, unknown> = {
     'llm.deepseek.baseURL': 'https://api.deepseek.com',

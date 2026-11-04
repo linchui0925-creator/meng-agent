@@ -213,16 +213,154 @@ export function shownProviders(list: CatalogProvider[]): CatalogProvider[] {
  */
 const HIDDEN_IDS = new Set(['openai'])
 
-/**
- * 下拉框里的一行字。
- *
- * 原生 `<option>` 不能带样式（没有徽章、没有颜色），所以状态**只能写进文案**。
- * 不写状态的后果很具体: 下拉里 12 个名字长得一样, 用户不知道哪家缺 key、
- * 哪家还没添加, 得挨个点开看。
- */
-export function optionLabelOf(p: CatalogProvider): string {
-  return `${p.name}（${STATE_LABEL[stateOf(p)]}）`
+// ─────────────────────────────────────────────────────────────────────────────
+// 详情面板: 当前值 ↔ 编辑框
+//
+// 后端有**两种**存法, 详情面板必须两种都认, 否则会有一类供应商"打开就是空框":
+//   · 路由字典（openai 那类）: 整张 `routes` 是一个配置项, 一家是字典里的一个键
+//   · 扁平（deepseek）: 每家一个 scope, 地址/密钥名/温度各是一行配置
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 详情面板里能改的那三项。`undefined` = 后端没这一项, **那一行不画** */
+export interface RouteDraft {
+  baseURL: string
+  /** 密钥绑定的**环境变量名**，不是密钥本身 */
+  env: string
+  /** 空字符串 = 没设。后端没有这一项时整个字段是 undefined */
+  temperature?: string
 }
+
+/**
+ * 这条路由写在哪儿。
+ *
+ * **后端只对"可添加"的条目下发 `configPath`；已经添加的那些不带。**
+ * （`packages/web/src/catalog.ts` 的 `catalogOf`: `providers` 那段没有
+ * configPath，只有 `directory` 那段才有。）
+ *
+ * 直接后果: 只认 `configPath` 的话, 已添加的路由会被当成"扁平配置",
+ * 保存时往 `llm.openai.baseURL` 这种**不存在的键**上写 —— 界面显示"保存成功",
+ * 而配置一个字都没变。这个 bug 就是在它上面长出来的。
+ *
+ * 所以这里补一条推断: 在同一个 scope 的配置项里找"值是以这一家的 id 作键的
+ * 那个对象"。找到 = 它住在那张字典里。找不到 = 它真是扁平的（deepseek 那种,
+ * scope 里全是标量项）。
+ *
+ * 推断而不是硬编码 `llm.openai.routes`: 换一个插件管路由表, 这里跟着数据走。
+ * 后端哪天给已添加的条目也补上 `configPath`, 第一分支就接管了, 这段不会挡路。
+ */
+export function routeTargetOf(p: CatalogProvider): { key: string; dictKey: string; id: string } | undefined {
+  if (!p.configScope) return undefined
+  if (p.configPath?.length) {
+    return {
+      key: `${p.configScope}.${p.configPath[0]}`,
+      dictKey: p.configPath[0]!,
+      id: p.configPath[1] ?? p.id,
+    }
+  }
+  for (const e of p.config) {
+    if (e.type === 'object' && isRecord(e.value) && p.id in e.value) {
+      return { key: e.key, dictKey: e.name, id: p.id }
+    }
+  }
+  return undefined
+}
+
+/**
+ * 读这条路由现在生效的值。
+ *
+ * 密钥名在扁平那种里**不能读 `value`** —— 密钥行的 `value` 恒 `undefined`
+ * （docs/06 §1.3）, 名字在 `secretRef` 里。读 `value` 的话那一格永远是空的,
+ * 而它明明有一个正在用的变量名。
+ */
+export function routeDraftOf(p: CatalogProvider): RouteDraft {
+  // ① 住在一张字典里（已添加的、以及还没添加但有 configPath 的）
+  const slot = routeTargetOf(p)
+  if (slot) {
+    const dict = p.config.find((e) => e.name === slot.dictKey)?.value
+    const one = isRecord(dict) ? dict[slot.id] : undefined
+    if (isRecord(one)) {
+      return {
+        baseURL: typeof one.baseURL === 'string' ? one.baseURL : '',
+        env: typeof one.apiKeyEnv === 'string' ? one.apiKeyEnv : '',
+        temperature: typeof one.temperature === 'number' ? String(one.temperature) : '',
+      }
+    }
+    // 还没写进配置（可添加的那类）→ 用它的模板当"将要写的东西"
+    const t = p.template
+    return {
+      baseURL: typeof t?.baseURL === 'string' ? t.baseURL : '',
+      env: typeof t?.apiKeyEnv === 'string' ? t.apiKeyEnv : '',
+      temperature: typeof t?.temperature === 'number' ? String(t.temperature) : '',
+    }
+  }
+
+  // ② 扁平: 一项一条配置
+  const base = p.config.find((e) => e.name === 'baseURL')
+  const secret = p.config.find((e) => e.secret)
+  const temp = p.config.find((e) => e.name === 'temperature')
+  return {
+    baseURL: typeof base?.value === 'string' ? base.value : '',
+    env: secret?.secretRef ?? '',
+    // 后端没声明温度这一项就不画 —— 画一个改了什么都不发生的输入框比不画糟
+    temperature: temp === undefined ? undefined : typeof temp.value === 'number' ? String(temp.value) : '',
+  }
+}
+
+/**
+ * 要写的那几步。**纯数据, 不在里面调 invoke** —— 这样"改一个字会写哪里"
+ * 能单测, 而不是只能靠手点一次才知道。
+ *
+ * `whole` 是路由字典那条路: 后端只收整张字典, 所以先读回来改一条再写回。
+ * `single` 是扁平那条路: 一项就是一项。
+ */
+export type WriteStep =
+  | { kind: 'whole'; key: string; dictKey: string; id: string; patch: Record<string, unknown> }
+  | { kind: 'single'; key: string; value: unknown }
+
+/**
+ * 表单 → 写入步骤。只写**真改过的**字段。
+ *
+ * 三个不能省的判断:
+ *   · 没变的字段不进 patch —— 否则"我只改了地址"会连带把温度重写一遍,
+ *     而温度这一格在没有那一项的后端上是空的, 空字符串会把数字字段写坏。
+ *   · 温度清空 = **删掉这个键**, 不是写 0。0 是"确定要 0 温度", 语义完全不同。
+ *   · 密钥写的是**变量名**。值只从 env 读, 这是整个配置层刻意的非对称。
+ */
+export function writeStepsOf(p: CatalogProvider, next: RouteDraft, before: RouteDraft): WriteStep[] {
+  const patch: Record<string, unknown> = {}
+  const flat: WriteStep[] = []
+
+  const slot = routeTargetOf(p)
+  if (!p.configScope) return []
+
+  if (slot) {
+    if (next.baseURL !== before.baseURL) patch.baseURL = next.baseURL.trim()
+    if (next.env !== before.env) patch.apiKeyEnv = next.env.trim()
+    if (next.temperature !== undefined && next.temperature !== before.temperature) {
+      const t = next.temperature.trim()
+      patch.temperature = t === '' ? undefined : Number(t)
+    }
+    if (Object.keys(patch).length === 0) return []
+    return [{ kind: 'whole', key: slot.key, dictKey: slot.dictKey, id: slot.id, patch }]
+  }
+
+  // 扁平: 每个字段是独立的一项, key 就是全名
+  if (next.baseURL !== before.baseURL) {
+    flat.push({ kind: 'single', key: `${p.configScope}.baseURL`, value: next.baseURL.trim() })
+  }
+  if (next.env !== before.env) {
+    const secret = p.config.find((e) => e.secret)
+    // 用后端给的那一项名字, 不硬编码 `apiKey` —— deepseek 叫 apiKey,
+    // 换一家插件可能叫 apiKeyEnv, 硬编码就是"有一家改不了"
+    if (secret) flat.push({ kind: 'single', key: secret.key, value: next.env.trim() })
+  }
+  if (next.temperature !== undefined && next.temperature !== before.temperature) {
+    flat.push({ kind: 'single', key: `${p.configScope}.temperature`, value: Number(next.temperature.trim()) })
+  }
+  return flat
+}
+
+/**
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 自定义 API: 表单 → 路由
