@@ -214,7 +214,13 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  background: var(--meng-alias-bg-surface);
+  /*
+    侧栏用 inset (比画布深一级), 内部条用 border-l2。
+    原来的 surface + inset 组合在浅色主题下是 #fff on #f6f6f7 ——
+    缩略图会渲染成一块纯白, 用户看到的是"这张卡没有内容"。
+    缩略图里每一块都必须和相邻块差**至少一级**令牌, 否则等于没画。
+  */
+  background: var(--meng-alias-bg-inset);
   border-right: 1px solid var(--meng-alias-border-l1);
 }
 
@@ -222,12 +228,13 @@
   display: block;
   height: 6px;
   border-radius: 2px;
-  background: var(--meng-alias-bg-inset);
+  background: var(--meng-alias-border-l2);
 }
 
 .thumbSide i:first-child {
-  background: var(--meng-alias-bg-selected);
+  background: var(--meng-alias-accent);
   width: 85%;
+  opacity: 0.55;
 }
 
 .thumbMain {
@@ -248,7 +255,7 @@
 .bubble {
   width: 72%;
   background: var(--meng-alias-bg-surface);
-  border: 1px solid var(--meng-alias-border-l1);
+  border: 1px solid var(--meng-alias-border-l2);
 }
 
 .bubbleUser {
@@ -272,11 +279,4 @@
   background: var(--meng-alias-bg-inset);
   color: var(--meng-alias-fg-disabled);
   font-size: 12px;
-}
-
-.hint {
-  font-size: 12px;
-  color: var(--meng-alias-fg-muted);
-  margin: 0;
-  line-height: 1.6;
 }

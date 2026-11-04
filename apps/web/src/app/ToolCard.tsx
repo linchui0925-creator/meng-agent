@@ -29,10 +29,24 @@ import styles from './App.module.css'
 
 export interface ToolCardProps {
   tool: ToolCall
+  /**
+   * 跑完之后默认折叠。来自设置里的「工具卡」开关。
+   *
+   * 为什么是 prop 而不是组件自己去读偏好: 读 localStorage 的组件没法在被测时
+   * 换一个取值, 而折叠与否是**会改变断言结果**的行为。偏好从上面流下来,
+   * 这里就只是一个布尔。
+   */
+  autoFold?: boolean
 }
 
-export function ToolCard({ tool }: { tool: ToolCall }) {
-  const [open, setOpen] = useState(false)
+export function ToolCard({ tool, autoFold = true }: ToolCardProps) {
+  /**
+   * `null` = 没手动动过, 跟随偏好的默认值。
+   *
+   * 三态而不是一个布尔, 是因为「默认收起」和「默认展开」两种偏好下,
+   * 「用户点了一下」的方向是相反的 —— 用一个 boolean 记它, 换偏好时会翻车。
+   */
+  const [toggled, setToggled] = useState<boolean | null>(null)
   const [now, setNow] = useState(() => Date.now())
 
   /**
@@ -52,7 +66,11 @@ export function ToolCard({ tool }: { tool: ToolCall }) {
   const summary = toolSummary(tool)
   /** 只有一行的输出没有折叠的必要 —— 摘要已经把它整个显示出来了 */
   const foldable = shouldFold(output)
-  const expanded = open || !foldable
+  /**
+   * 默认展开 = 偏好关掉了自动折叠。用户手动点过则以手动为准。
+   * 单行输出永远展开: 它没有"折叠起来能藏什么"这回事。
+   */
+  const expanded = !foldable || (toggled ?? !autoFold)
 
   return (
     <div
@@ -100,10 +118,10 @@ export function ToolCard({ tool }: { tool: ToolCall }) {
             <button
               type="button"
               className={styles.toolToggle}
-              aria-expanded={open}
-              onClick={() => setOpen((v) => !v)}
+              aria-expanded={expanded}
+              onClick={() => setToggled(!expanded)}
             >
-              {open ? '收起' : '展开'}
+              {expanded ? '收起' : '展开'}
             </button>
           )}
         </div>
@@ -111,11 +129,11 @@ export function ToolCard({ tool }: { tool: ToolCall }) {
         {/*
           args 是技术细节: 折叠态里标题已经把"干了什么"说完了, JSON 只在
           看得见细节的场合出现 —— running(它在跑什么) / blocked(它想干什么) /
-          用户亲手点开的展开态。注意用 `open` 不用 `expanded`: 单行输出没有
-          折叠这回事(永远 expanded), 若按 expanded 判, 它的 args 会常驻 ——
-          标题已经说了 notes/x.md, 再摆一遍 JSON 是纯噪音
+          用户亲手点开的展开态。注意判的是 `toggled === true` 而不是 `expanded`:
+          偏好设成"默认展开"时 expanded 对多行输出也是常 true, 若按它判,
+          args 会跟着常驻 —— 标题已经说了 notes/x.md, 再摆一遍 JSON 是纯噪音
         */}
-        {(tool.status !== 'done' || open) && tool.args !== undefined && (
+        {(tool.status !== 'done' || toggled === true) && tool.args !== undefined && (
           <pre className={styles.toolArgs}>{JSON.stringify(tool.args, null, 2)}</pre>
         )}
 

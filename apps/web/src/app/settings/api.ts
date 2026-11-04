@@ -7,7 +7,7 @@
 
 import type { ComponentType } from 'react'
 
-import type { ThemeMode } from '../../prefs.ts'
+import type { Prefs } from '../../prefs.ts'
 
 /** 一个已注册的分区。由宿主从 `slots.entries('settings.section')` 投影出来 */
 export type SectionEntry = {
@@ -23,21 +23,33 @@ export type SectionEntry = {
 }
 
 /**
+ * 分区拿到的 props。
+ *
+ * **为什么 `setPrefs` 接受 Partial 而不是「一个字段一个回调」**:
+ * 曾经这里是 `themeMode` + `onThemeMode` 两个字段 —— 每加一项设置都要在
+ * 契约上加一对, 三个分区之后这个类型会变成一张回调清单。
+ * 改成「读一份 prefs / 写一个 patch」之后, 加设置项只动 prefs.ts 一处,
+ * 契约和宿主都不用改。
+ *
+ * `Partial<Prefs>` 的形状由 Prefs 决定, 所以分区写错字段名会在这里报错,
+ * 而不是静默写进 localStorage 一个没人读的键。
+ */
+export type SectionApi = {
+  prefs: Prefs
+  setPrefs: (patch: Partial<Prefs>) => void
+}
+
+/**
  * 设置页壳收到的 props（`settings.view` 的 owner）。
  *
  * `close` 由宿主给: 关不关设置是**宿主的 view 状态**, 不是壳的。
  * 壳只负责「用户点了返回」这件事往上抛。
+ *
+ * 壳自己不读偏好、也不写 —— 它只是把 `prefs` 原样传给当前分区的组件。
+ * 这样壳永远不用改: 加设置项改的是 prefs、画设置项改的是分区。
  */
-export type SettingsViewApi = {
+export type SettingsViewApi = SectionApi & {
   open: boolean
   close: () => void
   sections: SectionEntry[]
-  themeMode: ThemeMode
-  onThemeMode: (mode: ThemeMode) => void
-}
-
-/** 分区组件收到的 props。所有分区拿同一份, 用不到的就不取 */
-export type SectionApi = {
-  themeMode: ThemeMode
-  onThemeMode: (mode: ThemeMode) => void
 }

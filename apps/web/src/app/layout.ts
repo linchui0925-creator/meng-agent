@@ -19,6 +19,7 @@ import type { Message } from './conversation.ts'
 import type { JobRow } from './conversation.ts'
 import type { PluginGraphState } from './PluginPanel.tsx'
 import type { SessionSummary } from './sessions.ts'
+import type { Prefs } from '../prefs.ts'
 import type { ResolvedTheme } from '../theme.ts'
 
 /** `createSlotRenderer` 的返回类型, 布局自己也要能画内部的洞 */
@@ -93,6 +94,15 @@ export type LayoutApi = {
   /** 切会话。宿主负责: 换 id → 清空 → 用 session.read 补历史 */
   onSelectSession: (sessionId: string) => void
   theme: ResolvedTheme
+  /**
+   * 视觉偏好（密度 / 动效 / 气泡 / 工具卡折叠）。
+   *
+   * 传整份而不是拆成一个个布尔: 布局是「渲染时要用到偏好」的地方,
+   * 拆开的话每加一项偏好, 这个类型和相关组件就要跟着改一次。
+   * 而传整份的代价只是布局能看到几个它不用的字段 —— 没有耦合风险,
+   * 因为布局**只读不写**(写入口在宿主)。
+   */
+  prefs: Prefs
   /** 非 null 表示跑在 fixture 上 */
   fixture: string | null
   toolCount: number

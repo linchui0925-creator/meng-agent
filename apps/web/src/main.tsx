@@ -41,15 +41,25 @@ import { CrashBomb, CrashBoundary, FallbackShell, shouldBootSafe } from './app/F
 import { DEMO_PLUGIN_ID, demoRuntime } from './app/demo-plugin.tsx'
 import { DEMO_SKIN_ID, demoSkinRuntime } from './app/demo-skin-plugin.tsx'
 import { AppearanceSection } from './app/settings/AppearanceSection.tsx'
+import { ConversationSection } from './app/settings/ConversationSection.tsx'
 import { SettingsView } from './app/settings/SettingsView.tsx'
 import { createFixtureKernel, fixtureFromSearch } from './dev/fixture-kernel.ts'
-import { applyTheme, readThemeMode } from './theme.ts'
+import { applyTheme } from './theme.ts'
+import { readPrefs } from './prefs.ts'
+import { applyPresentation } from './presentation.ts'
 
 // URL 参数在这里读一次, bootstrap 与主题共用
 const params = new URLSearchParams(location.search)
 
-// 首帧前定主题: 晚一帧就会看到浅色闪一下
-applyTheme(params.has('theme') ? (params.get('theme') === 'dark' ? 'dark' : 'light') : readThemeMode())
+/*
+  首帧前把**所有视觉偏好**落地, 包括主题、密度、动效。
+  晚一帧的代价分别是: 浅色闪一下 / 整页跳一格 / 动画先跑一遍再被叫停。
+  读一次存起来, 别读两遍 —— 两遍之间 localStorage 理论上可能被别的标签页改掉,
+  那样主题和密度会来自两份不同的快照。
+*/
+const bootPrefs = readPrefs()
+applyTheme(params.has('theme') ? (params.get('theme') === 'dark' ? 'dark' : 'light') : bootPrefs.theme)
+applyPresentation(bootPrefs)
 
 /**
  * 宿主声明的 slot 目录。
@@ -230,6 +240,19 @@ async function bootstrap(report: (entries: EntryState[]) => void): Promise<Boote
     component: AppearanceSection,
     order: 100,
     meta: { label: '外观', group: '界面', origin: 'local' },
+  })
+  /*
+    对话分区: order 110 —— 和外观同组且紧挨着。
+
+    为什么它不走「插件目录加载」那条路: 它和外观一样是**内置**分区。
+    内置分区也走 register, 与第三方插件同一条路径 ——
+    这样"加一个分区"只有一种写法, 不存在"内置可以走后门"的第二条路。
+  */
+  slots.register('builtin.settings.conversation', {
+    name: 'settings.section',
+    component: ConversationSection,
+    order: 110,
+    meta: { label: '对话', group: '界面', origin: 'local' },
   })
 
   let transport: Transport

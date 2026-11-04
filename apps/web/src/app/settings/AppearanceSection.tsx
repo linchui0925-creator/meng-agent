@@ -5,12 +5,16 @@
  *   · 只拿 SectionApi, 不碰壳、不碰整窗开关
  *   · 注册时带 meta { label, group, origin } —— 左导航靠它列项
  *
- * 数据归本机腿: 主题写 prefs（localStorage），即改即生效、断线也能改。
- * 这也是「两条腿」在界面上的第一个实例 —— 右上角徽章写「本机」。
+ * 数据归本机腿: 主题 / 密度 / 动效都写 prefs（localStorage），
+ * 即改即生效、断线也能改。这也是「两条腿」在界面上的第一个实例 —— 右上角徽章写「本机」。
+ *
+ * 为什么密度和动效在这里而不是「对话」分区: 它们改的是**整屏**的观感
+ * （全站间距、所有动画），而对话分区只管会话流里的东西。判据是影响范围, 不是直觉。
  */
 
 import type { SectionApi } from './api.ts'
-import type { ThemeMode } from '../../prefs.ts'
+import type { Density, MotionMode, ThemeMode } from '../../prefs.ts'
+import { Group, Note, Row, Segmented } from './controls.tsx'
 import styles from './AppearanceSection.module.css'
 
 type ThemeOption = {
@@ -25,6 +29,16 @@ const THEMES: ThemeOption[] = [
   { id: 'light', label: '浅色', thumb: 'light' },
   { id: 'dark', label: '深色', thumb: 'dark' },
   { id: 'soon', label: '敬请期待', thumb: 'soon' },
+]
+
+const DENSITY_OPTIONS: ReadonlyArray<{ value: Density; label: string }> = [
+  { value: 'standard', label: '标准' },
+  { value: 'compact', label: '紧凑' },
+]
+
+const MOTION_OPTIONS: ReadonlyArray<{ value: MotionMode; label: string }> = [
+  { value: 'system', label: '跟随系统' },
+  { value: 'reduced', label: '减少动效' },
 ]
 
 /**
@@ -75,7 +89,7 @@ function ThumbBody() {
   )
 }
 
-export function AppearanceSection({ themeMode, onThemeMode }: SectionApi) {
+export function AppearanceSection({ prefs, setPrefs }: SectionApi) {
   return (
     <div>
       {/* 预览卡: 用当前主题的真颜色画一个迷你会话, 选主题时当场变 */}
@@ -108,7 +122,7 @@ export function AppearanceSection({ themeMode, onThemeMode }: SectionApi) {
       <div className={styles.grid}>
         {THEMES.map((t) => {
           const soon = t.id === 'soon'
-          const on = !soon && t.id === themeMode
+          const on = !soon && t.id === prefs.theme
           return (
             <button
               key={t.id}
@@ -117,7 +131,7 @@ export function AppearanceSection({ themeMode, onThemeMode }: SectionApi) {
               data-soon={soon ? '' : undefined}
               disabled={soon}
               onClick={() => {
-                if (!soon) onThemeMode(t.id as ThemeMode)
+                if (!soon) setPrefs({ theme: t.id as ThemeMode })
               }}
               aria-pressed={on}
             >
@@ -130,9 +144,37 @@ export function AppearanceSection({ themeMode, onThemeMode }: SectionApi) {
         })}
       </div>
 
-      <p className={styles.hint}>
-        主题存在这台机器上，立刻生效。手写体、密度、等待气泡的开关在下一轮接进这个分区。
-      </p>
+      <Group title="布局">
+        <Row
+          title="密度"
+          desc="紧凑会收窄行高、控件高度和间距，字号不变 —— 一屏能多放几行，但没现在这么松。"
+        >
+          <Segmented
+            value={prefs.density}
+            options={DENSITY_OPTIONS}
+            onChange={(density) => setPrefs({ density })}
+            label="界面密度"
+          />
+        </Row>
+      </Group>
+
+      <Group title="动效">
+        <Row
+          title="动画"
+          desc="「跟随系统」会跟着操作系统里的「减少动态效果」走；选「减少动效」则无条件关掉，包括气泡探出和卡片淡入。"
+        >
+          <Segmented
+            value={prefs.motion}
+            options={MOTION_OPTIONS}
+            onChange={(motion) => setPrefs({ motion })}
+            label="动效"
+          />
+        </Row>
+      </Group>
+
+      <Note>
+        主题、密度、动效都存在这台机器上，改完立刻生效，不经过内核、也不需要重启。
+      </Note>
     </div>
   )
 }

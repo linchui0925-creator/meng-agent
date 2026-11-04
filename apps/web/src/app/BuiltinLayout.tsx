@@ -16,7 +16,7 @@ import { Badge, Button, IconButton, ScrollArea, Separator, Spinner, Tooltip } fr
 import { MoonIcon, PlusIcon, SunIcon, LayersIcon, GearIcon } from './icons.tsx'
 import type { LayoutApi } from './layout.ts'
 import { waitingState, windowMessages, type Message, type WaitState } from './conversation.ts'
-import { WHISPER_DELAY_MS, WHISPER_HOLD_MS } from './whisper.ts'
+import { WHISPER_DELAY_BY_PREF, WHISPER_HOLD_MS } from './whisper.ts'
 import { WaitBubble } from './WaitBubble.tsx'
 import { ToolCard } from './ToolCard.tsx'
 import { BuiltinComposer } from './BuiltinComposer.tsx'
@@ -43,6 +43,7 @@ export function BuiltinLayout(api: LayoutApi) {
     sessions,
     onSelectSession,
     theme,
+    prefs,
     fixture,
     toolCount,
     status,
@@ -88,8 +89,11 @@ export function BuiltinLayout(api: LayoutApi) {
   })()
 
   /**
-   * 验收用的阈值覆盖 (`?whisper=600`), 生产默认 8 秒。
-   * 有它浏览器脚本才不用真等 8 秒; 没有它就得把 fixture 拉长到十几秒, 测试变慢变脆。
+   * 气泡的关键时刻。
+   *
+   * 默认值来自设置页那三档 (5 / 8 / 12 秒), 但 `?whisper=600` 仍然优先 ——
+   * 验收脚本要能在**任何**偏好下把阈值压到 600ms, 否则用户把气泡调成
+   * "12 秒"之后, 整套气泡验收会集体超时, 而且看起来像功能坏了。
    * `?whisperHold=` 同理, 用来在几秒内验完"停留 → 淡出 → 消失"。
    */
   const { whisperDelay, whisperHold } = useMemo(() => {
@@ -101,8 +105,11 @@ export function BuiltinLayout(api: LayoutApi) {
         return fallback
       }
     }
-    return { whisperDelay: num('whisper', WHISPER_DELAY_MS), whisperHold: num('whisperHold', WHISPER_HOLD_MS) }
-  }, [])
+    return {
+      whisperDelay: num('whisper', WHISPER_DELAY_BY_PREF[prefs.whisperWhen]),
+      whisperHold: num('whisperHold', WHISPER_HOLD_MS),
+    }
+  }, [prefs.whisperWhen])
 
   return (
     <div className={styles.shell}>
@@ -240,9 +247,10 @@ export function BuiltinLayout(api: LayoutApi) {
                   key={message.id}
                   message={message}
                   Slot={Slot}
-                  whisper={message.id === whisperAnchorId ? waiting : null}
+                  whisper={prefs.whisper && message.id === whisperAnchorId ? waiting : null}
                   whisperDelay={whisperDelay}
                   whisperHold={whisperHold}
+                  autoFold={prefs.foldTools}
                 />
               ))}
             </div>
@@ -288,7 +296,12 @@ export function BuiltinLayout(api: LayoutApi) {
             气泡挂在助手头像上 (见 MessageRow); 只有消息流里还没有助手消息时才落这里 ——
             刚发出去、模型还没开口, 没有头像可锚, 总比不说一句强。
           */}
-          {waiting !== null && whisperAnchorId === null && (
+          {/*
+            关掉的是"冒不冒", 不是"等不等" —— 这个开关不该影响任何真实进度显示。
+            挂载层就断开, 而不是挂上去再靠 CSS 藏起来: 藏起来的组件仍然在跑
+            250ms 的心跳定时器, 一个假开关顺带烧一份电, 不值得。
+          */}
+          {prefs.whisper && waiting !== null && whisperAnchorId === null && (
             <WaitBubble state={waiting} anchor="composer" delayMs={whisperDelay} holdMs={whisperHold} />
           )}
         </div>
@@ -351,6 +364,7 @@ function MessageRow({
   whisper = null,
   whisperDelay,
   whisperHold,
+  autoFold,
 }: {
   message: Message
   Slot: LayoutApi['Slot']
@@ -358,6 +372,8 @@ function MessageRow({
   whisper?: WaitState | null
   whisperDelay: number
   whisperHold: number
+  /** 工具跑完后默认折叠。来自偏好, 所以它读的是设置而不是状态 */
+  autoFold: boolean
 }) {
   const isUser = message.role === 'user'
 
@@ -386,7 +402,7 @@ function MessageRow({
       {message.tools.length > 0 && (
         <div className={styles.tools} data-density="compact">
           {message.tools.map((tool) => (
-            <ToolCard key={tool.callId} tool={tool} />
+            <ToolCard key={tool.callId} tool={tool} autoFold={autoFold} />
           ))}
         </div>
       )}

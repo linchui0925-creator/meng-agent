@@ -1,0 +1,176 @@
+/* 设置页基础控件。颜色一律走 alias 令牌 —— 深浅主题靠令牌自己切, 这里不写色值。
+ *
+ * 尺寸节奏: 一行 44px 高 (控件 26 + 上下 9), 行间靠分隔线而不是间距 ——
+ * 设置的每一行是同级的, 用间距分会让"哪些是一组"变成猜谜。
+ * 分组之间才留大空, 那个差由 Group 的 margin 表达。
+ */
+
+.group {
+  margin-bottom: 30px;
+}
+
+.groupTitle {
+  margin: 0 0 10px;
+  font-size: var(--meng-specific-text-sm);
+  font-weight: 600;
+  color: var(--meng-alias-fg-secondary);
+  letter-spacing: 0.02em;
+}
+
+.groupBody {
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: var(--meng-specific-radius-xl);
+  background: var(--meng-alias-bg-surface);
+  overflow: hidden;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 11px 16px;
+}
+
+/* 行与行之间只画一条线, 不画外框 —— 外框由 groupBody 出 */
+.row + .row {
+  border-top: 1px solid var(--meng-alias-border-l1);
+}
+
+.row[data-disabled] {
+  opacity: 0.45;
+}
+
+.rowText {
+  flex: 1;
+  min-width: 0;
+}
+
+.rowTitle {
+  display: block;
+  font-size: var(--meng-specific-text-md);
+  color: var(--meng-alias-fg-primary);
+  line-height: 1.5;
+  cursor: default;
+}
+
+.rowDesc {
+  margin: 3px 0 0;
+  font-size: var(--meng-specific-text-xs);
+  color: var(--meng-alias-fg-muted);
+  line-height: 1.55;
+}
+
+.rowControl {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── 开关 ──
+ * 36×20 的胶囊。这是 iOS 的比例 (宽 ≈ 高 × 1.8), 也是用户最不需要学习的形状。
+ * 动效只做 transform 和 background-color, 不碰 layout。
+ */
+.switch {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--meng-alias-border-l2);
+  border-radius: var(--meng-specific-radius-full);
+  background: var(--meng-alias-bg-inset);
+  cursor: pointer;
+  transition:
+    background-color var(--meng-specific-dur-fast) var(--meng-specific-ease),
+    border-color var(--meng-specific-dur-fast) var(--meng-specific-ease);
+}
+
+.switch[data-on] {
+  background: var(--meng-alias-accent);
+  border-color: var(--meng-alias-accent);
+}
+
+.switch:disabled {
+  cursor: default;
+}
+
+.switch:focus-visible {
+  outline: 2px solid var(--meng-alias-accent);
+  outline-offset: 2px;
+}
+
+.switchKnob {
+  position: absolute;
+  top: 50%;
+  /* 3px 而不是 2: 滑块跑到底时左边距也必须是 3 (36-3-3-14=16),
+   * 否则开关两端一边宽一边窄, 那种不对称说不清哪里不对但看得出来 */
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  margin-top: -7px;
+  border-radius: var(--meng-specific-radius-full);
+  background: var(--meng-alias-bg-surface);
+  box-shadow: var(--meng-alias-shadow-sm);
+  transition: transform var(--meng-specific-dur-fast) var(--meng-specific-ease);
+}
+
+.switch[data-on] .switchKnob {
+  transform: translateX(16px);
+}
+
+/* ── 分段 ── */
+.seg {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: var(--meng-specific-radius-lg);
+  background: var(--meng-alias-bg-inset);
+}
+
+.seg[data-disabled] {
+  opacity: 0.45;
+}
+
+.segItem {
+  padding: 3px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--meng-alias-fg-secondary);
+  font-family: inherit;
+  font-size: var(--meng-specific-text-xs);
+  line-height: 1.6;
+  cursor: pointer;
+  transition:
+    background-color var(--meng-specific-dur-fast) var(--meng-specific-ease),
+    color var(--meng-specific-dur-fast) var(--meng-specific-ease);
+}
+
+.segItem:hover:not(:disabled):not([data-on]) {
+  color: var(--meng-alias-fg-primary);
+}
+
+.segItem[data-on] {
+  background: var(--meng-alias-bg-surface);
+  color: var(--meng-alias-fg-primary);
+  font-weight: 600;
+  box-shadow: var(--meng-alias-shadow-sm);
+}
+
+.segItem:disabled {
+  cursor: default;
+}
+
+.segItem:focus-visible {
+  outline: 2px solid var(--meng-alias-accent);
+  outline-offset: 1px;
+}
+
+.note {
+  margin: 0;
+  font-size: var(--meng-specific-text-xs);
+  color: var(--meng-alias-fg-muted);
+  line-height: 1.65;
+}

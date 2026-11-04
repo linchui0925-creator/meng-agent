@@ -17,7 +17,7 @@ import type { SectionEntry, SectionApi, SettingsViewApi } from './api.ts'
 import styles from './SettingsView.module.css'
 
 export function SettingsView(props: SettingsViewApi) {
-  const { close, sections, themeMode, onThemeMode } = props
+  const { close, sections, prefs, setPrefs } = props
 
   /** 当前分区。空 = 还没选（首次进入落到导航第一项） */
   const [active, setActive] = useState<string>()
@@ -65,7 +65,7 @@ export function SettingsView(props: SettingsViewApi) {
     return () => window.removeEventListener('keydown', onKey)
   }, [close])
 
-  const sectionProps: SectionApi = { themeMode, onThemeMode }
+  const sectionProps: SectionApi = { prefs, setPrefs }
 
   return (
     <div className={styles.root} ref={rootRef} data-settings-view="">

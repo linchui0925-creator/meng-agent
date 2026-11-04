@@ -22,8 +22,9 @@ import { connectionText, type ComposerApi, type LayoutApi } from './layout.ts'
 import type { SectionEntry, SettingsViewApi } from './settings/api.ts'
 import { listSessions, type SessionSummary } from './sessions.ts'
 import { createConversationStore } from './store.ts'
-import { applyTheme, readThemeMode, saveThemeMode, toggleTheme, type ResolvedTheme, type ThemeMode } from '../theme.ts'
-import { readPrefs } from '../prefs.ts'
+import { applyTheme, toggleTheme, type ResolvedTheme } from '../theme.ts'
+import { readPrefs, updatePrefs, type Prefs } from '../prefs.ts'
+import { applyPresentation } from '../presentation.ts'
 
 export interface AppProps {
   transport: Transport
@@ -66,11 +67,16 @@ export function App({ transport, slots, fixture, auto }: AppProps) {
     document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light',
   )
   /**
-   * 主题的**模式**（三态），和上面 resolve 后的深浅是两件事:
-   * 设置页要画「跟随系统 / 浅色 / 深色」的选中态, 那需要模式; 界面换色需要深浅。
-   * 真相仍只有一份 —— prefs。这里只是它的 state 镜像, 改动一律经过 changeThemeMode。
+   * 视觉偏好的**唯一真相镜像**。
+   *
+   * 真相在 localStorage（prefs.ts），这里是它的 React 镜像 —— 组件要重渲染就必须有 state。
+   * 所有写入口都走 `changePrefs`（标题栏那个开关也一样），所以不存在
+   * "一处写了存储、另一处 state 没跟上"的窗口。
+   *
+   * 为什么不再单独留一个 themeMode: 主题本来就是 Prefs 的一个字段,
+   * 单独提出来就有了两处真相, 而它们迟早会在某次切换里不同步。
    */
-  const [themeMode, setThemeMode] = useState<ThemeMode>(() => readThemeMode())
+  const [prefs, setPrefs] = useState<Prefs>(() => readPrefs())
   /**
    * 设置页开没开。**归宿主**（view 状态）, 设置页壳只负责把「用户点了返回」抛上来。
    * 打开时 `settings.view` 的 chain 选举上台, 会话流被 display:none 盖住但**不卸载**
@@ -278,24 +284,26 @@ export function App({ transport, slots, fixture, auto }: AppProps) {
     }
   }
 
-  function switchTheme() {
-    const next = toggleTheme(theme)
-    applyTheme(next)
-    saveThemeMode(next)
-    setTheme(next)
-    // 模式镜像一起走, 否则设置页的卡片选中态会和实际深浅对不上
-    setThemeMode(next)
+  /**
+   * 改任意一项偏好 —— **唯一的写入口**。
+   *
+   * 顺序: 先落 DOM, 再更新 state。反过来的话会有一帧是
+   * 「state 说紧凑、页面还没紧」, 视觉上是一次多余的跳。
+   *
+   * 标题栏那个开关和设置页走的是同一条路 —— 两个入口各写各的, 是这类
+   * 界面最常见的"设置不生效"来源。
+   */
+  function changePrefs(patch: Partial<Prefs>) {
+    const next = updatePrefs(patch)
+    setPrefs(next)
+    applyPresentation(next)
+    // 只有主题要额外落一次: 它还要算出 resolve 后的深浅给 React 用
+    if (patch.theme !== undefined) setTheme(applyTheme(next.theme))
   }
 
-  /**
-   * 设置页选主题。和标题栏那个开关**同一条写路径**（都是 prefs + applyTheme）,
-   * 区别只是它接受三态里的 system —— 那是「跟随系统」唯一能设进来的地方。
-   */
-  function changeThemeMode(mode: ThemeMode) {
-    applyTheme(mode)
-    saveThemeMode(mode)
-    setThemeMode(mode)
-    setTheme(document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light')
+  /** 标题栏那个日/月按钮。它只该在浅深之间来回, 所以先 resolve 成具体值再写 */
+  function switchTheme() {
+    changePrefs({ theme: toggleTheme(theme) })
   }
 
   const status = connectionText(connection)
@@ -337,8 +345,8 @@ export function App({ transport, slots, fixture, auto }: AppProps) {
     open: settingsOpen,
     close: () => setSettingsOpen(false),
     sections: settingsSections,
-    themeMode,
-    onThemeMode: changeThemeMode,
+    prefs,
+    setPrefs: changePrefs,
   }
 
   const composer: ComposerApi = {
@@ -368,6 +376,12 @@ export function App({ transport, slots, fixture, auto }: AppProps) {
     sessions,
     onSelectSession: (id: string) => void selectSession(id),
     theme,
+    /**
+     * 布局也要读偏好: 等待气泡冒不冒、工具卡折没折, 都是**布局渲染时**要用到的,
+     * 不是设置页自己的事。传整份 prefs 而不是拆成两个布尔 ——
+     * 拆开的话每加一项布局相关的偏好, layout.ts 的契约就要跟着改一次。
+     */
+    prefs,
     fixture,
     toolCount,
     connection,

@@ -110,6 +110,44 @@
   --meng-specific-row-h: 26px;
 }
 
+/* 用户主动选的「紧凑」—— 挂在 html 上时**再压一档大间距**。
+ *
+ * 为什么分成两块, 而不是把 4-7 塞进上面那段:
+ *   上面那段还服务于「局部紧凑」—— 侧栏、状态条、工具输出这些容器天生就该紧,
+ *   它们的呼吸感由 1-3 级决定, 4-7 级压在它们身上会把正文区一起带紧,
+ *   而正文区恰恰是最需要留白的地方。
+ *   用户主动打开「紧凑」是另一件事: 他要的是**整屏**都收, 自然包括 4-7。
+ *
+ * 这一块是会话区真的变紧的关键: 消息流的上下留白 (space-5) 和左右 (space-4),
+ * 以及消息之间的行距 (thread gap = space-5)。只压 1-3 级的话,
+ * 界面上能看见的变化不到 2px —— 那和"开关没生效"在观感上是一回事。 */
+html[data-density='compact'] {
+  --meng-specific-space-4: 12px;
+  --meng-specific-space-5: 16px;
+  --meng-specific-space-6: 24px;
+  --meng-specific-space-7: 32px;
+}
+
+/* 用户主动要求「减少动效」。
+ *
+ * 为什么是属性而不是媒体查询: `prefers-reduced-motion` 只能反映**系统**设置,
+ * 用户在应用里改不了。设置页给出的开关必须能真的关掉动画, 否则那是个假开关。
+ *
+ * 用 !important 是没法绕的: 动画时长散落在十几个组件里, 逐个改成变量才是更干净的做法,
+ * 但那要给每个声明都换一次写法, 而这条规则的效果与之等价。代价: 以后想保留某个
+ * 动画在 reduced 下播放, 得用更高的特异性覆盖它 —— 这是有意保留的例外通道。
+ *
+ * 0.001ms 而不是 none: 保底 `animationend` / `transitionend` 仍然触发,
+ * 否则依赖这些事件的逻辑 (比如气泡淡出后卸载) 会永远等不到。 */
+[data-motion='reduced'] *,
+[data-motion='reduced'] *::before,
+[data-motion='reduced'] *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+
 /* ══════════════════════════ alias 层: 颜色 (light) ══════════════════════════ */
 
 /*

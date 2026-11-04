@@ -33,9 +33,23 @@
  */
 
 import type { WaitScene } from './conversation.ts'
+import type { WhisperWhen } from '../prefs.ts'
 
 /** 超过这个时长才值得说一句。// 你来定: 8 秒是"人开始怀疑卡住了"的粗略阈值 */
 export const WHISPER_DELAY_MS = 8_000
+
+/**
+ * 设置页选的那三档 → 毫秒。
+ *
+ * 表放在这里而不是 prefs.ts: 毫秒是这个组件的知识 (阈值多少算"有点久"),
+ * 偏好层只该知道有哪三个选项, 不该知道每个选项是几秒。
+ * 将来调 8 秒这个值, 只动上面那个常量, 用户存下的 'normal' 自动跟着走。
+ */
+export const WHISPER_DELAY_BY_PREF: Readonly<Record<WhisperWhen, number>> = {
+  soon: 5_000,
+  normal: WHISPER_DELAY_MS,
+  late: 12_000,
+}
 
 /** 一条气泡停留多久。太短读不完, 太长就成了背景噪音 */
 export const WHISPER_HOLD_MS = 6_000
