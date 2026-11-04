@@ -73,7 +73,7 @@ const SLOT_DEFS: Array<[string, SlotDef]> = [
    *
    * 「可能有用」不是理由 —— 每个 slot 都要宿主声明 + 布局留渲染点 + 断言,
    * 目录越长, 后来人越难判断该往哪插。
-   * 刻意没加的: settings.section (还没有设置页)、message.bubble (气泡要被砍掉, 见 docs/07 F2b)。
+   * 刻意没加的: message.bubble (气泡要被砍掉, 见 docs/07 F2b)。
    */
   // 侧栏头部: 搜索 / 收藏 / 分组切换
   ['sidebar.header', { kind: 'list', scope: 'root' }],
@@ -86,6 +86,23 @@ const SLOT_DEFS: Array<[string, SlotDef]> = [
   ['composer.actions', { kind: 'list', scope: 'session-maybe' }],
   // 状态条: token 用量 / 模型名 / 索引进度。用 root, 无会话时也该能显示
   ['statusbar.item', { kind: 'list', scope: 'root' }],
+
+  /* ── 设置页的一批 (2 个, 2026-11-04 v3 定案) ──
+   *
+   * 形态: 整窗接管 (盖住侧栏+主区), 会话流**不卸载**只 inert ——
+   * 这是用户拍板的 B 方案: 返回时滚动位置原样。
+   * 样张: docs/prototypes/settings-v3.html; 规范: docs/13-frontend-plugin-spec.md。
+   *
+   * 为什么 view 不进 layout.root: layout.root 是 single, 被顶掉 = 内置布局卸载,
+   * 会话流跟着死 —— 违背 B。settings.view 是叠在布局之上的整窗层,
+   * select 拿宿主的 view 状态: 用户打开设置 → 上台盖住; 关闭 → 让位。
+   * 用 chain 不用 single: 「整窗视图」将来不止设置一个 (引导页、锁屏…),
+   * 同一座位排队选举, 谁的 select 返回非 null 谁上台。
+   */
+  // 设置页本身: 整窗层, 打开时盖住一切 (底下 inert), 内置会话流是天然的空座 fallback
+  ['settings.view', { kind: 'chain', scope: 'root' }],
+  // 设置页内部分区: 每个分区一个插件 (外观/对话/工作区/密钥), 左导航按 order 排
+  ['settings.section', { kind: 'list', scope: 'root' }],
 ]
 
 /**
