@@ -10,6 +10,7 @@ import type { Ctx, Disposer } from '@meng/core'
 import type { ConfigService, ConfigWriteResult } from '@meng/config'
 import type { SessionService } from '@meng/session'
 import { LlmError, type LLMService } from '@meng/llm'
+import { PROTOCOLS } from '@meng/pi'
 import type { ToolService } from '@meng/tools'
 import type { LoopService } from '@meng/loop'
 import { HttpError, type OpHandler, type WebService } from './index.ts'
@@ -123,6 +124,19 @@ export function registerBuiltinOps(
   )
 
   /**
+   * 可选的 wire 协议（9 种）。
+   *
+   * 为什么要单独一个 op：设置页"新建自定义 API"要画一个协议选择框，而**能选
+   * 哪些**是后端的能力，不是前端的常量。硬编码在前端的话，后端加一种协议，
+   * 界面上永远选不到 —— 而且不会有任何报错。
+   *
+   * 为什么从 `@meng/pi` 拿而不是从 config 的 schema 里挖：schema 里的 enum
+   * 只有 id，没有"这条协议还需不需要 AWS 凭据"这类要说给用户听的话。
+   * 这里一起给。
+   */
+  op('llm.protocols', () => PROTOCOLS)
+
+  /**
    * 模型发现 —— 设置页的「获取可用模型」。
    *
    * payload 是**草稿**: 编辑一条已有路由时给 `provider`; 新建一条时给
@@ -139,6 +153,9 @@ export function registerBuiltinOps(
         ...(typeof payload.baseURL === 'string' ? { baseURL: payload.baseURL } : {}),
         ...(typeof payload.protocol === 'string' ? { protocol: payload.protocol } : {}),
         ...(typeof payload.apiKeyEnv === 'string' ? { apiKeyEnv: payload.apiKeyEnv } : {}),
+        // 只在明确要说"别翻目录、去问端点"时透传。默认值留在缝里，
+        // 这里再写一遍 `: 'catalog'` 就等于同一个默认值有两份
+        ...(payload.source === 'endpoint' ? { source: 'endpoint' as const } : {}),
       })
     } catch (err) {
       // 这条链路最需要的是"为什么没拉到": 401 / 连不上 / 不是模型清单。

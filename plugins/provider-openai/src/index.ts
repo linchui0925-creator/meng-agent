@@ -1,5 +1,5 @@
 /**
- * @meng/provider-openai — 通用 OpenAI 协议适配器（含智谱 / minimax / one-api / vLLM）。
+ * @meng/provider-openai — 通用多协议适配器（OpenAI / Anthropic / Gemini / Bedrock…）。
  *
  * 边界: adapter **只负责"把消息变成 delta 流"**。组块、重试、超时、计费、
  * 上下文压缩都不在这里 —— 组块是 @meng/llm 的 assemble()。
@@ -7,6 +7,9 @@
  * 这个插件是 dsh `dsh-llm-pi-ai` 的对位：**一个 adapter 服务 N 条路由**。
  * 配置里的 `routes` 是一个字典, 一个 key 一家供应商。加一家不需要写代码,
  * 也不需要重启 —— 增删键会走 `registerAdapter().replace()`, 改值下一个请求生效。
+ *
+ * **wire 实现不在这个文件里**：9 种协议的 SSE 翻译由 `@meng/pi` 转交给 pi-ai。
+ * 这里只剩四件事：配置形状、模型清单合并、缺什么、探测。
  *
  * 与 `provider-deepseek` 的分工: DeepSeek 的 thinking 协议是另一套 wire
  * (thinking/effort 配对、reasoning_content 回传), 塞进这里会让通用分支长草。
@@ -16,27 +19,33 @@
 import * as z from 'zod'
 import type { Ctx, Disposer } from '@meng/core'
 import { openScope } from '@meng/config'
-import { CATALOG, catalogModels, catalogProvider, catalogProviderByBaseURL } from '@meng/llm-catalog'
+import {
+  PROTOCOLS as PI_PROTOCOLS,
+  catalog as piCatalog,
+  catalogProvider as piCatalogProvider,
+  catalogProviderByBaseURL,
+  createRouteProvider,
+  primeCatalog,
+  protocolIds,
+  toChunks,
+  toContext,
+  type CatalogModel,
+  type ProtocolInfo,
+} from '@meng/pi'
 import {
   LLM_CODE,
   LlmError,
-  httpErrorCode,
   type Adapter,
   type AdapterHandle,
   type ConfigurableProvider,
   type DirectoryHandle,
-  type ContentBlock,
-  type FinishReason,
-  type LLMService,
-  type Message,
   type DiscoveredModel,
+  type LLMService,
   type ModelInfo,
   type ProviderInfo,
   type StreamChunk,
   type StreamRequest,
-  type ToolSpec,
 } from '@meng/llm'
-import { parseLine, sseLines } from './sse.ts'
 
 export const name = 'provider-openai'
 export const inject = ['llm']
@@ -50,8 +59,7 @@ const DEFAULT_TEMPERATURE = 0.7
 /**
  * 一条路由既没声明模型、也不在内置目录里时的兜底。
  *
- * 现实里只有一个使用者: 默认那条 `openai` 路由 —— `openai` 自己不在目录里
- * (目录只收第三方), 所以它的 `models: []` 会落到这里。
+ * 现实里只有一个使用者: 默认那条 `openai` 路由 —— 它的 `models: []` 会落到这里。
  *
  * **带容量**。曾经这里是 `['gpt-4o-mini']` 一个名字, 容量于是从路由的
  * `defaultContextWindow` 拿 —— 设置页会把 262144 当成事实显示出来,
@@ -77,25 +85,28 @@ const DEFAULT_INPUT = ['text'] as const
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * 一种 wire 协议。**表驱动**: 加协议 = 这里加一行 + 写一份 stream 翻译。
+ * 协议表来自 `@meng/pi`（也就是 pi-ai）。**表驱动**: 加协议 = 上游加一份
+ * SSE 翻译 + 我们这里什么都不用改。
  *
- * 为什么只列一种: 我们只实现了 `openai-completions` 的 SSE 翻译。
- * `anthropic-messages` 与 `openai-responses` 的翻译是另一件事（不同的
- * 事件名、不同的块语义), 写一行假数据只会让用户在设置页选到一个当场
- * 报错的东西。等翻译写好了再进这张表 —— 加一行即可。
+ * 9 种全在：openai-completions / openai-responses / anthropic-messages /
+ * google-generative-ai / mistral-conversations / azure-openai-responses /
+ * bedrock-converse-stream / google-vertex / openai-codex-responses。
+ *
+ * 其中三种（azure / bedrock / vertex）的端点地址、凭据形态不是"一个 key +
+ * 一个地址"能表达的，配置项里仍然可以选，但 `missing` 会点名还差什么。
  */
-export interface ProtocolSpec {
-  /** chat 请求的路径, 拼在 baseURL 后面 */
-  chatPath: string
-  /** `GET <base>/models` 能读的才给。没有 = 这个协议没法探测, 请手填 */
-  listingPath?: string
+export const PROTOCOLS: readonly ProtocolInfo[] = PI_PROTOCOLS
+
+const PROTOCOL_IDS = protocolIds() as [string, ...string[]]
+
+export function protocolInfo(id: string): ProtocolInfo | undefined {
+  return PROTOCOLS.find((p) => p.id === id)
 }
 
-export const PROTOCOLS: Record<string, ProtocolSpec> = {
-  'openai-completions': { chatPath: '/chat/completions', listingPath: '/models' },
+/** 能读 `GET <base>/models` 的协议 —— 只有它们支持"获取可用模型" */
+export function canListModels(protocol: string): boolean {
+  return protocolInfo(protocol)?.listable === true
 }
-
-const PROTOCOL_IDS = Object.keys(PROTOCOLS) as [string, ...string[]]
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 配置
@@ -121,6 +132,14 @@ const ModelSchema = z.object({
   input: z.array(z.enum(INPUT_MODALITIES)).optional(),
   /** 是否支持推理档。留空 = 未知 */
   reasoning: z.boolean().optional(),
+  /**
+   * 这个模型走哪种协议。留空 = 跟路由的 `protocol`。
+   *
+   * 为什么要能单独写：一家供应商的模型可能分属几种协议 —— opencode 那家
+   * 58 个模型里混着 completions / responses / anthropic / gemini 四种。
+   * 只能填路由级协议的话，那家就只能用其中四分之一。
+   */
+  api: z.enum(PROTOCOL_IDS).optional(),
   description: z.string().optional(),
 })
 
@@ -144,7 +163,13 @@ const RouteSchema = z.object({
   /** wire 协议。表里没有的选不了 —— 选了就是当场发不出去的配置 */
   protocol: z.enum(PROTOCOL_IDS).default('openai-completions'),
 
-  baseURL: z.string().min(1),
+  /**
+   * 接口地址。**允许为空**: azure / google-vertex 这类端点里带资源名，
+   * 我们替用户编不出来。空地址在这里合法，由 `missingOf` 说"还差地址" ——
+   * 比在 schema 层拒绝更好，因为拒绝会让"添加这家"这个动作整个失败，
+   * 用户连"它需要什么"都看不到。
+   */
+  baseURL: z.string().default(''),
 
   /**
    * **环境变量名, 不是密钥。** 值只从 `process.env` 读, 永不落盘 ——
@@ -261,43 +286,46 @@ export function apply(ctx: Ctx): Disposer {
   }
 
   /**
-   * 内置目录里这家供应商带的模型。
+   * 内置目录里这家供应商带的模型（pi-ai 的原始条目，含 `compat`）。
    *
    * 单独抽成函数是为了让"目录"是一个可替换的层 (测试可以直接打桩),
    * 而不是散在合并逻辑里的一个 `if`。
    *
-   * **注意 `openai` 自己不在目录里** —— 目录只收"走同一个协议、但
-   * 我们愿意替用户预填地址和模型清单"的第三方。所以默认那条 `openai`
-   * 路由的 `models` 是空的、目录也是空的, 最后落到 `FALLBACK_MODELS`:
-   * 升级后不至于一句话都说不出来, 用户填了 key 就能选到 `gpt-4o-mini`。
+   * **注意 `openai` 自己也在目录里** —— pi-ai 的目录是"每家供应商提供什么
+   * 模型"，不像上一版只收第三方。默认那条 `openai` 路由因此直接拿到 38 个
+   * 模型，不再落到 `FALLBACK_MODELS`（兜底还在，给用户自建的空网关用）。
    */
-  const catalogModelsOf = (route: string): ModelInfo[] => catalogModels(route)
+  const catalogModelsOf = (route: string): CatalogModel[] => piCatalogProvider(route)?.models ?? []
 
   /**
-   * 一条路由的模型清单。
+   * 一条路由的模型清单 —— **pi 形状**，直接能喂给请求。
    *
    * 三层合并, 照 dsh 的 `resolveRouteModels`:
    *   条目自己的字段 > 目录里的条目 > 路由的 default*
    *
    * `models` 非空 = **整体替换**目录 (dsh: models already replaces the
    * served catalog); 空 = 用目录; 都有 = 报错, 在 `missingOf` 里点名。
+   *
+   * 目录条目的 `compat` / `thinkingLevelMap` **原样保留** —— 各家的协议怪癖
+   * 全在那里（智谱的 thinkingFormat、某些网关不支持 store/developer role）。
+   * 只抄 id 和容量的话，这些模型会以"能连上但行为不对"的方式坏掉。
    */
-  const modelsOf = (route: string): ModelInfo[] => {
+  const mergeModels = (route: string): CatalogModel[] => {
     const profile = profileOf(route)
     if (!profile) return []
 
     const declared = profile.models
     const overrides = profile.modelOverrides ?? {}
-    const catalog = catalogModelsOf(route)
+    const directory = catalogModelsOf(route)
 
     // 模型 id 集合: 声明的 > 目录的 > 只写了覆盖的键 > 兜底。
-    // 最后那一档只在"没有目录、也没声明"时出现 —— 让一条刚加的空路由
+    // 最后那一档只在"没有目录、也没声明"时出现 —— 让一条刚加的空网关
     // 至少有一个能选的东西, 而不是从选择器里消失
     const ids =
       declared.length > 0
         ? declared.map((m) => m.id)
-        : catalog.length > 0
-          ? catalog.map((m) => m.id)
+        : directory.length > 0
+          ? directory.map((m) => m.id)
           : Object.keys(overrides).length > 0
             ? Object.keys(overrides)
             : FALLBACK_MODELS.map((m) => m.id)
@@ -305,27 +333,55 @@ export function apply(ctx: Ctx): Disposer {
     return ids.map((id) => {
       const entry = declared.find((m) => m.id === id)
       // 兜底条目也是"我们知道的条目", 所以要参与合并 —— 否则它的容量白写了
-      const base = catalog.find((m) => m.id === id) ?? FALLBACK_MODELS.find((m) => m.id === id)
+      const base =
+        directory.find((m) => m.id === id) ??
+        (FALLBACK_MODELS.find((m) => m.id === id) as unknown as CatalogModel | undefined)
       const override = overrides[id]
       // 三层: 声明条目 > 目录条目 > 覆盖。覆盖排在目录后是为了让
       // "给目录里的模型改一个字段"不用把整条重抄一遍
-      const source = entry ?? base
-      const name = override?.name || source?.name || id
+      const source = (entry ?? base) as
+        | { name?: string; contextWindow?: number; maxTokens?: number; input?: readonly string[]; reasoning?: boolean; api?: string; description?: string }
+        | undefined
+      const compat = (base as { compat?: unknown } | undefined)?.compat
+      const thinkingLevelMap = (base as { thinkingLevelMap?: unknown } | undefined)?.thinkingLevelMap
       return {
         id,
-        name,
+        name: override?.name || source?.name || id,
+        // 声明里没写协议就跟路由的 —— 一条路由一个默认协议，个别模型可覆盖
+        api: entry?.api ?? source?.api ?? profile.protocol,
+        provider: route,
+        baseUrl: profile.baseURL || (base as { baseUrl?: string } | undefined)?.baseUrl || '',
+        reasoning: override?.reasoning ?? source?.reasoning ?? false,
+        input: (override?.input ?? source?.input ?? profile.defaultInput) as ('text' | 'image')[],
+        cost:
+          (base as { cost?: CatalogModel['cost'] } | undefined)?.cost ??
+          ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } as CatalogModel['cost']),
         contextWindow: override?.contextWindow ?? source?.contextWindow ?? profile.defaultContextWindow,
         maxTokens: override?.maxTokens ?? source?.maxTokens ?? profile.defaultMaxTokens,
-        input: override?.input ?? source?.input ?? profile.defaultInput,
-        ...(override?.reasoning ?? source?.reasoning) === undefined
-          ? {}
-          : { reasoning: override?.reasoning ?? source?.reasoning },
-        ...((override?.description ?? source?.description) === undefined
-          ? {}
-          : { description: override?.description ?? source?.description }),
-      }
+        ...(compat === undefined ? {} : { compat }),
+        ...(thinkingLevelMap === undefined ? {} : { thinkingLevelMap }),
+      } as CatalogModel
     })
   }
+
+  /**
+   * 界面上看到的模型清单 —— `mergeModels` 的投影。
+   *
+   * 只投这一层的理由: 界面要知道的是"叫什么、多大、收不收图、走哪条协议"，
+   * 不需要 cost 和 compat。**两套合并逻辑必然会漂**，所以只有一份，
+   * 这里只做形状转换。
+   */
+  const projectModel = (m: CatalogModel): ModelInfo => ({
+    id: m.id,
+    name: m.name,
+    contextWindow: m.contextWindow,
+    maxTokens: m.maxTokens,
+    input: m.input as ModelInfo['input'],
+    reasoning: m.reasoning,
+    api: String(m.api),
+  })
+
+  const modelsOf = (route: string): ModelInfo[] => mergeModels(route).map(projectModel)
 
   /**
    * 还差什么才能用。**全部由 adapter 自己算** —— 只有它知道缺的是
@@ -336,7 +392,15 @@ export function apply(ctx: Ctx): Disposer {
     if (!profile) return [`路由 ${route} 已经不在配置里, 但还挂在注册表上`]
 
     const out: string[] = []
-    if (!apiKeyOf(profile)) out.push(`环境变量 ${profile.apiKeyEnv} 里没有值`)
+    /**
+     * 有些协议的凭据**不是"一个环境变量"**：bedrock 走 AWS 凭据链、
+     * vertex 要 ADC、codex 要 OAuth 登录态。对这些协议说"环境变量 X 里
+     * 没有值"是把用户引向一个不存在的变量名 —— 所以先报协议自带的那一段。
+     */
+    const needs = protocolInfo(profile.protocol)?.needs ?? []
+    if (needs.length > 0) out.push(...needs)
+    else if (!apiKeyOf(profile)) out.push(`环境变量 ${profile.apiKeyEnv} 里没有值`)
+
     if (profile.models.length > 0 && Object.keys(profile.modelOverrides).length > 0) {
       out.push('models 与 modelOverrides 只能二选一 (models 已经整体替换了模型目录)')
     }
@@ -352,7 +416,7 @@ export function apply(ctx: Ctx): Disposer {
    * 用户没加过它, 却要看到一个"这是你自己加的"标签。
    */
   const isDeclared = (route: string): boolean =>
-    catalogProvider(route) === undefined && !(route in DEFAULT_ROUTES)
+    piCatalogProvider(route) === undefined && !(route in DEFAULT_ROUTES)
 
   const adapter: Adapter = {
     info(route) {
@@ -380,6 +444,10 @@ export function apply(ctx: Ctx): Disposer {
   /**
    * 一条路由的一次请求。**读的是 profile 现值**, 所以改地址/模型/温度
    * 都不需要重新注册。
+   *
+   * wire 层不在这个文件里 —— 由 `@meng/pi` 转给 pi-ai 对应协议的实现
+   * （9 种协议共用同一个入口）。这里只做三件事：找到模型、把消息转成
+   * pi 的 `Context`、把事件转回我们的 chunk。
    */
   async function* streamRoute(route: string, req: StreamRequest): AsyncIterable<StreamChunk> {
     const profile = profileOf(route)
@@ -393,112 +461,60 @@ export function apply(ctx: Ctx): Disposer {
       )
     }
 
-    const protocol = PROTOCOLS[profile.protocol]
-    if (!protocol) {
+    const models = mergeModels(route)
+    const modelId = req.model || models[0]?.id || ''
+    const model = models.find((m) => m.id === modelId)
+    if (!model) {
       throw new LlmError(
-        `路由 ${route} 的协议 ${profile.protocol} 这个 build 还不支持 (支持: ${PROTOCOL_IDS.join(', ')})`,
+        `路由 ${route} 没有模型 ${modelId || '(空)'} —— 检查它的 models / modelOverrides`,
+        LLM_CODE.NO_ADAPTER,
+      )
+    }
+    if (!protocolInfo(String(model.api))) {
+      throw new LlmError(
+        `模型 ${modelId} 要协议 ${String(model.api)}, 这个 build 不支持 (支持: ${PROTOCOL_IDS.join(', ')})`,
         LLM_CODE.NO_ADAPTER,
       )
     }
 
-    const models = modelsOf(route)
-    const model = req.model || models[0]?.id || ''
-    // 输出上限只取**模型条目显式声明**的那一个。路由的 defaultMaxTokens
-    // 是"不知道时的假设", 塞进 wire 会因为超出小模型限制而 400
-    const declaredMax = models.find((m) => m.id === model)?.maxTokens
-
-    const res = await fetch(`${stripSlash(profile.baseURL)}${protocol.chatPath}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-        // 不可关闭的自我标识: 上游统计/限流认这个, 也让请求一眼可分辨
-        'User-Agent': 'meng-agent/0.1 (+https://github.com/linc/meng)',
-        ...profile.headers,
-      },
-      body: JSON.stringify({
-        model,
-        messages: toOpenAI(req.messages),
-        temperature: req.temperature ?? profile.temperature ?? DEFAULT_TEMPERATURE,
-        stream: true,
-        stream_options: { include_usage: true },
-        ...(req.maxTokens ?? declaredMax ? { max_tokens: req.maxTokens ?? declaredMax } : {}),
-        ...(req.tools?.length ? { tools: toTools(req.tools) } : {}),
-      }),
-      signal: req.signal,
+    const provider = createRouteProvider({
+      id: route,
+      name: profile.displayName ?? route,
+      baseUrl: profile.baseURL,
+      ...(Object.keys(profile.headers).length === 0 ? {} : { headers: profile.headers }),
+      models,
+      // 现读：设置里换了变量名/值，下一个请求就跟上
+      key: () => apiKeyOf(profileOf(route)),
     })
 
-    if (!res.ok || !res.body) {
-      const text = await res.text().catch(() => '')
-      throw wireError(route, res.status, text, res.headers)
-    }
+    const context = toContext({
+      messages: req.messages,
+      ...(req.tools?.length ? { tools: req.tools } : {}),
+      api: String(model.api),
+      provider: route,
+      model: model.id,
+    })
 
-    // 块号按**出现顺序**分配, 不是"正文固定 0 号"。
-    // 旧写法在"先思考再说话"的模型上是错的: reasoning 和正文都往 0 号块塞,
-    // assemble() 以先开的类型为准 (reasoning), 于是回答被并进思考块 ——
-    // 而思考不上行广播, 界面上就只剩思考、没有回答。
-    // 同一条规矩见 provider-deepseek/src/translate.ts
-    let nextIndex = 0
-    let textIndex: number | undefined
-    let reasoningIndex: number | undefined
-    const toolIndex = new Map<number, number>()
-    let sawToolCall = false
+    // 输出上限只取**真实知道的**那一个：条目显式声明 > 目录里的真实容量 >
+    // 不传。路由的 `defaultMaxTokens` 是"不知道时的假设"，塞进 wire 会因为
+    // 超出小模型的限制而 400（gpt-4o-mini 真实 16k，假设值是 32k）
+    const explicitMax =
+      profile.models.find((m) => m.id === modelId)?.maxTokens ??
+      profile.modelOverrides?.[modelId]?.maxTokens ??
+      catalogModelsOf(route).find((m) => m.id === modelId)?.maxTokens
 
-    const lines = profile.streamIdleTimeoutMs
-      ? withIdleTimeout(sseLines(res.body), profile.streamIdleTimeoutMs)
-      : sseLines(res.body)
+    const temperature = req.temperature ?? profile.temperature ?? DEFAULT_TEMPERATURE
+    const events = provider.streamSimple(model, context, {
+      apiKey,
+      temperature,
+      ...(req.maxTokens ?? explicitMax ? { maxTokens: req.maxTokens ?? explicitMax } : {}),
+      ...(req.signal === undefined ? {} : { signal: req.signal }),
+    })
 
-    for await (const line of lines) {
-      const chunk = parseLine(line)
-      if (!chunk) continue
-
-      if (chunk.error?.message) {
-        throw new LlmError(`provider ${route}: ${chunk.error.message}`, LLM_CODE.MALFORMED_RESPONSE)
-      }
-
-      if (chunk.usage) {
-        yield { type: 'usage', usage: toUsage(chunk.usage) }
-      }
-
-      for (const choice of chunk.choices ?? []) {
-        const delta = choice.delta
-
-        if (delta?.reasoning_content) {
-          reasoningIndex ??= nextIndex++
-          yield { type: 'reasoning-delta', index: reasoningIndex, text: delta.reasoning_content }
-        }
-        if (delta?.content) {
-          textIndex ??= nextIndex++
-          yield { type: 'text-delta', index: textIndex, text: delta.content }
-        }
-        if (delta?.tool_calls?.length) {
-          for (const call of delta.tool_calls) {
-            const wireIndex = call.index ?? 0
-            let index = toolIndex.get(wireIndex)
-            if (index === undefined) {
-              index = nextIndex++
-              toolIndex.set(wireIndex, index)
-            }
-            // 第一个分片带 id/name, 后续只有 arguments 增量
-            if (call.id || call.function?.name) sawToolCall = true
-            yield {
-              type: 'tool-call-delta',
-              index,
-              ...(call.id ? { id: call.id } : {}),
-              ...(call.function?.name ? { name: call.function.name } : {}),
-              argumentsDelta: call.function?.arguments ?? '',
-            }
-          }
-        }
-        if (choice.finish_reason) {
-          yield { type: 'finish', reason: toFinish(choice.finish_reason, sawToolCall) }
-          return
-        }
-      }
-    }
-
-    // 流断在 finish 之前 (连接掉了 / provider 忘了收尾): 交给 assemble() 补一个
-    // error finish —— 这里补不出更多事实, 也不该伪装成成功
+    // 看门狗包在事件流上, 不是包在字节流上 —— 我们不再碰字节
+    yield* toChunks(
+      profile.streamIdleTimeoutMs ? withIdleTimeout(events, profile.streamIdleTimeoutMs) : events,
+    )
   }
 
   /**
@@ -554,13 +570,21 @@ export function apply(ctx: Ctx): Disposer {
        * 只给一个 id)。代价是"端点其实换过模型"这件事看不出来 —— 真要
        * 以端点为准时, 用户手写 `models` 整体替换即可。
        */
-      const known = request.provider
+      const directoryModels: CatalogModel[] = request.provider
         ? catalogModelsOf(request.provider)
         : baseURL
           ? (catalogProviderByBaseURL(baseURL)?.models ?? [])
           : []
-      if (known.length > 0) {
-        return known.map((m) => ({
+
+      /**
+       * `source: 'endpoint'` 时**不看目录**, 直接往下打网络。
+       *
+       * 这是"以端点为准"的落点: 目录是快照, 供应商下线一款、上线一款,
+       * 目录都不知道, 而用户账号下真实能用什么只有端点知道。默认仍走目录
+       * （省一次网络请求, 且容量更全), 但那条快路不该变成"永远问不到真话"。
+       */
+      if (request.source !== 'endpoint' && directoryModels.length > 0) {
+        return directoryModels.map((m) => ({
           id: m.id,
           ...(m.name ? { name: m.name } : {}),
           ...(m.contextWindow === undefined ? {} : { contextWindow: m.contextWindow }),
@@ -576,10 +600,13 @@ export function apply(ctx: Ctx): Disposer {
       }
 
       const protocol = request.protocol || profile?.protocol || 'openai-completions'
-      const spec = PROTOCOLS[protocol]
-      if (!spec?.listingPath) {
+      // 只有 `openai-*` 两种协议有 `GET /models`。其余协议（anthropic /
+      // gemini / bedrock…）没有这个端点，硬打只会拿到 404 然后被说成"地址错"
+      if (!canListModels(protocol)) {
         throw new LlmError(
-          `协议 ${protocol} 没有可读的模型列表 —— 请手动添加模型`,
+          `协议 ${protocol} 没有可读的模型列表 —— 请手动添加模型（能列举的是 ${PROTOCOLS.filter((p) => p.listable)
+            .map((p) => p.id)
+            .join(' / ')}）`,
           LLM_CODE.DISCOVERY_UNSUPPORTED,
         )
       }
@@ -587,7 +614,7 @@ export function apply(ctx: Ctx): Disposer {
       const envName = request.apiKeyEnv || profile?.apiKeyEnv || ''
       const apiKey = usableKey(envName ? (process.env[envName] ?? '').trim() : '')
 
-      const url = `${stripSlash(baseURL)}${spec.listingPath}`
+      const url = `${stripSlash(baseURL)}/models`
       let res: Response
       try {
         res = await fetch(url, {
@@ -624,7 +651,7 @@ export function apply(ctx: Ctx): Disposer {
       } catch {
         throw new LlmError(`${url} 返回的不是 JSON —— 这个地址可能不是 OpenAI 兼容端点`, LLM_CODE.DISCOVERY_FAILED)
       }
-      return readListing(body, url)
+      return withCapacity(readListing(body, url), directoryModels)
     }),
   )
 
@@ -645,19 +672,25 @@ export function apply(ctx: Ctx): Disposer {
     const active = routes()
     const out: ConfigurableProvider[] = []
 
-    for (const item of CATALOG) {
+    for (const item of piCatalog()) {
       const profile = active[item.id]
+      // 一家可能有好几种协议（opencode 混着 4 种）。路由级只能填一个，
+      // 所以取**第一个**当默认；个别模型想换协议，在 models 条目里写 `api`
+      const protocol = item.protocols[0] ?? 'openai-completions'
       out.push({
         provider: item.id,
         displayName: profile?.displayName ?? item.name,
         configScope: CONFIG_SCOPE,
         configPath: ['routes', item.id],
-        models: item.models,
+        // 目录里的模型原样给前端看（容量/模态/协议都有）
+        models: item.models.map(projectModel),
         template: {
           displayName: item.name,
-          protocol: item.protocol,
-          baseURL: item.baseURL,
-          apiKeyEnv: item.apiKeyEnv[0] ?? DEFAULT_API_KEY_ENV,
+          protocol,
+          // 没地址的那几家（azure / vertex）先给空串 —— schema 允许占位,
+          // `missingOf` 会说"还差地址"。给个假地址更坏: 用户会以为能直接连
+          baseURL: item.baseUrl ?? '',
+          apiKeyEnv: item.env[0] ?? DEFAULT_API_KEY_ENV,
           models: [],
           modelOverrides: {},
         },
@@ -670,7 +703,7 @@ export function apply(ctx: Ctx): Disposer {
     // 标记要和 `RouteFacts.declared` 同源, 否则同一个 id 在两个入口里
     // 一个是"自定义"一个是"内置"
     for (const [id, profile] of Object.entries(active)) {
-      if (catalogProvider(id)) continue
+      if (piCatalogProvider(id)) continue
       out.push({
         provider: id,
         displayName: profile.displayName ?? id,
@@ -704,6 +737,27 @@ export function apply(ctx: Ctx): Disposer {
   }
 
   syncDirectory()
+
+  /**
+   * 目录的**骨架**是同步建的（37 家 1109 条，全部来自静态数据），但"每家
+   * 认哪个环境变量"要问 pi 的 auth resolver，那是 async 的。
+   *
+   * 为什么不等它再建目录: 设置页不该为了"预填一个变量名"晚 100ms 才出现
+   * 37 家供应商。先给骨架（`env: []`，模板里 `apiKeyEnv` 落到默认名），
+   * 探完再刷一次 —— 刷新走 `replace()`，界面上只是那一格换了值。
+   */
+  let alive = true
+  ctx.effect(() => () => {
+    alive = false
+  })
+  void primeCatalog()
+    .then(() => {
+      if (alive) syncDirectory()
+    })
+    .catch((err: unknown) => {
+      // 探不到就只是模板里少个变量名，不影响任何请求路径 —— 不报错更不该崩
+      console.warn('[meng] provider-openai: 供应商环境变量名探测失败, 用默认名:', err)
+    })
 
   // 配置一变就对一遍。**订阅而不是轮询**: 没有变化就没有开销,
   // 也没有"两次轮询之间加了路由看不见"的窗口
@@ -837,6 +891,34 @@ async function readBoundedText(res: Response, url: string): Promise<string> {
  * `max_output_tokens` / `max_tokens`), 所以每个字段都试两个名字。
  * 没有 id 的条目**跳过而不是报错**: 一行坏数据不该让用户拿不到其余那些。
  */
+/**
+ * 端点只报了 id 时, 用目录**补**容量。
+ *
+ * 为什么必须补: `/models` 是"有哪些模型"的接口, 几乎没有端点会返回上下文
+ * 窗口和输出上限。不补的话, 用户点一次"以端点为准"就把所有容量变成"不知道"，
+ * 而压缩策略要靠它做决定 —— **拉一次真数据不该让系统变笨**。
+ *
+ * 只填端点**没给**的字段。端点给了就以端点为准, 它才是真相; 目录只负责
+ * "端点懒得说的那部分"。目录里根本没有的模型（新上线的）就留空 ——
+ * 未知就是未知, 不编。
+ */
+function withCapacity(found: DiscoveredModel[], directory: readonly CatalogModel[]): DiscoveredModel[] {
+  if (directory.length === 0) return found
+  const byId = new Map(directory.map((m) => [m.id, m]))
+  return found.map((m) => {
+    const known = byId.get(m.id)
+    if (!known) return m
+    return {
+      ...m,
+      ...(m.name === undefined && known.name ? { name: known.name } : {}),
+      ...(m.contextWindow === undefined && known.contextWindow !== undefined
+        ? { contextWindow: known.contextWindow }
+        : {}),
+      ...(m.maxTokens === undefined && known.maxTokens !== undefined ? { maxTokens: known.maxTokens } : {}),
+    }
+  })
+}
+
 function readListing(body: unknown, url: string): DiscoveredModel[] {
   const data = (body as { data?: unknown })?.data
   if (!Array.isArray(data)) {
@@ -875,110 +957,16 @@ function readListing(body: unknown, url: string): DiscoveredModel[] {
   return out
 }
 
-// ── wire ↔ 中立层 ─────────────────────────────────────────────────────────────
-
-function wireError(providerId: string, status: number, body: string, headers: Headers): LlmError {
-  let wireMessage = body
-  try {
-    const parsed: unknown = JSON.parse(body)
-    if (parsed && typeof parsed === 'object' && 'error' in parsed) {
-      const err = (parsed as { error?: { message?: string } }).error
-      if (err?.message) wireMessage = err.message
-    }
-  } catch {
-    // 非 JSON 的错误体 (网关 HTML 页等), 原样截断
-  }
-  const retryAfterMs = parseRetryAfter(headers.get('retry-after'))
-  const requestId = headers.get('x-request-id') ?? headers.get('request-id') ?? undefined
-  return new LlmError(`provider ${providerId} 返回 ${status}: ${wireMessage.slice(0, 300)}`, httpErrorCode(status, wireMessage), {
-    status,
-    ...(retryAfterMs === undefined ? {} : { providerRetryAfterMs: retryAfterMs }),
-    ...(requestId ? { requestId } : {}),
-  })
-}
-
-function parseRetryAfter(value: string | null): number | undefined {
-  if (!value) return undefined
-  const seconds = Number(value)
-  return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : undefined
-}
-
-function toFinish(reason: string, sawToolCall: boolean): FinishReason {
-  if (reason === 'tool_calls' || (reason === 'stop' && sawToolCall)) return { kind: 'tool-calls' }
-  if (reason === 'length') return { kind: 'max-tokens' }
-  return { kind: 'stop' }
-}
+// ── 杂项 ─────────────────────────────────────────────────────────────────────
 
 /**
- * Token 口径: 互斥计数。OpenAI 系的 prompt_tokens 含缓存命中
- * (prompt_tokens_details.cached_tokens), 不减出来缓存流量会被重复计进成本
+ * wire 层整段（请求序列化 / SSE 解析 / 事件映射 / 错误包装 / token 口径）
+ * **不在这个文件里**，全部由 `@meng/pi` 转给 pi-ai 的 9 份协议实现。
+ *
+ * 曾经这里有 `toOpenAI` / `toTools` / `toUsage` / `wireError` 约 200 行 ——
+ * 那是只有一种协议时的手写翻译。协议从 1 种变成 9 种之后，继续留着它们
+ * 就是两套 wire 实现（一套在用，一套没人调但测试还打它），比删掉更危险。
  */
-function toUsage(wire: {
-  prompt_tokens?: number
-  completion_tokens?: number
-  prompt_tokens_details?: { cached_tokens?: number }
-  completion_tokens_details?: { reasoning_tokens?: number }
-}): { inputTokens: number; outputTokens: number; cacheReadTokens?: number; reasoningTokens?: number } {
-  const cached = wire.prompt_tokens_details?.cached_tokens ?? 0
-  return {
-    inputTokens: Math.max(0, (wire.prompt_tokens ?? 0) - cached),
-    outputTokens: wire.completion_tokens ?? 0,
-    ...(cached > 0 ? { cacheReadTokens: cached } : {}),
-    ...(wire.completion_tokens_details?.reasoning_tokens
-      ? { reasoningTokens: wire.completion_tokens_details.reasoning_tokens }
-      : {}),
-  }
-}
-
-// ── 序列化: 块 → OpenAI wire ─────────────────────────────────────────────────
-
-function flattenText(blocks: ContentBlock[]): string {
-  return blocks
-    .filter((b): b is Extract<ContentBlock, { type: 'text' }> => b.type === 'text')
-    .map((b) => b.text)
-    .join('')
-}
-
-/** Message[] → OpenAI wire 格式。导出是为了能被单测直接打 */
-export function toOpenAI(messages: Message[]): unknown[] {
-  const out: unknown[] = []
-  for (const m of messages) {
-    if (m.role === 'user') {
-      // tool-result 块按 OpenAI 语义拆成独立的 {role:'tool'} 消息;
-      // 并发调用时一条 user 消息里会有多个结果, 每个都要出自己的那条
-      const text = flattenText(m.content)
-      if (text) out.push({ role: 'user', content: text })
-      for (const block of m.content) {
-        if (block.type === 'tool-result') {
-          out.push({ role: 'tool', content: flattenText(block.content), tool_call_id: block.toolCallId })
-        }
-      }
-      continue
-    }
-    if (m.role === 'assistant') {
-      const text = flattenText(m.content)
-      const toolCalls = m.content
-        .filter((b): b is Extract<ContentBlock, { type: 'tool-call' }> => b.type === 'tool-call')
-        .map((b) => ({ id: b.id, type: 'function' as const, function: { name: b.name, arguments: b.arguments } }))
-      out.push({
-        role: 'assistant',
-        // 有 tool_calls 时给空 content 是非法的 (provider 直接 400)
-        ...(text ? { content: text } : {}),
-        ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
-      })
-      continue
-    }
-    out.push({ role: m.role, content: flattenText(m.content) })
-  }
-  return out
-}
-
-function toTools(tools: ToolSpec[]): unknown[] {
-  return tools.map((t) => ({
-    type: 'function',
-    function: { name: t.name, description: t.description, parameters: t.parameters },
-  }))
-}
 
 function stripSlash(url: string): string {
   return url.replace(/\/+$/, '')

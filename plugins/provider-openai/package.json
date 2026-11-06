@@ -8,7 +8,7 @@
     "@meng/config": "workspace:*",
     "@meng/core": "workspace:*",
     "@meng/llm": "workspace:*",
-    "@meng/llm-catalog": "workspace:*",
+    "@meng/pi": "workspace:*",
     "zod": "^4.6.7"
   }
 }

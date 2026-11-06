@@ -435,6 +435,13 @@ export interface ModelInfo {
   input?: ModelModality[]
   /** 是否支持推理档位 (effort / thinking)。缺省 = 未知 */
   reasoning?: boolean
+  /**
+   * 这个模型走哪种 wire 协议（`openai-completions` / `anthropic-messages` …）。
+   *
+   * **一条路由里可能混着几种**：opencode 那家 58 个模型分属 4 种协议。
+   * 缺省 = 跟随路由的 `protocol`。
+   */
+  api?: string
   /** 给用户看的一句区别说明 */
   description?: string
 }
@@ -602,6 +609,15 @@ export interface ModelDiscoveryRequest {
    * "密钥可以穿过设置页"的路, 与"只存变量名"的规则冲突。
    */
   apiKeyEnv?: string
+  /**
+   * 问谁：`catalog`（默认）优先翻内置目录，`endpoint` 强制打网络。
+   *
+   * 为什么要有这个开关：目录是**快照**（37 家 1109 条，跟着 pi-ai 的版本走），
+   * 供应商下线一款、上线一款它都不知道。默认走目录是因为省一次网络、而且
+   * 容量比多数 `/models` 端点报得全 —— 但那条快路不该变成"永远问不到真话"。
+   * 用户觉得"我账号里明明有这款"时，用它绕过目录。
+   */
+  source?: 'catalog' | 'endpoint'
   signal?: AbortSignal
 }
 

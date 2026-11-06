@@ -17,7 +17,6 @@
  *   tools    session/created + turn/started + 2×llm/chunk + llm/completed + 3×(tool/called + tool/completed) + turn/ended = 12
  */
 
-import { CATALOG } from '@meng/llm-catalog'
 import type { StreamEvent } from '@meng/transport'
 import type { InprocKernel } from '@meng/transport/inproc'
 
@@ -346,6 +345,75 @@ export function createFixtureKernel(name: FixtureName, options: FixtureOptions =
     reasoning?: boolean
   }
 
+  /** 假目录里的一家。形状照真内核 `llm.catalog` 的下发格式, 不是 pi 的内部形状 */
+  type FixtureDirectoryEntry = {
+    id: string
+    name: string
+    protocol: string
+    baseURL: string
+    /** 候选环境变量名, 第一个是推荐的那个 */
+    apiKeyEnv: string[]
+    models: FixtureModel[]
+  }
+
+  /**
+   * **假目录**。只有 4 家, 不是真目录的镜像 —— 真目录有 37 家 1109 条模型,
+   * 那是 `@meng/pi` 的事, 浏览器里搬一份等于复制一份必然漂移的数据。
+   *
+   * 选这 5 家的理由不是"代表", 是**每种界面分支都要有人演**:
+   *   · `zai`        → 「可添加 → 添加 → 未配置」全流程 (check-settings 钉这条)
+   *   · `groq`       → 第二家能加的, 证明列表不是只有一家
+   *   · `together`   → 同上, 顺带撑一下长列表的滚动
+   *   · `anthropic`  → **另一种协议**。设置页要能画出"这家走 Messages 协议",
+   *                    只演 openai-completions 的话那段渲染永远没人走
+   *
+   * 刻意**没有** bedrock / vertex 这类"不是填个 key 就能用"的: 它们的模板
+   * 里没有环境变量可填, 而假内核没有凭据链可演 —— 演成"有个 key 框"比不演更糟。
+   */
+  const DIRECTORY: readonly FixtureDirectoryEntry[] = [
+    {
+      id: 'zai',
+      name: 'Z.AI',
+      protocol: 'openai-completions',
+      baseURL: 'https://api.z.ai/api/coding/paas/v4',
+      apiKeyEnv: ['ZAI_API_KEY'],
+      models: [
+        { id: 'glm-4.7', name: 'GLM-4.7', contextWindow: 204800, maxTokens: 131072, input: ['text'], reasoning: true },
+        { id: 'glm-5v-turbo', name: 'GLM-5V-Turbo', contextWindow: 200000, maxTokens: 131072, input: ['text', 'image'], reasoning: true },
+      ],
+    },
+    {
+      id: 'groq',
+      name: 'Groq',
+      protocol: 'openai-completions',
+      baseURL: 'https://api.groq.com/openai/v1',
+      apiKeyEnv: ['GROQ_API_KEY'],
+      models: [
+        { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B', contextWindow: 131072, maxTokens: 32768, input: ['text'] },
+      ],
+    },
+    {
+      id: 'together',
+      name: 'Together',
+      protocol: 'openai-completions',
+      baseURL: 'https://api.together.xyz/v1',
+      apiKeyEnv: ['TOGETHER_API_KEY'],
+      models: [
+        { id: 'Qwen/Qwen3-235B-A22B', name: 'Qwen3 235B', contextWindow: 131072, maxTokens: 16384, input: ['text'] },
+      ],
+    },
+    {
+      id: 'anthropic',
+      name: 'Anthropic',
+      protocol: 'anthropic-messages',
+      baseURL: 'https://api.anthropic.com',
+      apiKeyEnv: ['ANTHROPIC_API_KEY'],
+      models: [
+        { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5', contextWindow: 200000, maxTokens: 64000, input: ['text', 'image'], reasoning: true },
+      ],
+    },
+  ]
+
   /**
    * `openai` 那条默认路由的 profile。字段抄自真内核的 `DEFAULT_ROUTES` ——
    * 那边每个字段都带 `.default()`, 所以是写全的; 这里也一样写全, 否则
@@ -368,10 +436,10 @@ export function createFixtureKernel(name: FixtureName, options: FixtureOptions =
   /**
    * 声明自带的路由名。它们不算"用户自己加的"。
    *
-   * **直接从内置目录取**, 不再手写 `['openai', 'zai']` —— 手写的清单会和
-   * 目录分叉, 而分叉的后果是"设置页里明明有这家, 加完却被标成自己加的"。
+   * **从假目录取**, 不手写 —— 手写的清单会和目录分叉, 而分叉的后果是
+   * "设置页里明明有这家, 加完却被标成自己加的"。
    */
-  const builtin = new Set(['openai', ...CATALOG.map((c) => c.id)])
+  const builtin = new Set(['openai', ...DIRECTORY.map((c) => c.id)])
 
   /** 路由表现读 settings —— 写完立刻能看见, 前端才验得了"加一条" */
   const routes = (): Record<string, FixtureRoute> =>
@@ -381,16 +449,16 @@ export function createFixtureKernel(name: FixtureName, options: FixtureOptions =
   const usable = (route: FixtureRoute): boolean => env.has(route.apiKeyEnv)
 
   /**
-   * **兜底那一条模型**。真内核是 `FALLBACK_MODELS`: 既没声明、也不在内置
-   * 目录里时才用它 (`openai` 自己不在目录里, 目录只收第三方)。
+   * **兜底那一条模型**。真内核是 `FALLBACK_MODELS`: 既没声明、目录里也
+   * 没有时才用它 —— 也就是"用户手填的一条自定义网关"。
    * 容量是**知道的真值**, 不是路由的 default* —— 后者只是"没写容量时的假设"。
    */
   const FALLBACK_MODELS: FixtureModel[] = [
     { id: 'gpt-4o-mini', name: 'GPT-4o mini', contextWindow: 128000, maxTokens: 16384, input: ['text'] },
   ]
 
-  /** 目录里的那一家。`openai` 不在里面 —— 目录只收第三方 (真内核同义) */
-  const directoryEntry = (id: string) => CATALOG.find((c) => c.id === id)
+  /** 假目录里的那一家 */
+  const directoryEntry = (id: string) => DIRECTORY.find((c) => c.id === id)
 
   /**
    * 一条路由现在有哪些模型。
@@ -409,7 +477,7 @@ export function createFixtureKernel(name: FixtureName, options: FixtureOptions =
   }
 
   /** 「添加」写进配置的那份初始 profile。真内核的 `template` 就是这个形状 */
-  const templateOf = (entry: (typeof CATALOG)[number]): FixtureRoute => ({
+  const templateOf = (entry: FixtureDirectoryEntry): FixtureRoute => ({
     displayName: entry.name,
     protocol: entry.protocol,
     baseURL: entry.baseURL,
@@ -426,6 +494,27 @@ export function createFixtureKernel(name: FixtureName, options: FixtureOptions =
   const dsKeyEnv = (): string => String(val('llm.deepseek.apiKey', 'DEEPSEEK_API_KEY'))
 
   const configEntries = () => [
+    /**
+     * 工作区根目录。**内核侧只有这一项** (`KERNEL_CONFIG.sandbox.root`), 但它是
+     * 七个插件的围栏基准 —— 设置页要能看见它、改它, 而且要看得出"这个值是谁定的"。
+     *
+     * fixture 只演两态: 默认 (`.`) 与设置页写过。第三态 `env` 在真内核里才出现
+     * (MENG_WORKSPACE 优先), 这里演不出来就不演 —— 来源文案的正确性由
+     * `sourceLabel()` 的单测钉, 不靠假数据凑。
+     */
+    {
+      key: 'sandbox.root',
+      scope: 'sandbox',
+      name: 'root',
+      type: 'string',
+      secret: false,
+      required: false,
+      desc: '工作区根目录。文件读写、搜索、bash 的 cwd 都不能越过它',
+      default: '.',
+      value: val('sandbox.root', '.'),
+      source: src('sandbox.root'),
+      schema: { type: 'string', default: '.' },
+    },
     {
       key: 'llm.deepseek.apiKey',
       scope: 'llm.deepseek',
@@ -563,15 +652,15 @@ export function createFixtureKernel(name: FixtureName, options: FixtureOptions =
     /**
      * **还没激活**的那些: 内置目录里有、配置里还没有。
      *
-     * 这一段**直接遍历 `CATALOG`**, 不再手写某一家 —— 手写的话, 假数据只有
-     * 4 条而真内核有 13 条, 于是"设置页里只有两家供应商"这种幻觉会一路带进
-     * 截图和验收（实际发生过一次: 前端看着像没接目录）。
+     * 这一段**直接遍历 `DIRECTORY`**, 不手写某一家 —— 手写的话假数据就只有
+     * 一条, 于是"设置页里只有一家供应商"这种幻觉会一路带进截图和验收
+     * （实际发生过一次: 前端看着像没接目录）。
      *
      * `dormant` 的语义与真内核一致: 目录里有、配置里没加。所以这里必须
      * `filter` 掉已经在 `routes()` 里的 —— 否则点完添加会同时出现两条 id
      * 相同的供应商, React 报重复 key, 界面上看起来像"添加没生效, 又多了一条"。
      */
-    ...CATALOG.filter((entry) => routes()[entry.id] === undefined).map((entry) => ({
+    ...DIRECTORY.filter((entry) => routes()[entry.id] === undefined).map((entry) => ({
       id: entry.id,
       name: entry.name,
       protocol: entry.protocol,
