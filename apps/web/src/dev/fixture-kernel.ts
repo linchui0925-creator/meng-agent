@@ -357,13 +357,13 @@ export function createFixtureKernel(name: FixtureName, options: FixtureOptions =
   }
 
   /**
-   * **假目录**。只有 4 家, 不是真目录的镜像 —— 真目录有 37 家 1109 条模型,
+   * **假目录**。只有 5 家, 不是真目录的镜像 —— 真目录有 37 家 1109 条模型,
    * 那是 `@meng/pi` 的事, 浏览器里搬一份等于复制一份必然漂移的数据。
    *
    * 选这 5 家的理由不是"代表", 是**每种界面分支都要有人演**:
    *   · `zai`        → 「可添加 → 添加 → 未配置」全流程 (check-settings 钉这条)
-   *   · `groq`       → 第二家能加的, 证明列表不是只有一家
-   *   · `together`   → 同上, 顺带撑一下长列表的滚动
+   *   · `groq` / `together` / `cerebras` → 撑住"目录被整段下发"这条
+   *                    （`check-settings` 断言内置那一段至少 5 行，含 deepseek）
    *   · `anthropic`  → **另一种协议**。设置页要能画出"这家走 Messages 协议",
    *                    只演 openai-completions 的话那段渲染永远没人走
    *
@@ -400,6 +400,16 @@ export function createFixtureKernel(name: FixtureName, options: FixtureOptions =
       apiKeyEnv: ['TOGETHER_API_KEY'],
       models: [
         { id: 'Qwen/Qwen3-235B-A22B', name: 'Qwen3 235B', contextWindow: 131072, maxTokens: 16384, input: ['text'] },
+      ],
+    },
+    {
+      id: 'cerebras',
+      name: 'Cerebras',
+      protocol: 'openai-completions',
+      baseURL: 'https://api.cerebras.ai/v1',
+      apiKeyEnv: ['CEREBRAS_API_KEY'],
+      models: [
+        { id: 'llama-3.3-70b', name: 'Llama 3.3 70B', contextWindow: 131072, maxTokens: 32768, input: ['text'] },
       ],
     },
     {
