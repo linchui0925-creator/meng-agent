@@ -1,0 +1,261 @@
+/* 密钥分区。视觉语言跟模型分区同一套（字母章 + 状态点 + 胶囊标签），
+ * 但行比那边高：这一页每行是一个**可编辑字段**，缩到 22px 就装不下输入框。
+ *
+ * 三个尺寸是量出来的:
+ *   · 章 24px —— 比模型分区(22)大一档, 因为这一行的正文更大(13px)
+ *   · 输入框 30px —— 和 Field 的 32 差 2px: 这里是行内控件, 和文字挤在一行,
+ *     32 会让整行的行高被撑出空隙
+ *   · 保存按钮同高 30 —— 与输入框等高, 不错位
+ */
+
+.hero {
+  margin-bottom: 22px;
+  padding: 15px 18px 14px;
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: var(--meng-specific-radius-xl);
+  background: var(--meng-alias-bg-surface);
+}
+
+.heroTitle {
+  font-size: var(--meng-specific-text-md);
+  font-weight: 600;
+  color: var(--meng-alias-fg-primary);
+}
+
+.heroText {
+  margin: 6px 0 0;
+  /* 66ch: 同上, 注脚型文本一行过长会跳行 */
+  max-width: 66ch;
+  font-size: var(--meng-specific-text-xs);
+  color: var(--meng-alias-fg-muted);
+  line-height: 1.7;
+}
+
+.heroText b {
+  color: var(--meng-alias-fg-secondary);
+  font-weight: 600;
+}
+
+/* ── 一行一家 ── */
+.row {
+  display: flex;
+  gap: 12px;
+  padding: 12px 16px 13px;
+}
+
+.row + .row {
+  border-top: 1px solid var(--meng-alias-border-l1);
+}
+
+/* 章的颜色跟状态走: 有钥匙亮一点, 没钥匙用警告色。
+ * 灰度主题下这三档也能靠色差区分（令牌保证对比度） */
+.stamp {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-secondary);
+}
+
+.row[data-presence='yes'] .stamp {
+  background: var(--meng-alias-positive-subtle);
+  color: var(--meng-alias-positive);
+}
+
+.row[data-presence='no'] .stamp {
+  background: var(--meng-alias-warning-subtle);
+  color: var(--meng-alias-warning);
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.name {
+  font-size: var(--meng-specific-text-md);
+  color: var(--meng-alias-fg-primary);
+}
+
+.state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--meng-specific-text-xs);
+  color: var(--meng-alias-fg-muted);
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--meng-specific-radius-full);
+  background: var(--meng-alias-fg-disabled);
+}
+
+.state[data-presence='yes'] {
+  color: var(--meng-alias-positive);
+}
+
+.state[data-presence='yes'] .dot {
+  background: var(--meng-alias-positive);
+}
+
+.state[data-presence='no'] {
+  color: var(--meng-alias-warning);
+}
+
+.state[data-presence='no'] .dot {
+  background: var(--meng-alias-warning);
+}
+
+/* 「自己加的」标签: 和模型分区同一个胶囊形状, 但更小 ——
+ * 这里它是行内第三个元素, 抢戏就会把状态挤到看不见 */
+.tag {
+  padding: 1px 7px;
+  border-radius: var(--meng-specific-radius-full);
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-muted);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.line {
+  display: flex;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+/* 300px 是量出来的: 常见变量名 16~24 字符, 12px 等宽下最宽约 175px,
+ * 300 能放下 40 字还不折。**不收满整行** —— 撑满 710px 时这一行会读成
+ * "一张表单", 用户不知道眼睛该落在哪儿; 右边留白反而给了落点 */
+.input {
+  flex: 0 1 300px;
+  min-width: 140px;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--meng-alias-border-l2);
+  border-radius: var(--meng-specific-radius-md);
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-primary);
+  font-size: var(--meng-specific-text-sm);
+  line-height: 1.4;
+}
+
+/* 等宽：变量名是逐字符核对的东西（`_` 和 `-`、`O` 和 `0`） */
+.input[data-mono] {
+  font-family: var(--meng-specific-font-mono);
+}
+
+.input::placeholder {
+  color: var(--meng-alias-fg-disabled);
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--meng-alias-focus-ring);
+  outline-offset: -1px;
+  border-color: transparent;
+}
+
+/* 没改脏时占位但不显示 —— 见 KeysSection.tsx 里的注释。
+ * 用 visibility 不用 display: 宽度留着, 改字时行不抖 */
+.save {
+  flex: none;
+  height: 30px;
+  padding: 0 13px;
+  border: 1px solid var(--meng-alias-accent);
+  border-radius: var(--meng-specific-radius-md);
+  background: var(--meng-alias-accent);
+  color: var(--meng-alias-fg-on-accent);
+  font-family: inherit;
+  font-size: var(--meng-specific-text-xs);
+  font-weight: 600;
+  cursor: pointer;
+  visibility: hidden;
+}
+
+.save[data-visible] {
+  visibility: visible;
+}
+
+.save:hover:not(:disabled) {
+  background: var(--meng-alias-accent-hover);
+  border-color: var(--meng-alias-accent-hover);
+}
+
+.save:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.save:focus-visible {
+  outline: 2px solid var(--meng-alias-focus-ring);
+  outline-offset: 2px;
+}
+
+.msg {
+  margin: 7px 0 0;
+  font-size: var(--meng-specific-text-xs);
+  line-height: 1.5;
+}
+
+.msg[data-tone='ok'] {
+  color: var(--meng-alias-positive);
+}
+
+.msg[data-tone='error'] {
+  color: var(--meng-alias-danger);
+}
+
+.hint {
+  margin: 7px 0 0;
+  font-size: var(--meng-specific-text-xs);
+  color: var(--meng-alias-fg-muted);
+  line-height: 1.5;
+}
+
+/* 空段。**不画一个禁用的输入框** —— 那会让人以为"这一家存在但坏了" */
+.empty {
+  padding: 14px 16px;
+  font-size: var(--meng-specific-text-xs);
+  color: var(--meng-alias-fg-muted);
+  line-height: 1.6;
+}
+
+.loading,
+.problem {
+  padding: 18px 20px;
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: var(--meng-specific-radius-xl);
+  background: var(--meng-alias-bg-surface);
+}
+
+.loading {
+  font-size: var(--meng-specific-text-sm);
+  color: var(--meng-alias-fg-muted);
+}
+
+.problemTitle {
+  margin: 0;
+  font-size: var(--meng-specific-text-md);
+  color: var(--meng-alias-fg-primary);
+}
+
+.problemText {
+  margin: 6px 0 0;
+  font-size: var(--meng-specific-text-xs);
+  color: var(--meng-alias-fg-muted);
+  line-height: 1.65;
+}

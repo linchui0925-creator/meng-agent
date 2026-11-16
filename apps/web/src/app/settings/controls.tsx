@@ -106,6 +106,83 @@ export function Switch({
 }
 
 /**
+ * 长文本输入行（路径 / 变量名 / 接口地址）。
+ *
+ * **为什么不塞进 Row 的右控件**: Row 的控件区是 `flex: none`, 宽度由内容决定。
+ * 路径动辄四五十个字符, 挤在右边会变成一条只能看见结尾的窄缝 —— 而用户
+ * 打开这一页恰恰是为了确认"到底指向哪"。所以它单独占一整行, 标签在上。
+ *
+ * 保存按钮的三种态是刻意的: 没改过 = 灰着 (说明"现在存的就是这个"), 改过 =
+ * 亮起, 存的时候写「保存中」。不给"保存成功"的绿色对勾——那个对勾会在用户
+ * 下次一改就变成谎话, 而文案里直接写结果更省一次辨认。
+ */
+export function Field({
+  id,
+  label,
+  desc,
+  value,
+  onChange,
+  onSave,
+  dirty,
+  busy = false,
+  message,
+  placeholder,
+  mono = false,
+}: {
+  id: string
+  label: string
+  desc?: ReactNode
+  value: string
+  onChange: (next: string) => void
+  onSave: () => void
+  /** 和已保存的值不一样。false 时保存按钮灰着 */
+  dirty: boolean
+  busy?: boolean
+  message?: { tone: 'ok' | 'error'; text: string }
+  placeholder?: string
+  /** 等宽字体。路径 / 变量名 / 地址用它 —— 逐字符对照时等宽比比例字体省力 */
+  mono?: boolean
+}) {
+  return (
+    <div className={styles.field}>
+      <label className={styles.fieldLabel} htmlFor={id}>
+        {label}
+      </label>
+      {desc !== undefined && <p className={styles.fieldDesc}>{desc}</p>}
+      <div className={styles.fieldLine}>
+        <input
+          id={id}
+          className={styles.fieldInput}
+          data-mono={mono ? '' : undefined}
+          value={value}
+          placeholder={placeholder}
+          spellCheck={false}
+          autoComplete="off"
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            // 回车保存。路径这种"填完就走"的字段, 让手离开键盘去点按钮是多余的
+            if (e.key === 'Enter' && dirty && !busy) onSave()
+          }}
+        />
+        <button
+          type="button"
+          className={styles.fieldSave}
+          disabled={!dirty || busy}
+          onClick={onSave}
+        >
+          {busy ? '保存中' : '保存'}
+        </button>
+      </div>
+      {message && (
+        <p className={styles.fieldMsg} data-tone={message.tone} role="status">
+          {message.text}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/**
  * 分段选择。选项少 (2-4 个)、互斥、且**每个选项都该被看见**时用它。
  *
  * 不用 `<select>`: 下拉把选项藏起来了, 而设置页里"有哪几个档"本身就是信息

@@ -42,8 +42,10 @@ import { DEMO_PLUGIN_ID, demoRuntime } from './app/demo-plugin.tsx'
 import { DEMO_SKIN_ID, demoSkinRuntime } from './app/demo-skin-plugin.tsx'
 import { AppearanceSection } from './app/settings/AppearanceSection.tsx'
 import { ConversationSection } from './app/settings/ConversationSection.tsx'
+import { KeysSection } from './app/settings/KeysSection.tsx'
 import { ModelSection } from './app/settings/ModelSection.tsx'
 import { SettingsView } from './app/settings/SettingsView.tsx'
+import { WorkspaceSection } from './app/settings/WorkspaceSection.tsx'
 import { createFixtureKernel, fixtureFromSearch } from './dev/fixture-kernel.ts'
 import { applyTheme } from './theme.ts'
 import { readPrefs } from './prefs.ts'
@@ -269,6 +271,34 @@ async function bootstrap(report: (entries: EntryState[]) => void): Promise<Boote
     component: ModelSection,
     order: 300,
     meta: { label: '模型', group: '内核', origin: 'kernel' },
+  })
+  /**
+   * 工作区分区: order 310 —— 紧跟在模型后面。
+   *
+   * 为什么排在模型之后而不是之前: 两页都是"内核腿", 但模型决定**谁在说话**,
+   * 工作区决定**它能在哪儿动手**。先选脑子再划地盘, 和用户真正会遇到的顺序一致。
+   *
+   * 它读写的键 (sandbox.root) 由内核在 `KERNEL_CONFIG` 里声明, 前端不认识 schema
+   * —— 分区只认 `config.list` 里那一项的实际形状, 内核换实现不用改这一页。
+   */
+  slots.register('builtin.settings.workspace', {
+    name: 'settings.section',
+    component: WorkspaceSection,
+    order: 310,
+    meta: { label: '工作区', group: '内核', origin: 'kernel' },
+  })
+  /**
+   * 接口密钥分区: order 320 —— 内核组的最后一块, 也是这一组的收尾。
+   *
+   * 它内部按**来路**分两段（内置供应商 / 自定义 API），和模型分区同一判据 ——
+   * 三个分区对"这家是哪来的"必须给出同一个答案, 否则用户会在模型页看到一家、
+   * 在密钥页看到另一段, 然后怀疑自己记错了。
+   */
+  slots.register('builtin.settings.keys', {
+    name: 'settings.section',
+    component: KeysSection,
+    order: 320,
+    meta: { label: '接口密钥', group: '内核', origin: 'kernel' },
   })
 
   let transport: Transport

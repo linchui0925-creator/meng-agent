@@ -1,0 +1,157 @@
+/* 工作区分区。**顶部那张卡是这一页的主角** —— 其余都是它的解释。
+ *
+ * 为什么不做成 Group 里的一行: 「工作区在哪儿」不是众多设置之一, 它决定了
+ * 整个 agent 能碰什么。按行画会把它稀释成"和其它开关一样重要"。
+ */
+
+.hero {
+  margin-bottom: 22px;
+  padding: 16px 18px 15px;
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: var(--meng-specific-radius-xl);
+  background: var(--meng-alias-bg-surface);
+}
+
+.heroLabel {
+  font-size: var(--meng-specific-text-xs);
+  color: var(--meng-alias-fg-muted);
+  letter-spacing: 0.04em;
+}
+
+.heroPath {
+  margin-top: 7px;
+  font-family: var(--meng-specific-font-mono);
+  /* 17px(text-lg): 这一页最大的字必须是路径本身。等宽字体的小写字高偏低,
+   * 同一字号看着比正文更小, 所以要比正文再大两档才真的"显眼" */
+  font-size: var(--meng-specific-text-lg);
+  color: var(--meng-alias-fg-primary);
+  line-height: 1.45;
+  /* 长路径要能断行 —— 这条卡没有横向滚动条, 溢出就是被裁掉 */
+  word-break: break-all;
+}
+
+/* 默认值那一行显示的是人话，不是路径，所以这里回到正文字体（不用等宽）。
+ * 等宽只属于"字面路径"—— 字形本身就是一种信号：这串东西是要照着敲的。 */
+.heroPath[data-default] {
+  color: var(--meng-alias-fg-primary);
+  font-family: var(--meng-specific-font-sans);
+  font-size: var(--meng-specific-text-base);
+}
+
+/* 真实的配置值（`.`）。做成小代码块而不是普通字: 它是要被核对的字面量,
+ * 混在句子里会被读成标点 */
+.heroCode {
+  padding: 1px 5px;
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: var(--meng-specific-radius-md);
+  background: var(--meng-alias-bg-inset);
+  font-family: var(--meng-specific-font-mono);
+  font-size: var(--meng-specific-text-xs);
+  color: var(--meng-alias-fg-secondary);
+}
+
+.heroMeta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 9px;
+  font-size: var(--meng-specific-text-xs);
+  color: var(--meng-alias-fg-secondary);
+}
+
+/* 三个颜色的语义: 绿的 = 你定的, 橙的 = 有人在你上面定的, 灰的 = 没人动过。
+ * 只有三种来源, 所以不用图例 —— 每行右边那半句已经写了来源 */
+.heroDot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: var(--meng-specific-radius-full);
+  background: var(--meng-alias-fg-disabled);
+}
+
+.heroDot[data-source='settings'] {
+  background: var(--meng-alias-positive);
+}
+
+.heroDot[data-source='env'] {
+  background: var(--meng-alias-warning);
+}
+
+.heroHint {
+  margin: 10px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--meng-alias-border-l1);
+  font-size: var(--meng-specific-text-xs);
+  color: var(--meng-alias-fg-muted);
+  line-height: 1.65;
+}
+
+.heroHint b {
+  color: var(--meng-alias-fg-secondary);
+  font-weight: 600;
+}
+
+/* ── 只读事实 ──
+ * 名词列固定 96px: 三条的名词都短, 固定宽度让右边的解释左对齐成一列,
+ * 比每条各按内容对齐更好扫。
+ */
+.fact {
+  display: flex;
+  gap: 14px;
+  padding: 10px 16px;
+  font-size: var(--meng-specific-text-md);
+}
+
+.fact + .fact {
+  border-top: 1px solid var(--meng-alias-border-l1);
+}
+
+/* 名词比解释**更重**: 它回答"这一行讲什么", 解释只是补充。
+ * 反过来(名词浅、解释深)会让整块读起来像三行没有标题的正文 */
+.factName {
+  flex: none;
+  width: 96px;
+  color: var(--meng-alias-fg-primary);
+}
+
+.factText {
+  flex: 1;
+  min-width: 0;
+  color: var(--meng-alias-fg-secondary);
+  font-size: var(--meng-specific-text-sm);
+  line-height: 1.6;
+}
+
+/* ── 两种"画不出来" ──
+ * 共用一套排版, 语气不同: 读不到(可能是临时的) / 没开放(就是没有)。
+ * 都不渲染表单 —— 一个点了没反应的输入框比一段解释更让人困惑。
+ */
+.loading,
+.problem {
+  padding: 18px 20px;
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: var(--meng-specific-radius-xl);
+  background: var(--meng-alias-bg-surface);
+}
+
+.loading {
+  font-size: var(--meng-specific-text-sm);
+  color: var(--meng-alias-fg-muted);
+}
+
+.problemTitle {
+  margin: 0;
+  font-size: var(--meng-specific-text-md);
+  color: var(--meng-alias-fg-primary);
+}
+
+.problemText {
+  margin: 6px 0 0;
+  font-size: var(--meng-specific-text-xs);
+  color: var(--meng-alias-fg-muted);
+  line-height: 1.65;
+}
+
+.problemText + .problemText {
+  margin-top: 8px;
+}

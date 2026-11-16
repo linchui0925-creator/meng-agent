@@ -168,8 +168,118 @@
   outline-offset: 1px;
 }
 
+/* ── 长文本输入 (路径 / 变量名 / 地址) ──
+ * 输入框是 32px 高: 比行内控件 (26) 高一点, 因为它的内容是主角而不是附属。
+ * 边框用 border-l2 而不是 l1 —— 输入框需要有边界, 而分隔线只要存在就够。
+ */
+.field {
+  padding: 13px 16px 15px;
+}
+
+.fieldLabel {
+  display: block;
+  font-size: var(--meng-specific-text-md);
+  color: var(--meng-alias-fg-primary);
+  line-height: 1.5;
+}
+
+.fieldDesc {
+  margin: 3px 0 0;
+  font-size: var(--meng-specific-text-xs);
+  color: var(--meng-alias-fg-muted);
+  line-height: 1.55;
+}
+
+.fieldLine {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.fieldInput {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--meng-alias-border-l2);
+  border-radius: var(--meng-specific-radius-lg);
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-primary);
+  font-family: inherit;
+  font-size: var(--meng-specific-text-sm);
+  line-height: 1.4;
+}
+
+/* 等宽**只换字形, 不缩字号**: 11px 的等宽下, 默认值 `.` 会变成一个几乎看不见的
+ * 小点 —— 而那个点正是"现在指向哪儿"的全部答案。字号跟正文走 (12px),
+ * 路径长了靠输入框自己横向滚动, 不需要为长度牺牲可读性 */
+.fieldInput[data-mono] {
+  font-family: var(--meng-specific-font-mono);
+}
+
+.fieldInput::placeholder {
+  color: var(--meng-alias-fg-disabled);
+}
+
+.fieldInput:focus-visible {
+  outline: 2px solid var(--meng-alias-focus-ring);
+  outline-offset: -1px;
+  border-color: transparent;
+}
+
+.fieldSave {
+  flex: none;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--meng-alias-accent);
+  border-radius: var(--meng-specific-radius-lg);
+  background: var(--meng-alias-accent);
+  color: var(--meng-alias-fg-on-accent);
+  font-family: inherit;
+  font-size: var(--meng-specific-text-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color var(--meng-specific-dur-fast) var(--meng-specific-ease),
+    opacity var(--meng-specific-dur-fast) var(--meng-specific-ease);
+}
+
+.fieldSave:hover:not(:disabled) {
+  background: var(--meng-alias-accent-hover);
+  border-color: var(--meng-alias-accent-hover);
+}
+
+/* 没改过 = 灰着。**不用 disabled 的浏览器默认灰** —— 那套灰在深浅两个主题里
+ * 都偏脏; 这里只降透明度, 形状和位置完全不变, 用户不会觉得按钮"消失了" */
+.fieldSave:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.fieldSave:focus-visible {
+  outline: 2px solid var(--meng-alias-focus-ring);
+  outline-offset: 2px;
+}
+
+.fieldMsg {
+  margin: 8px 0 0;
+  font-size: var(--meng-specific-text-xs);
+  line-height: 1.5;
+}
+
+.fieldMsg[data-tone='ok'] {
+  color: var(--meng-alias-positive);
+}
+
+.fieldMsg[data-tone='error'] {
+  color: var(--meng-alias-danger);
+}
+
 .note {
   margin: 0;
+  /* 一行只放 66 个字符: 注脚是"读一遍"的文本, 而 1120px 宽的一行要读到
+   * 行尾再折返, 眼睛会跳行。66ch 是正文舒适宽度的上限 */
+  max-width: 66ch;
   font-size: var(--meng-specific-text-xs);
   color: var(--meng-alias-fg-muted);
   line-height: 1.65;
