@@ -18,7 +18,7 @@
 
 import * as z from 'zod'
 import type { Ctx, Disposer } from '@meng/core'
-import { openScope } from '@meng/config'
+import { getConfig, openScope } from '@meng/config'
 import {
   PROTOCOLS as PI_PROTOCOLS,
   catalog as piCatalog,
@@ -45,6 +45,7 @@ import {
   type DirectoryHandle,
   type DiscoveredModel,
   type LLMService,
+  type ModelDiscoveryRequest,
   type ModelInfo,
   type ProviderInfo,
   type StreamChunk,
@@ -556,8 +557,7 @@ export function apply(ctx: Ctx): Disposer {
    * 密钥从**环境变量**读, 不接受请求里传来的明文值 —— 见
    * `ModelDiscoveryRequest.apiKeyEnv` 上的注释。
    */
-  ctx.effect(() =>
-    llm.registerModelDiscovery(CONFIG_SCOPE, async (request): Promise<DiscoveredModel[]> => {
+  const discover = async (request: ModelDiscoveryRequest): Promise<DiscoveredModel[]> => {
       const profile = request.provider ? profileOf(request.provider) : undefined
       const baseURL = request.baseURL || profile?.baseURL || ''
 
@@ -641,9 +641,10 @@ export function apply(ctx: Ctx): Disposer {
         if (got.next === undefined) break
         url = got.next
       }
-      return withCapacity(found, directoryModels)
-    }),
-  )
+    return withCapacity(found, directoryModels)
+  }
+
+  ctx.effect(() => llm.registerModelDiscovery(CONFIG_SCOPE, discover))
 
   sync()
 
@@ -672,8 +673,14 @@ export function apply(ctx: Ctx): Disposer {
         displayName: profile?.displayName ?? item.name,
         configScope: CONFIG_SCOPE,
         configPath: ['routes', item.id],
-        // 目录里的模型原样给前端看（容量/模态/协议都有）
-        models: item.models.map(projectModel),
+        /**
+         * **刻意不给 models。** 目录是 37 家 / 1110 条, 全下发一次 199 KB ——
+         * 而设置页一次只看一家。要看哪家, 调 `llm.discoverModels({provider})`
+         * 就行: 目录命中时 19ms、零网络。
+         *
+         * 这就是"留空位, 界面按需拉"。字段是 `models?:`, 不给 = 没下发,
+         * 不是"这家没有模型"。
+         */
         template: {
           displayName: item.name,
           protocol,
@@ -749,6 +756,61 @@ export function apply(ctx: Ctx): Disposer {
       console.warn('[meng] provider-openai: 供应商环境变量名探测失败, 用默认名:', err)
     })
 
+  /**
+   * 保存路由后**自动拉一次模型**。
+   *
+   * 只对**目录不认识**的路由动手。目录认识的 (zai / groq / …) 模型由目录供 ——
+   * 把目录抄进配置反而把快照冻住: 目录更新了它也不会变, 而用户在配置文件里
+   * 多了一份自己不知道的旧清单。所以"自动拉"解决的是自建网关那一段:
+   * 它不写 models 就只剩一个兜底的 gpt-4o-mini。
+   *
+   * 写回用**子路径** (`routes.<id>.models`), 不动别的字段 —— 整表写回会和
+   * 设置页的读-改-写互相覆盖 (那条正是 config.set 加 path 的理由)。
+   *
+   * 失败不重试: 网关没配 key / 协议不支持列表都会失败, 而每次 onChange 都重试
+   * 等于把一个必然失败的请求绑在每一次保存上。记下"这组参数试过了", 换了
+   * 地址/协议/变量名才再试。
+   */
+  const autoTried = new Map<string, string>()
+  const signatureOf = (profile: RouteProfile): string =>
+    [profile.baseURL, profile.protocol, profile.apiKeyEnv].join('|')
+
+  const autoFillModels = async (): Promise<void> => {
+    const svc = getConfig(ctx)
+    if (!svc) return
+    for (const [id, profile] of Object.entries(routes())) {
+      if (piCatalogProvider(id)) continue // 目录认识 → 模型由目录供
+      if (profile.models.length > 0) continue // 用户自己写了模型, 别覆盖
+      if (!profile.baseURL.trim()) continue // 没地址, 拉不了
+      const sig = signatureOf(profile)
+      if (autoTried.get(id) === sig) continue
+      autoTried.set(id, sig)
+      try {
+        const found = await discover({ provider: id })
+        if (found.length === 0) continue
+        await svc.set(
+          CONFIG_SCOPE,
+          'routes',
+          // 只搬 DiscoveredModel 有的四个字段。缺容量就是"不知道",
+          // 不补 0 —— 补 0 会让界面显示"上下文 0", 那是假信息
+          found.map((m) => ({
+            id: m.id,
+            ...(m.name ? { name: m.name } : {}),
+            ...(m.contextWindow === undefined ? {} : { contextWindow: m.contextWindow }),
+            ...(m.maxTokens === undefined ? {} : { maxTokens: m.maxTokens }),
+          })),
+          [id, 'models'],
+        )
+        console.log(`[meng] provider ${id} · 自动拉到 ${found.length} 个模型`)
+      } catch (err) {
+        // 拉不到不是错误: 用户还能手填。但要说一句, 否则"配好了却只有
+        // 一个 gpt-4o-mini"会像 bug
+        const why = err instanceof Error ? err.message : String(err)
+        console.warn(`[meng] provider ${id} · 自动拉模型失败 (可手动添加): ${why}`)
+      }
+    }
+  }
+
   // 配置一变就对一遍。**订阅而不是轮询**: 没有变化就没有开销,
   // 也没有"两次轮询之间加了路由看不见"的窗口
   ctx.effect(
@@ -756,6 +818,9 @@ export function apply(ctx: Ctx): Disposer {
       scope.onChange(() => {
         sync()
         syncDirectory()
+        // 不 await: 拉模型是网络请求, 不能让保存动作等它。
+        // 拉回来之后自己会再触发一次 onChange (models 非空 → 不会重复拉)
+        void autoFillModels()
       }),
   )
 

@@ -40,8 +40,15 @@ export interface CatalogProvider {
   /**
    * 模型条目。**从 2026-11-04 起是对象数组** —— 名字之外的上下文窗口 /
    * 最大输出 / 模态都在里面。前端不能再用 `models.join(', ')` 当纯字符串。
+   *
+   * **从 2026-11-16 起是可选的**: 可添加的那些 (`dormant: true`) 不再随目录
+   * 下发模型快照 —— 37 家 / 1110 条一次 199 KB, 而设置页一次只看一家。
+   * `undefined` 的含义是"**没下发**", 不是"这家没有模型"; 要看哪家就调
+   * `llm.discoverModels({ scope, provider })` (目录命中时 19ms、零网络)。
+   *
+   * 已激活的那些仍然带 `models`: 它们是用户现在真能用的, 列表里就要显示。
    */
-  models: ModelInfo[]
+  models?: ModelInfo[]
   /** 现在能不能真的发请求 */
   available: boolean
   /**
@@ -113,7 +120,8 @@ export function catalogOf(
     out.push({
       id: item.provider,
       name: item.displayName,
-      models: (item.models ?? []).map(toModelInfo),
+      // 有就给, 没有就**整个字段不给** —— 给 [] 等于告诉前端"这家一个模型都没有"
+      ...(item.models ? { models: item.models.map(toModelInfo) } : {}),
       available: false,
       dormant: true,
       ...(item.declared ? { declared: true } : {}),
