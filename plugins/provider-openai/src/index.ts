@@ -673,6 +673,8 @@ export function apply(ctx: Ctx): Disposer {
         displayName: profile?.displayName ?? item.name,
         configScope: CONFIG_SCOPE,
         configPath: ['routes', item.id],
+        // 清单不下发, 但"有几款"要给 —— 界面要能说"点添加会带来 6 款"
+        modelCount: item.models.length,
         /**
          * **刻意不给 models。** 目录是 37 家 / 1110 条, 全下发一次 199 KB ——
          * 而设置页一次只看一家。要看哪家, 调 `llm.discoverModels({provider})`

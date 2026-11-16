@@ -49,6 +49,11 @@ export interface CatalogProvider {
    * 已激活的那些仍然带 `models`: 它们是用户现在真能用的, 列表里就要显示。
    */
   models?: ModelInfo[]
+  /**
+   * 目录里这家**有多少款**模型。只在没下发 `models` 时有意义 ——
+   * 界面用它说"点添加会带来 6 款", 而不是"目录里还没有"。
+   */
+  modelCount?: number
   /** 现在能不能真的发请求 */
   available: boolean
   /**
@@ -122,6 +127,7 @@ export function catalogOf(
       name: item.displayName,
       // 有就给, 没有就**整个字段不给** —— 给 [] 等于告诉前端"这家一个模型都没有"
       ...(item.models ? { models: item.models.map(toModelInfo) } : {}),
+      ...(item.modelCount === undefined ? {} : { modelCount: item.modelCount }),
       available: false,
       dormant: true,
       ...(item.declared ? { declared: true } : {}),
