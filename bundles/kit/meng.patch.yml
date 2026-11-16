@@ -79,6 +79,17 @@
       config:
         allowDanger: false
 
+    # 权限模式 (sandbox.mode) 的执行者: 三档决定"写/执行"要不要问用户。
+    # 零能力面, 只挂 tools/pre-execute (优先级 90 —— 比止血带低, 灾难命令先被拒)
+    #
+    # 为什么单独一个插件而不是塞进 policy-fs: 它管的是**所有**工具 (写文件、
+    # 跑命令、越界读), 而 policy-fs 只管文件写入那一槽。塞进去就得让 fs 的策略
+    # 认识 bash, 那是把两件事焊死
+    - id: policy-approval
+      name: '@meng/plugin-policy-approval'
+      config:
+        sensitive: ['.git/', '.env', '.ssh/', 'id_rsa', '.npmrc']
+
     # 工具输出硬闸: 超 50KB 落盘 + 回 locator, 而不是把尾部丢掉。
     # 瞬时产物 (bash stdout / grep 命中) 不落盘就永远没了
     #

@@ -15,8 +15,8 @@
  */
 
 import { defineInvariant, type Ctx, type Disposer } from '@meng/core'
-import { FsError, type FsService } from '@meng/fs'
-import type { ToolDef, ToolResult, ToolService } from '@meng/tools'
+import { FsError, type FsCallOptions, type FsService } from '@meng/fs'
+import type { ToolCall, ToolDef, ToolResult, ToolService } from '@meng/tools'
 
 export const name = 'meng-plugin-tool-fs'
 export const inject = ['tools', 'fs']
@@ -29,6 +29,23 @@ export interface Config {
 
 const ok = (text: string): ToolResult => ({ ok: true, text })
 const fail = (error: string): ToolResult => ({ ok: false, text: '', error })
+
+/**
+ * 把"本次调用已获批准越界"这件事从 call 上取出来交给 seam。
+ *
+ * 这一行是审批能真正生效的**唯一**通路: 用户在工具执行前点了"允许",
+ * 凭据挂在 call 上; 围栏在 seam 里, 它只看得到 opts。少了这一行,
+ * 界面会说"已允许", 而工具照样报越界。
+ */
+const grantOf = (call?: ToolCall): FsCallOptions | undefined => {
+  const g = call?.grants
+  if (!g) return undefined
+  const out: FsCallOptions = {
+    ...(g.outside === true ? { outside: true } : {}),
+    ...(g.sensitive === true ? { sensitive: true } : {}),
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
 
 function errText(err: unknown): string {
   if (err instanceof FsError) return `${err.code}: ${err.message}`
@@ -66,9 +83,9 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
         },
         required: ['file_path'],
       },
-      async handler(args) {
+      async handler(args, _ctx, call) {
         try {
-          const r = await fs.readText(String(args.file_path ?? ''))
+          const r = await fs.readText(String(args.file_path ?? ''), grantOf(call))
           const offset = Math.max(1, toInt(args.offset) ?? 1)
           const limit = Math.min(toInt(args.limit) ?? readLimit, readLimit)
           const slice = r.lines.slice(offset - 1, offset - 1 + limit)
@@ -118,10 +135,10 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
         required: ['file_path', 'content'],
       },
       mutates: true,
-      async handler(args) {
+      async handler(args, _ctx, call) {
         try {
           const content = String(args.content ?? '')
-          const r = await fs.writeText(String(args.file_path ?? ''), content)
+          const r = await fs.writeText(String(args.file_path ?? ''), content, grantOf(call))
           return ok(`已${r.operation === 'create' ? '创建' : '更新'} ${r.rel} (${r.bytes} 字节)`)
         } catch (err) {
           return fail(`write 失败: ${errText(err)}`)
@@ -145,13 +162,14 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
         required: ['file_path', 'old_string', 'new_string'],
       },
       mutates: true,
-      async handler(args) {
+      async handler(args, _ctx, call) {
         try {
           const r = await fs.editText(
             String(args.file_path ?? ''),
             String(args.old_string ?? ''),
             String(args.new_string ?? ''),
             args.replace_all === true,
+            grantOf(call),
           )
           return ok(`已替换 ${r.replaced} 处 (${r.rel})`)
         } catch (err) {

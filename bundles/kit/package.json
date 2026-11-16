@@ -13,6 +13,7 @@
     "@meng/plugin-config-local": "workspace:*",
     "@meng/plugin-jobs-local": "workspace:*",
     "@meng/plugin-net-local": "workspace:*",
+    "@meng/plugin-policy-approval": "workspace:*",
     "@meng/plugin-policy-bash": "workspace:*",
     "@meng/plugin-policy-fs": "workspace:*",
     "@meng/plugin-policy-spill": "workspace:*",

@@ -152,14 +152,21 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
     }
   }
 
-  function fenceWorkdir(input: unknown): string {
+  /**
+   * workdir 围栏。`outside` 是本次调用的授权凭据 (用户点了"允许")。
+   *
+   * 注意这道围栏**只管 workdir, 管不住命令本身** —— `cat /etc/passwd` 在任何
+   * workdir 下都能跑。命令级风险由 policy-bash 的灾难命令表和审批层负责,
+   * 这里只防"模型不小心把 cwd 设到工作区外"。
+   */
+  function fenceWorkdir(input: unknown, outside: boolean): string {
     // **每次调用现读根**: 工作区在设置页里改了, 下一条命令就按新根跑。
     // 抓成常量的话, 改完工作区命令还在旧目录里跑, 而界面上只有"工作区已保存"
     const root = sandboxRoot(ctx)
     const raw = String(input ?? '')
     if (!raw) return root
     const abs = resolveRoot(raw, root)
-    if (abs !== root && !abs.startsWith(`${root}/`)) {
+    if (!outside && abs !== root && !abs.startsWith(`${root}/`)) {
       throw new Error(`workdir 越界: ${raw} 不在工作区内`)
     }
     return abs
@@ -225,7 +232,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
 
       let workdir: string
       try {
-        workdir = fenceWorkdir(args.workdir)
+        workdir = fenceWorkdir(args.workdir, call?.grants?.outside === true)
       } catch (err) {
         return fail(`bash 失败: ${errText(err)}`)
       }
@@ -445,15 +452,11 @@ export const invariant = defineInvariant('@meng/plugin-tool-bash', [
     },
   },
   {
-    // 工作区围栏: 相对路径可以, 逃出去不行
+    // 工作区围栏: 相对路径可以。**越界那一半不在这里测** —— 越界现在会先弹
+    // 审批 (policy-approval), 直接 tools.call 会挂在一张没人回答的卡片上。
+    // 那条断言归 policy-approval 的不变量: 它测"决定", 不真的执行
     id: 'workdir-is-fenced',
     async run(ctx) {
-      const outside = await callBash(ctx, {
-        command: 'pwd',
-        description: 'verify workdir escape is blocked',
-        workdir: '/etc',
-      })
-      if (outside.ok) throw new Error('越界 workdir 竟被接受')
       const inside = await callBash(ctx, { command: 'true', description: 'verify relative workdir', workdir: 'packages' })
       if (!inside.ok) throw new Error(`工作区内的相对 workdir 被拒: ${inside.error ?? ''}`)
     },

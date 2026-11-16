@@ -19,7 +19,7 @@
 
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { dirname, relative, resolve, sep } from 'node:path'
-import { sandboxRoot } from '@meng/config'
+import { sandboxMode, sandboxRoot } from '@meng/config'
 import { defineInvariant, type Ctx, type Disposer } from '@meng/core'
 
 export const name = 'meng-fs'
@@ -69,17 +69,44 @@ export interface FsIntent {
   rel: string
   /** 目标文件当前是否存在 (先读后写策略的判断依据) */
   exists: boolean
+  /**
+   * 本次写入的授权凭据, 由 seam 从 `FsCallOptions` 原样带下来。
+   *
+   * 策略层 (policy-fs) 拿到的只有 intent —— 它分不清"越界且没批准"和
+   * "越界但用户刚点了允许"。凭据放在这里, 它才判得出来。少了这个字段,
+   * 审批就是个摆设: 界面说允许, 策略照样拒。
+   */
+  granted?: FsCallOptions
+}
+
+/**
+ * 一次调用的授权。由工具从 `ToolCall.grants` 透传下来。
+ *
+ * 为什么围栏要接受"这次可以越界"而不是读一个全局开关: 批准是**针对这一次调用**
+ * 的, 全局开关会让一次批准顺带放开同时跑着的别的调用。
+ */
+export interface FsCallOptions {
+  /** 本次调用已获批准越过工作区 (读写工作区外) */
+  outside?: boolean
+  /** 本次调用已获批准写敏感路径 (由审批层写入) */
+  sensitive?: boolean
 }
 
 export interface FsService {
   readonly root: string
-  /** 解析并围栏。越界直接抛 FS_OUT_OF_ROOT */
-  resolve(input: string): string
-  stat(rel: string): Promise<FsStat>
-  readText(rel: string): Promise<ReadResult>
-  writeText(rel: string, content: string): Promise<WriteResult>
-  editText(rel: string, oldString: string, newString: string, replaceAll: boolean): Promise<EditResult>
-  listDir(rel: string): Promise<Array<{ name: string; dir: boolean; size: number }>>
+  /** 解析并围栏。越界且未获授权时抛 FS_OUT_OF_ROOT */
+  resolve(input: string, opts?: FsCallOptions): string
+  stat(rel: string, opts?: FsCallOptions): Promise<FsStat>
+  readText(rel: string, opts?: FsCallOptions): Promise<ReadResult>
+  writeText(rel: string, content: string, opts?: FsCallOptions): Promise<WriteResult>
+  editText(
+    rel: string,
+    oldString: string,
+    newString: string,
+    replaceAll: boolean,
+    opts?: FsCallOptions,
+  ): Promise<EditResult>
+  listDir(rel: string, opts?: FsCallOptions): Promise<Array<{ name: string; dir: boolean; size: number }>>
 }
 
 export interface Config {
@@ -105,16 +132,34 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
    */
   const rootOf = (): string => resolve(config.root ?? sandboxRoot(ctx))
 
-  function safeResolve(input: unknown): string {
+  /**
+   * 这次调用能不能出工作区。
+   *
+   * 两个来源: 本次调用的授权凭据 (用户刚点了"允许"), 或者权限模式本身是
+   * `full` (绝对权限 —— 它连围栏都不设, 所以也不存在"越界"这回事)。
+   */
+  const outsideAllowed = (opts?: FsCallOptions): boolean =>
+    opts?.outside === true || sandboxMode(ctx) === 'full'
+
+  function safeResolve(input: unknown, opts?: FsCallOptions): string {
     const raw = String(input ?? '')
     if (!raw) throw new FsError('FS_EMPTY_PATH', '缺少路径参数')
     const root = rootOf()
     const abs = resolve(root, raw)
-    if (!isWithin(root, raw)) {
+    if (!outsideAllowed(opts) && !isWithin(root, raw)) {
       // 不回显绝对路径: 那等于把宿主机目录结构泄露给模型
       throw new FsError('FS_OUT_OF_ROOT', `路径越界: ${raw} 不在工作区内`)
     }
     return abs
+  }
+
+  /**
+   * 给模型看的相对路径。**越界时给绝对路径** —— `../../../etc/hosts` 这种
+   * 相对串既难读又容易被模型当成"工作区内的 etc/hosts"再拼一次。
+   */
+  const relOf = (abs: string): string => {
+    const root = rootOf()
+    return isWithin(root, abs) ? relative(root, abs) || '.' : abs
   }
 
   async function statAbs(abs: string): Promise<FsStat> {
@@ -131,17 +176,17 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
     get root() {
       return rootOf()
     },
-    resolve: (input: string) => safeResolve(input),
+    resolve: (input: string, opts?: FsCallOptions) => safeResolve(input, opts),
 
-    async stat(rel) {
-      return statAbs(safeResolve(rel))
+    async stat(rel, opts) {
+      return statAbs(safeResolve(rel, opts))
     },
 
-    async readText(rel) {
-      const abs = safeResolve(rel)
+    async readText(rel, opts) {
+      const abs = safeResolve(rel, opts)
       const raw = await readFile(abs, 'utf8')
       const out: ReadResult = {
-        rel: relative(rootOf(), abs) || '.',
+        rel: relOf(abs),
         totalLines: 0,
         lines: raw.split('\n'),
       }
@@ -152,14 +197,15 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
       return out
     },
 
-    async writeText(rel, content) {
-      const abs = safeResolve(rel)
+    async writeText(rel, content, opts) {
+      const abs = safeResolve(rel, opts)
       const s = await statAbs(abs)
       const intent: FsIntent = {
         kind: 'write',
         path: abs,
-        rel: relative(rootOf(), abs) || '.',
+        rel: relOf(abs),
         exists: s.exists,
+        ...(opts ? { granted: opts } : {}),
       }
       // 单决策槽: 策略占住即拥有否决权 (抛错), 调 next() 即放行
       await ctx.waterfall('fs/write-intent', [intent], () => undefined)
@@ -171,12 +217,18 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
       return { rel: intent.rel, operation: s.exists ? 'update' : 'create', bytes: Buffer.byteLength(content) }
     },
 
-    async editText(rel, oldString, newString, replaceAll) {
+    async editText(rel, oldString, newString, replaceAll, opts) {
       if (!oldString) throw new FsError('FS_EMPTY_OLD', 'old_string 不能为空')
-      const abs = safeResolve(rel)
+      const abs = safeResolve(rel, opts)
       const s = await statAbs(abs)
       if (!s.exists) throw new FsError('FS_NOT_FOUND', `文件不存在: ${rel}`)
-      const intent: FsIntent = { kind: 'edit', path: abs, rel: relative(rootOf(), abs) || '.', exists: true }
+      const intent: FsIntent = {
+        kind: 'edit',
+        path: abs,
+        rel: relOf(abs),
+        exists: true,
+        ...(opts ? { granted: opts } : {}),
+      }
       await ctx.waterfall('fs/edit-intent', [intent], () => undefined)
       const raw = await readFile(abs, 'utf8')
       const count = countOccurrences(raw, oldString)
@@ -190,8 +242,8 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
       return { rel: intent.rel, replaced: replaceAll ? count : 1 }
     },
 
-    async listDir(rel) {
-      const abs = safeResolve(rel)
+    async listDir(rel, opts) {
+      const abs = safeResolve(rel, opts)
       const entries = await readdir(abs, { withFileTypes: true })
       const out: Array<{ name: string; dir: boolean; size: number }> = []
       for (const e of entries) {

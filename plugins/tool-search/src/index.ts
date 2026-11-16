@@ -60,17 +60,29 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
   const maxEntries = config.maxEntries ?? 50_000
   const grepTimeoutMs = config.grepTimeoutMs ?? 20_000
 
-  function fence(input: unknown, root: string): string {
+  /**
+   * 围栏。`outside` 来自本次调用的授权凭据 —— 用户在工作区外点过"允许"之后,
+   * 这里不能再拦 (否则界面说允许了、搜索还是报越界)。
+   */
+  function fence(input: unknown, root: string, outside: boolean): string {
     const raw = String(input ?? '.')
     const abs = resolve(root, raw || '.')
-    if (abs !== root && !abs.startsWith(root + sep)) {
+    if (!outside && abs !== root && !abs.startsWith(root + sep)) {
       throw new Error(`路径越界: ${raw} 不在工作区内`)
     }
     return abs
   }
 
+  /**
+   * 报告路径的基准。工作区内用工作区根 (和以前一致); 越界搜索用**被搜的那个
+   * 目录** —— 在 `/etc` 里搜到的东西报成 `hosts` 才有意义, 报成
+   * `../../../etc/hosts` 既难读又容易被模型再拼一次。
+   */
+  const baseOf = (root: string, start: string): string =>
+    start === root || start.startsWith(root + sep) ? root : start
+
   /** 收集 root 下的全部文件 (相对路径, posix 分隔符)。带熔断: 大仓库不许拖垮一轮 */
-  function walk(startDir: string, root: string): string[] {
+  function walk(startDir: string, base: string): string[] {
     const files: string[] = []
     const stack: Array<{ dir: string; depth: number }> = [{ dir: startDir, depth: 0 }]
     let visited = 0
@@ -89,7 +101,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
         const s = statSafe(full)
         if (!s) continue
         if (s.isDirectory()) stack.push({ dir: full, depth: 0 })
-        else if (s.isFile()) files.push(relative(root, full).split(sep).join('/'))
+        else if (s.isFile()) files.push(relative(base, full).split(sep).join('/'))
       }
     }
     return files
@@ -109,19 +121,20 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
         },
         required: ['pattern'],
       },
-      async handler(args) {
+      async handler(args, _ctx, call) {
         try {
           const pattern = String(args.pattern ?? '')
           if (!pattern) return fail('缺参数 pattern')
           // 一个 handler 只取一次: walk 报的相对路径与后面 join 回绝对路径
           // 必须基于**同一个**根, 否则中途换根会把文件指到别处
           const root = rootOf()
-          const start = fence(args.path, root)
+          const start = fence(args.path, root, call?.grants?.outside === true)
+          const base = baseOf(root, start)
           const re = globToRegExp(pattern)
           const matched: Array<{ rel: string; mtimeMs: number }> = []
-          for (const rel of walk(start, root)) {
+          for (const rel of walk(start, base)) {
             if (!re.test(rel)) continue
-            const abs = join(root, rel)
+            const abs = join(base, rel)
             const s = statSafe(abs)
             matched.push({ rel, mtimeMs: s?.mtimeMs ?? 0 })
             if (matched.length >= globMaxResults * 2) break // 排序前先粗收, 双倍上限足够
@@ -168,10 +181,11 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
             return fail(`非法正则: ${pattern}`)
           }
           const root = rootOf()
-          const start = fence(args.path, root)
+          const start = fence(args.path, root, call?.grants?.outside === true)
+          const base = baseOf(root, start)
           const include = args.include ? globToRegExp(String(args.include)) : null
           const hits: string[] = []
-          for (const rel of walk(start, root)) {
+          for (const rel of walk(start, base)) {
             if (hits.length >= grepMaxMatches) break
             // 被叫停时把**已经搜到的**还回去: 部分结果比空结果有用,
             // 而且模型能从"搜了一半被停"读出"该缩小范围了"
@@ -181,7 +195,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
             if (include && !include.test(rel) && !include.test(rel.split('/').pop() ?? '')) continue
             let text: string
             try {
-              text = await readFile(join(root, rel), 'utf8')
+              text = await readFile(join(base, rel), 'utf8')
             } catch {
               continue
             }

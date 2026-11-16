@@ -1,0 +1,11 @@
+# policy-approval —— 权限模式 (单独使用时的参考清单)
+#
+# 三档模式的执行者。真正的模式值住在 `sandbox.mode` (内核级配置),
+# 这里只挂一个 tools/pre-execute 钩子, 零能力面。
+
+- insert:
+    - id: policy-approval
+      name: '@meng/plugin-policy-approval'
+      config:
+        # 写这些要问 (与 policy-fs 的 noWrite 同一组: 界面上"敏感路径"是同一个概念)
+        sensitive: ['.git/', '.env', '.ssh/', 'id_rsa', '.npmrc']

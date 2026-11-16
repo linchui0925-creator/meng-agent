@@ -22,7 +22,7 @@
 import { relative, resolve } from 'node:path'
 import { sandboxRoot } from '@meng/config'
 import { defineInvariant, type Ctx, type Disposer } from '@meng/core'
-import { FsError, isWithin, type FsIntent } from '@meng/fs'
+import { FsError, type FsIntent } from '@meng/fs'
 
 export const name = 'meng-plugin-policy-fs'
 /** 刻意不写 inject: 钩子先挂上, seam 后装载也一样拦得住 */
@@ -51,15 +51,17 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
 
   /** intent 槽的检查。抛错即否决; 调 next() 即放行 */
   const check = (intent: FsIntent, next: () => unknown) => {
-    // **每次写都现读根**: 工作区可以在设置页里改, 改完下一次写就按新根判。
-    // 抓成常量的话, 用户改完工作区会得到"围栏还是旧的、fs 已经按新的解析" ——
-    // 每一次写都被误判越界, 而报错说的是"不在工作区内", 完全指不回这里
-    const root = sandboxRoot(ctx)
-    if (!isWithin(root, intent.path)) {
-      throw new FsError('FS_OUT_OF_ROOT', `不允许写到工作区之外: ${intent.rel}`)
-    }
+    // **围栏不在这里了。** 它搬进了 fs seam —— 因为"越界"现在可以是**被批准的**:
+    // 用户在工具执行前点了"允许", 凭据挂在 call 上, 一路传到 seam 的 resolve。
+    // 这一层拿到的是 FsIntent, 里面没有凭据, 分不清"越界且没批准"和"越界但刚批准过",
+    // 只能一刀切拒 —— 那样审批就成了摆设 ("我明明点了允许, 它还是说越界")。
+    //
+    // 纵深防御没有变: seam 那道围栏还在, 只是它现在看得见授权。
     const rel = intent.rel.split('\\').join('/')
-    for (const pattern of noWrite) {
+    // 敏感路径也是"可以问"的: 用户批准过 (granted.sensitive) 就放行。
+    // 一刀切拒会让"我想让模型改一下 .env"变成必须卸载策略才能做到
+    const patterns = intent.granted?.sensitive === true ? [] : noWrite
+    for (const pattern of patterns) {
       const p = pattern.split('\\').join('/')
       if (rel === p || rel.startsWith(p.endsWith('/') ? p : p + '/')) {
         throw new FsError('FS_SENSITIVE', `敏感路径禁止写入: ${rel}`)

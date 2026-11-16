@@ -471,7 +471,42 @@ export const KERNEL_CONFIG: Record<string, ConfigDecl> = {
        * 应该消失。
        */
     }),
+    /**
+     * 权限模式。**和 root 放在同一个 scope**, 因为"这一片目录允许什么"
+     * 是一个整体: 目录是范围, 模式是这个范围内外的宽严。
+     *
+     * 三档的差别只在两个闸门上 (写文件前 / 跑命令前), 见 `policy-approval`:
+     *
+     *   · `ask`  请求批准 —— 工作区内写和跑命令**每次都问**; 读工作区外也问
+     *   · `auto` 帮我批准 —— 只问高风险 (越界 / 敏感路径), 其余自主
+     *   · `full` 绝对权限 —— 不问, 也不设围栏
+     *
+     * 三档**都拦**"一次执行就不可逆"的灾难命令 (rm -rf / 之类)。那不是权限,
+     * 是止损 —— 见 policy-bash。
+     */
+    mode: z.enum(['ask', 'auto', 'full']).default('auto').meta({
+      description:
+        '权限模式: ask=每次都问 / auto=只问高风险(越界、敏感路径) / full=不问也不围栏',
+    }),
   },
+}
+
+/**
+ * 权限模式。三档语义写在 `KERNEL_CONFIG.sandbox.mode` 的注释里。
+ *
+ * 为什么这个取值函数要放在缝里而不是 `policy-approval` 插件里:
+ * **围栏也要读它** —— `@meng/fs` 在 `full` 模式下不再拒越界路径。
+ * 两处各写一份 `get('mode') ?? 'auto'`, 迟早一处改了另一处没改,
+ * 表现是"界面显示绝对权限, 但读工作区外还是被拒"。
+ */
+export type SandboxMode = 'ask' | 'auto' | 'full'
+
+export function sandboxMode(ctx: Ctx): SandboxMode {
+  const svc = getConfig(ctx)
+  const raw = svc ? svc.scope('sandbox').get('mode') : undefined
+  // 脏值一律当默认档: 猜错方向的后果是"以为放开了其实没放开"(或反过来),
+  // 两种都比"用默认值"坏
+  return raw === 'ask' || raw === 'full' ? raw : 'auto'
 }
 
 /**
