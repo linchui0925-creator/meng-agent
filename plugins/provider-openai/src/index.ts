@@ -25,11 +25,15 @@ import {
   catalogProvider as piCatalogProvider,
   catalogProviderByBaseURL,
   createRouteProvider,
+  listableProtocols,
+  listerOf,
   primeCatalog,
   protocolIds,
+  readListing,
   toChunks,
   toContext,
   type CatalogModel,
+  type ListingRequest,
   type ProtocolInfo,
 } from '@meng/pi'
 import {
@@ -94,6 +98,10 @@ const DEFAULT_INPUT = ['text'] as const
  *
  * 其中三种（azure / bedrock / vertex）的端点地址、凭据形态不是"一个 key +
  * 一个地址"能表达的，配置项里仍然可以选，但 `missing` 会点名还差什么。
+ *
+ * `listable`（能不能点"获取可用模型"）**不是写在这里的**，由 pi 的
+ * `listerOf()` 算：有 listter 才是 true。曾经这张表和实现各写一份，
+ * 加第三种协议时必然漂成"按钮灰着但实现好了"。
  */
 export const PROTOCOLS: readonly ProtocolInfo[] = PI_PROTOCOLS
 
@@ -102,12 +110,6 @@ const PROTOCOL_IDS = protocolIds() as [string, ...string[]]
 export function protocolInfo(id: string): ProtocolInfo | undefined {
   return PROTOCOLS.find((p) => p.id === id)
 }
-
-/** 能读 `GET <base>/models` 的协议 —— 只有它们支持"获取可用模型" */
-export function canListModels(protocol: string): boolean {
-  return protocolInfo(protocol)?.listable === true
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // 配置
 // ─────────────────────────────────────────────────────────────────────────────
@@ -600,13 +602,15 @@ export function apply(ctx: Ctx): Disposer {
       }
 
       const protocol = request.protocol || profile?.protocol || 'openai-completions'
-      // 只有 `openai-*` 两种协议有 `GET /models`。其余协议（anthropic /
-      // gemini / bedrock…）没有这个端点，硬打只会拿到 404 然后被说成"地址错"
-      if (!canListModels(protocol)) {
+      /**
+       * **表里没有 = 这个协议真没有列表端点**，不是懒得写：
+       * bedrock 要 `ListFoundationModels` + SigV4 签名，vertex 要 ADC，
+       * codex 是内部端点。报"没有列表"比硬打一个 404 再说"地址错"诚实。
+       */
+      const lister = listerOf(protocol)
+      if (!lister) {
         throw new LlmError(
-          `协议 ${protocol} 没有可读的模型列表 —— 请手动添加模型（能列举的是 ${PROTOCOLS.filter((p) => p.listable)
-            .map((p) => p.id)
-            .join(' / ')}）`,
+          `协议 ${protocol} 没有可读的模型列表 —— 请手动添加模型（能列举的是 ${listableProtocols().join(' / ')}）`,
           LLM_CODE.DISCOVERY_UNSUPPORTED,
         )
       }
@@ -614,44 +618,30 @@ export function apply(ctx: Ctx): Disposer {
       const envName = request.apiKeyEnv || profile?.apiKeyEnv || ''
       const apiKey = usableKey(envName ? (process.env[envName] ?? '').trim() : '')
 
-      const url = `${stripSlash(baseURL)}/models`
-      let res: Response
-      try {
-        res = await fetch(url, {
-          method: 'GET',
-          headers: {
-            Accept: 'application/json',
-            ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-            'User-Agent': 'meng-agent/0.1 (+https://github.com/linc/meng)',
-            ...(profile?.headers ?? {}),
-          },
-          ...(request.signal ? { signal: request.signal } : {}),
-        })
-      } catch (err) {
-        throw new LlmError(
-          `连不上 ${url}: ${(err as Error).message}`,
-          LLM_CODE.DISCOVERY_FAILED,
-          { cause: err },
-        )
+      const listing: ListingRequest = {
+        baseURL,
+        apiKey,
+        ...(profile?.headers ? { headers: profile.headers } : {}),
       }
 
-      if (!res.ok) {
-        const text = await res.text().catch(() => '')
-        throw new LlmError(
-          `${url} 返回 ${res.status}: ${text.slice(0, 200) || '(无正文)'}`,
-          LLM_CODE.DISCOVERY_FAILED,
-          { status: res.status },
-        )
+      /**
+       * 翻页。anthropic 用游标（`after_id`）、gemini 用 `pageToken`，
+       * 请求形状不同，但对外都是"给我下一页的地址" —— 循环只认这一个约定。
+       *
+       * 上限由各 listter 声明（默认 1 页）。宁可少列也不能让一个坏端点
+       * 永远返回 `has_more: true` 把我们拖在这里。
+       */
+      const found: DiscoveredModel[] = []
+      let url = lister.url(listing)
+      const maxPages = lister.maxPages ?? 1
+      for (let page = 0; page < maxPages; page++) {
+        const body = await getJson(url, lister.headers(listing), request.signal, lister.label)
+        const got = await readListing(body, url, lister)
+        found.push(...got.models)
+        if (got.next === undefined) break
+        url = got.next
       }
-
-      const text = await readBoundedText(res, url)
-      let body: unknown
-      try {
-        body = JSON.parse(text)
-      } catch {
-        throw new LlmError(`${url} 返回的不是 JSON —— 这个地址可能不是 OpenAI 兼容端点`, LLM_CODE.DISCOVERY_FAILED)
-      }
-      return withCapacity(readListing(body, url), directoryModels)
+      return withCapacity(found, directoryModels)
     }),
   )
 
@@ -885,12 +875,55 @@ async function readBoundedText(res: Response, url: string): Promise<string> {
 }
 
 /**
- * 读一份 OpenAI 形状的模型列表。
+ * 发一次 GET 并读出 JSON。
  *
- * 字段名各家的叫法不一样（`context_window` / `context_length`,
- * `max_output_tokens` / `max_tokens`), 所以每个字段都试两个名字。
- * 没有 id 的条目**跳过而不是报错**: 一行坏数据不该让用户拿不到其余那些。
+ * 三类失败分开说，因为它们对用户的下一步完全不同：
+ *   · 连不上       → 地址或网络有问题（改地址 / 检查代理）
+ *   · 非 2xx       → 密钥或权限有问题（把状态码和正文原样给出来）
+ *   · 不是 JSON    → 地址指向的不是这家 API（最常见的错：把网页地址当接口地址）
+ *
+ * `label` 是协议名（"Anthropic Messages"），出现在错误里比"OpenAI 兼容端点"
+ * 准 —— 用户填的明明是 anthropic 的地址。
  */
+async function getJson(
+  url: string,
+  headers: Record<string, string>,
+  signal: AbortSignal | undefined,
+  label: string,
+): Promise<unknown> {
+  let res: Response
+  try {
+    res = await fetch(url, {
+      method: 'GET',
+      headers: { 'User-Agent': 'meng-agent/0.1 (+https://github.com/linc/meng)', ...headers },
+      ...(signal ? { signal } : {}),
+    })
+  } catch (err) {
+    throw new LlmError(`连不上 ${url}: ${(err as Error).message}`, LLM_CODE.DISCOVERY_FAILED, {
+      cause: err,
+    })
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new LlmError(
+      `${label} 的 ${url} 返回 ${res.status}: ${text.slice(0, 200) || '(无正文)'}`,
+      LLM_CODE.DISCOVERY_FAILED,
+      { status: res.status },
+    )
+  }
+
+  const text = await readBoundedText(res, url)
+  try {
+    return JSON.parse(text)
+  } catch {
+    throw new LlmError(
+      `${url} 返回的不是 JSON —— 这个地址可能不是 ${label} 端点`,
+      LLM_CODE.DISCOVERY_FAILED,
+    )
+  }
+}
+
 /**
  * 端点只报了 id 时, 用目录**补**容量。
  *
@@ -917,44 +950,6 @@ function withCapacity(found: DiscoveredModel[], directory: readonly CatalogModel
       ...(m.maxTokens === undefined && known.maxTokens !== undefined ? { maxTokens: known.maxTokens } : {}),
     }
   })
-}
-
-function readListing(body: unknown, url: string): DiscoveredModel[] {
-  const data = (body as { data?: unknown })?.data
-  if (!Array.isArray(data)) {
-    throw new LlmError(
-      `${url} 的响应里没有 data 数组 —— 这个端点不支持 /models, 请手动添加模型`,
-      LLM_CODE.DISCOVERY_FAILED,
-    )
-  }
-
-  const label = (...candidates: unknown[]): string | undefined => {
-    for (const c of candidates) if (typeof c === 'string' && c.length > 0) return c
-    return undefined
-  }
-  const capacity = (...candidates: unknown[]): number | undefined => {
-    for (const c of candidates) {
-      if (typeof c === 'number' && Number.isInteger(c) && c > 0) return c
-    }
-    return undefined
-  }
-
-  const out: DiscoveredModel[] = []
-  for (const raw of data) {
-    const entry = raw as Record<string, unknown> | null
-    const id = label(entry?.['id'])
-    if (!id) continue
-    const name = label(entry?.['name'], entry?.['display_name'])
-    const contextWindow = capacity(entry?.['context_window'], entry?.['context_length'])
-    const maxTokens = capacity(entry?.['max_output_tokens'], entry?.['max_tokens'])
-    out.push({
-      id,
-      ...(name === undefined ? {} : { name }),
-      ...(contextWindow === undefined ? {} : { contextWindow }),
-      ...(maxTokens === undefined ? {} : { maxTokens }),
-    })
-  }
-  return out
 }
 
 // ── 杂项 ─────────────────────────────────────────────────────────────────────

@@ -1,12 +1,16 @@
 /**
  * DeepSeek SSE 行 → 原始 payload 字符串。
  *
- * 和 `provider-openai/src/sse.ts` 的**唯一区别**：这里把 `[DONE]` 哨兵**留下来**。
+ * **仓库里仅存的一份手写 SSE 行解析** —— openai 兼容那套已经整体交给
+ * `@meng/pi`（pi-ai 的实现）。这里留着是因为 DeepSeek 的 thinking 协议
+ * 需要哨兵语义，而 pi 的通用实现直接丢掉 `[DONE]`。
+ *
+ * 和通用实现的**唯一区别**：这里把 `[DONE]` 哨兵**留下来**。
  *
  * 为什么留：DeepSeek 的 `finish_reason` 可能出现在某个普通 chunk 里，而 `usage`
  * 又可能单独跟在最后一个 chunk 后面。只有见到 `[DONE]` 才知道"这轮真的说完了"，
- * 才能安全地一次性吐 usage + finish。openai 那个版本直接丢掉 `[DONE]`，
- * 于是只能"见到 finish_reason 就收尾"，撞上"usage 在 finish 之后"的部署就会漏计费。
+ * 才能安全地一次性吐 usage + finish。丢掉 `[DONE]` 的版本只能"见到 finish_reason
+ * 就收尾"，撞上"usage 在 finish 之后"的部署就会漏计费。
  *
  * 几件必须按行处理、不能按 chunk 切的事（Python 版在这里出过事）：
  *   - 一个 `data:` 行可能跨 chunk 边界

@@ -55,6 +55,14 @@ import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completio
 import { openAICodexResponsesApi } from '@earendil-works/pi-ai/api/openai-codex-responses.lazy'
 import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy'
 
+// 模型列表探测（`GET /models` 那一族）—— 它和上面的 wire 实现是两件不同的事：
+// 上面负责"发一句话收一段流"，这里负责"问端点你有哪些模型"。
+// 放在同一个包里是因为"哪种协议有列表端点"这件事只有实现方知道。
+import { listerOf, listableProtocols, readListing, type Lister, type ListingRequest } from './listing.ts'
+
+export { listerOf, listableProtocols, readListing }
+export type { Lister, ListingRequest }
+
 import {
   LLM_CODE,
   textOf,
@@ -86,7 +94,12 @@ export interface ProtocolInfo {
   id: ProtocolId
   /** 设置页上给人看的一行 */
   label: string
-  /** 端点上有 `GET /models` 可读（只有这两种能"获取可用模型"） */
+  /**
+   * 端点上有可读的模型列表（设置页"获取可用模型"按钮亮不亮）。
+   *
+   * **由 `listerOf()` 算出来，不在下面的表里写** —— 写两处必然漂：
+   * 表上说能拉、实现里没有，用户点了才 400。
+   */
   listable: boolean
   /**
    * 这条协议还缺哪些**配置形状表达不了**的东西。
@@ -96,40 +109,43 @@ export interface ProtocolInfo {
 }
 
 /**
- * 顺序是**有意**的：第一个是默认值。新建一条网关时最可能是
- * openai-completions —— 也是唯一能探测模型列表的那种。
+ * 顺序是**有意**的：第一个是默认值。新建一条网关时最可能是 openai-completions。
+ *
+ * `listable` 是**派生**的（见 `PROTOCOLS`），所以这里不写。写死的代价是
+ * 加了 listter 忘了改这张表 —— 表现是"按钮灰着但明明实现好了"，没人会发现。
  */
-export const PROTOCOLS: readonly ProtocolInfo[] = [
-  { id: 'openai-completions', label: 'OpenAI 兼容 (/chat/completions)', listable: true },
-  { id: 'openai-responses', label: 'OpenAI Responses (/responses)', listable: true },
-  { id: 'anthropic-messages', label: 'Anthropic Messages', listable: false },
-  { id: 'google-generative-ai', label: 'Google Gemini', listable: false },
-  { id: 'mistral-conversations', label: 'Mistral', listable: false },
+const PROTOCOL_DEFS: readonly Omit<ProtocolInfo, 'listable'>[] = [
+  { id: 'openai-completions', label: 'OpenAI 兼容 (/chat/completions)' },
+  { id: 'openai-responses', label: 'OpenAI Responses (/responses)' },
+  { id: 'anthropic-messages', label: 'Anthropic Messages' },
+  { id: 'google-generative-ai', label: 'Google Gemini' },
+  { id: 'mistral-conversations', label: 'Mistral' },
   {
     id: 'azure-openai-responses',
     label: 'Azure OpenAI',
-    listable: false,
     needs: ['资源名与 api-version（填在接口地址里）'],
   },
   {
     id: 'bedrock-converse-stream',
     label: 'Amazon Bedrock',
-    listable: false,
     needs: ['AWS 凭据（AWS_ACCESS_KEY_ID / AWS_PROFILE / IAM 角色）与区域'],
   },
   {
     id: 'google-vertex',
     label: 'Google Vertex AI',
-    listable: false,
     needs: ['GCP project + location + 应用默认凭据 (ADC)'],
   },
   {
     id: 'openai-codex-responses',
     label: 'OpenAI Codex',
-    listable: false,
     needs: ['OAuth 登录态（本仓库没有 OAuth 存储）'],
   },
 ]
+
+export const PROTOCOLS: readonly ProtocolInfo[] = PROTOCOL_DEFS.map((def) => ({
+  ...def,
+  listable: listerOf(def.id) !== undefined,
+}))
 
 const PROTOCOL_BY_ID = new Map(PROTOCOLS.map((p) => [p.id, p]))
 
