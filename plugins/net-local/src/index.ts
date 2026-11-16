@@ -118,9 +118,13 @@ function classify(err: unknown, timedOut: boolean, aborted: boolean): NetError {
 }
 
 export function apply(ctx: Ctx, config: Config = {}): Disposer {
-  const root = sandboxRoot(ctx)
   const relDir = config.relDir ?? '.meng/web'
-  const dir = resolve(root, relDir)
+  /**
+   * 原文落盘目录 —— **每次用时现算**: 工作区在设置页里改了, 抓下来的网页
+   * 跟着去新工作区。抓成常量的话, 文件留在旧目录, 而返回给模型的 locator
+   * 指的也是旧路径 —— 模型去 read 会读到"不存在"。
+   */
+  const dirOf = (): string => resolve(sandboxRoot(ctx), relDir)
   const timeoutMs = config.timeoutMs ?? 30_000
   const maxBytes = config.maxBytes ?? 5_000_000
   const maxFiles = config.maxFiles ?? 100
@@ -144,6 +148,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
   /** 目录里只留最新的 maxFiles 个。抓取失败不影响清理 */
   async function prune(): Promise<void> {
     try {
+      const dir = dirOf()
       const names = await readdir(dir)
       if (names.length <= maxFiles) return
       const rows: Array<{ path: string; mtime: number }> = []
@@ -207,6 +212,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
       const finalUrl = res.url || target.href
       const hash = createHash('sha1').update(finalUrl).digest('hex').slice(0, 12)
       const file = `${hash}.${extOf(type)}`
+      const dir = dirOf()
       await mkdir(dir, { recursive: true })
       const path = join(dir, file)
 
@@ -286,7 +292,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
         bytes,
         truncated,
         path,
-        rel: relative(root, path).split(sep).join('/'),
+        rel: relative(dir, path).split(sep).join('/'),
         head,
         redirected: res.redirected,
         crossHost: Boolean(requestedHost) && requestedHost !== finalHost,

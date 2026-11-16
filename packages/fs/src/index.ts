@@ -93,19 +93,22 @@ export function isWithin(root: string, target: string): boolean {
 }
 
 export function apply(ctx: Ctx, config: Config = {}): Disposer {
-  // 工作区根由 `@meng/config` 统一给 —— 和 policy-fs / tool-search / bash-local /
-  // spill / net-local 同一个来源。
-  //
-  // 这里曾经是 `config.root ?? process.cwd()`: 全仓唯一一个**不读** sandbox.root
-  // 的消费方。默认值 `.` 恰好等于 cwd, 所以平时看不出来; 一旦用户在设置页把
-  // 工作区改成别的目录, 它还在启动目录上解析路径, 而 policy-fs 已经按新根围栏 ——
-  // 每一次 write/edit 都被判"越界", 而 read 读到的是旧目录里的同名文件。
-  // 表现是"改了工作区之后文件功能全废", 原因却指向"路径越界", 完全指不回这一行。
-  const root = resolve(config.root ?? sandboxRoot(ctx))
+  /**
+   * 工作区根 —— **每次调用现读**, 不是启动时抓一次。
+   *
+   * 这里曾经是 `const root = resolve(...)`, 于是设置页改了工作区必须重启进程
+   * 才生效。但"根"只是一条路径: 围栏比较、`relative()` 换算、mkdir 全是每次
+   * 现算的, 没有任何东西要求它是常量。抓一次纯粹是实现顺手, 代价却是让用户
+   * 以为"这个设置不生效" —— 而那时它确实不生效。
+   *
+   * 唯一真需要"提前做"的是目录本身 (mkdir), 那也在写的时候按需做。
+   */
+  const rootOf = (): string => resolve(config.root ?? sandboxRoot(ctx))
 
   function safeResolve(input: unknown): string {
     const raw = String(input ?? '')
     if (!raw) throw new FsError('FS_EMPTY_PATH', '缺少路径参数')
+    const root = rootOf()
     const abs = resolve(root, raw)
     if (!isWithin(root, raw)) {
       // 不回显绝对路径: 那等于把宿主机目录结构泄露给模型
@@ -124,7 +127,10 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
   }
 
   const service: FsService = {
-    root,
+    // getter 而不是字段: 工作区在设置页里改了, 读它的人应该拿到新的那个
+    get root() {
+      return rootOf()
+    },
     resolve: (input: string) => safeResolve(input),
 
     async stat(rel) {
@@ -135,7 +141,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
       const abs = safeResolve(rel)
       const raw = await readFile(abs, 'utf8')
       const out: ReadResult = {
-        rel: relative(root, abs) || '.',
+        rel: relative(rootOf(), abs) || '.',
         totalLines: 0,
         lines: raw.split('\n'),
       }
@@ -152,7 +158,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
       const intent: FsIntent = {
         kind: 'write',
         path: abs,
-        rel: relative(root, abs) || '.',
+        rel: relative(rootOf(), abs) || '.',
         exists: s.exists,
       }
       // 单决策槽: 策略占住即拥有否决权 (抛错), 调 next() 即放行
@@ -170,7 +176,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
       const abs = safeResolve(rel)
       const s = await statAbs(abs)
       if (!s.exists) throw new FsError('FS_NOT_FOUND', `文件不存在: ${rel}`)
-      const intent: FsIntent = { kind: 'edit', path: abs, rel: relative(root, abs) || '.', exists: true }
+      const intent: FsIntent = { kind: 'edit', path: abs, rel: relative(rootOf(), abs) || '.', exists: true }
       await ctx.waterfall('fs/edit-intent', [intent], () => undefined)
       const raw = await readFile(abs, 'utf8')
       const count = countOccurrences(raw, oldString)

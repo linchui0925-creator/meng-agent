@@ -46,9 +46,12 @@ export const inject: string[] = []
 export interface Config {
   /**
    * 显式覆盖缺省工作目录。不写就用工作区根 (`@meng/config` 的 sandbox.root) ——
-   * 所以正常情况下不需要配它, 它是给测试和特殊部署留的出口
+   * 所以正常情况下不需要配它, 它是给测试和特殊部署留的出口。
+   *
+   * 允许传函数: 工作区可以在设置页里改, 缺省目录得跟着走。传字符串意味着
+   * "启动那一刻的工作区"被绑死在这个执行器实例上。
    */
-  cwd?: string
+  cwd?: string | (() => string)
   timeoutMs?: number
   maxTimeoutMs?: number
   /** 给模型看的窗口 (字节, 保留尾部) */
@@ -295,7 +298,7 @@ interface Spawned {
 class LocalBashExecutor implements ExecService {
   readonly maxTimeoutMs: number
 
-  private cwd: string
+  private cwdOf: () => string
   private timeoutMs: number
   private maxOutputBytes: number
   private maxSpillBytes: number
@@ -307,8 +310,10 @@ class LocalBashExecutor implements ExecService {
   constructor(config: Config, spill: SpillSink | undefined) {
     this.spill = spill
     // cwd 由外部传进来 (apply 里用 sandboxRoot 取), 这里不再自己读 env ——
-    // 一个执行器实例一个 cwd, 但"工作区在哪"是全进程一个事实
-    this.cwd = resolve(config.cwd ?? process.cwd())
+    // "工作区在哪"是全进程一个事实, 而这个事实可以中途变 (设置页里改),
+    // 所以存成函数, 每次 resolve 请求现算
+    const cwd = config.cwd
+    this.cwdOf = typeof cwd === 'function' ? () => resolve(cwd()) : () => resolve(cwd ?? process.cwd())
     this.timeoutMs = config.timeoutMs ?? 120_000
     this.maxOutputBytes = config.maxOutputBytes ?? 64_000
     this.maxSpillBytes = config.maxSpillBytes ?? 1_000_000
@@ -330,7 +335,7 @@ class LocalBashExecutor implements ExecService {
     // 超上限是**压到上限**, 不是报错: 模型写 99999999 是想"尽量久", 不是想失败
     return {
       command: request.command,
-      workdir: request.workdir ? resolve(this.cwd, request.workdir) : this.cwd,
+      workdir: request.workdir ? resolve(this.cwdOf(), request.workdir) : this.cwdOf(),
       timeoutMs: Math.min(timeoutMs, this.maxTimeoutMs),
       stdoutMaxBytes: request.stdoutMaxBytes ?? this.maxOutputBytes,
       env: { ...ENV_OVERRIDES, ...this.env, ...request.env },
@@ -559,9 +564,10 @@ class BackgroundProc implements ExecProcess {
 export function apply(ctx: Ctx, config: Config = {}): Disposer {
   // 落盘仓库可选: 有就用, 没有就只截断。不在这一层写死 @meng/spill
   const spill = ctx.get<SpillSink>('spill')
-  // 缺省 cwd 就是工作区根 —— 走统一入口取, 不在这里读 env
+  // 缺省 cwd 就是工作区根 —— 走统一入口取, 不在这里读 env。
+  // 传函数而不是值: 工作区可以在设置页里改, 执行器的缺省目录得跟着走
   const executor = new LocalBashExecutor(
-    { ...config, cwd: config.cwd ?? sandboxRoot(ctx) },
+    { ...config, cwd: config.cwd ?? (() => sandboxRoot(ctx)) },
     spill,
   )
   const off = provideExec(ctx, executor)

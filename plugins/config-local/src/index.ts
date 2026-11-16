@@ -35,6 +35,7 @@
  * 现在接就是死代码。
  */
 
+import { existsSync } from 'node:fs'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import * as z from 'zod'
@@ -615,6 +616,20 @@ export async function apply(
     const at = slots.get('sandbox.root')
     const who = at ? (resolveOne('sandbox', 'root').source ?? '无') : '未声明'
     console.log(`[meng] config · 设置文件 ${file}${broken ? ' (读取失败)' : ''} · sandbox.root 来自 ${who}`)
+    /**
+     * 工作区目录不存在时**说一句**。
+     *
+     * 不说的话, 症状是一整片"文件不存在" —— 而根因只是那个目录被删了
+     * (或者路径打错了一个字母)。这一行是给"改了工作区, 然后所有 read 都
+     * 失败"准备的: 那种情况下用户会怀疑工具坏了, 不会怀疑一条配置。
+     *
+     * 只警告, 不改行为: 静默回落到 cwd 会把打错的路径变成一个更难查的
+     * "我改的设置怎么没生效"。
+     */
+    const rootNow = resolveOne('sandbox', 'root').value
+    if (typeof rootNow === 'string' && !existsSync(resolve(rootNow))) {
+      console.warn(`[meng] 工作区 ${resolve(rootNow)} 不存在 —— 读写都会失败, 在设置页改一个已存在的目录`)
+    }
   }
 
   const disposer = provideConfig(ctx, service)

@@ -84,8 +84,25 @@ export interface Config {
  * 建一个落盘仓库。抽成工厂是为了让 invariant 能在临时目录里自检,
  * 而不是往用户工作区里塞测试文件。
  */
-export function createSpill(dir: string, relDir: string, emit?: (ref: SpillRef) => void): SpillService {
+export function createSpill(
+  dir: string | (() => string),
+  relDir: string,
+  emit?: (ref: SpillRef) => void,
+): SpillService {
+  /**
+   * 落盘目录 —— 允许传函数, 每次用时现算。
+   *
+   * 为什么需要: 目录是 `<工作区>/.meng/spill`, 而工作区可以在设置页里改。
+   * 抓成字符串的话, 改完工作区溢出文件还往旧目录写 —— 用户在新工作区里
+   * 找不到它们, 而 locator 指的还是旧路径。
+   *
+   * 目录本身不预先建 (以前 apply 里建一次), 改成写入时 mkdir:
+   * 根变了之后那个目录可能还不存在。
+   */
+  const dirOf = (): string => (typeof dir === 'function' ? dir() : dir)
+
   function inDir(ref: string): string {
+    const dir = dirOf()
     const clean = ref.split('\\').join('/')
     // 先把 '..' 挡在门外: basename 会把 ../../etc/passwd 削成 passwd,
     // 于是"越界"退化成"文件不存在", 而这两件事对调用方含义完全不同
@@ -110,7 +127,7 @@ export function createSpill(dir: string, relDir: string, emit?: (ref: SpillRef) 
   }
 
   async function statOne(file: string): Promise<SpillRef> {
-    const path = join(dir, file)
+    const path = join(dirOf(), file)
     const s = await stat(path)
     const { id, tool } = parseName(file)
     return {
@@ -126,7 +143,7 @@ export function createSpill(dir: string, relDir: string, emit?: (ref: SpillRef) 
   async function list(): Promise<SpillRef[]> {
     let files: string[] = []
     try {
-      files = (await readdir(dir)).filter((f) => f.endsWith('.txt'))
+      files = (await readdir(dirOf())).filter((f) => f.endsWith('.txt'))
     } catch {
       return []
     }
@@ -142,10 +159,14 @@ export function createSpill(dir: string, relDir: string, emit?: (ref: SpillRef) 
   }
 
   return {
-    dir,
+    get dir() {
+      return dirOf()
+    },
     relDir,
 
     async write(input) {
+      // 现算 + 现建: 工作区可能刚被改到另一个目录, 那里还没有 .meng/spill
+      const dir = dirOf()
       await mkdir(dir, { recursive: true })
       const tool = (input.tool ?? 'out').replace(/[^a-z0-9_]/gi, '').toLowerCase() || 'out'
       const id = randomUUID().slice(0, 8)
@@ -208,9 +229,10 @@ export function createSpill(dir: string, relDir: string, emit?: (ref: SpillRef) 
 }
 
 export function apply(ctx: Ctx, config: Config = {}): Disposer {
-  const root = sandboxRoot(ctx)
   const relDir = config.relDir ?? '.meng/spill'
-  const service = createSpill(join(root, relDir), relDir, (ref) => {
+  // 目录**每次用时现算**: 工作区改了, 溢出文件跟着去新工作区。
+  // 传函数而不是字符串 —— 字符串意味着"启动时那一刻的工作区"永远绑死
+  const service = createSpill(() => join(sandboxRoot(ctx), relDir), relDir, (ref) => {
     ctx.emit('spill/written', ref)
   })
   ctx.set('spill', service)

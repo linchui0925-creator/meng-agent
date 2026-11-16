@@ -37,7 +37,6 @@ export interface Config {
 const DEFAULT_NO_WRITE = ['.git/', '.env', '.ssh/', 'id_rsa', '.npmrc']
 
 export function apply(ctx: Ctx, config: Config = {}): Disposer {
-  const root = sandboxRoot(ctx)
   const noWrite = config.noWrite ?? DEFAULT_NO_WRITE
   const requireRead = config.requireRead ?? true
 
@@ -52,6 +51,10 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
 
   /** intent 槽的检查。抛错即否决; 调 next() 即放行 */
   const check = (intent: FsIntent, next: () => unknown) => {
+    // **每次写都现读根**: 工作区可以在设置页里改, 改完下一次写就按新根判。
+    // 抓成常量的话, 用户改完工作区会得到"围栏还是旧的、fs 已经按新的解析" ——
+    // 每一次写都被误判越界, 而报错说的是"不在工作区内", 完全指不回这里
+    const root = sandboxRoot(ctx)
     if (!isWithin(root, intent.path)) {
       throw new FsError('FS_OUT_OF_ROOT', `不允许写到工作区之外: ${intent.rel}`)
     }

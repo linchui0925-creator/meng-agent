@@ -461,15 +461,15 @@ export const KERNEL_CONFIG: Record<string, ConfigDecl> = {
       // 值是个路径, 界面要显示"现在到底在哪个绝对路径"而不是一个点
       path: true,
       /**
-       * **改了要重启。** 不是懒: 七个消费方 (fs / policy-fs / tool-search /
-       * tool-bash / bash-local / spill / net-local) 都在 `apply()` 里把
-       * 根目录抓成了常量 —— 它们要在启动时就把围栏、cwd、落盘目录建好。
-       * 中途改只会得到"一半新一半旧"的混合状态, 那比"没生效"难查得多。
+       * **改了立刻生效, 不用重启。** 曾经标过 `restartRequired: true`, 理由是
+       * "七个消费方都在 apply() 里把根抓成了常量" —— 那是**实现顺手**, 不是
+       * 结构必然: 根只是一条路径, 围栏比较 / relative 换算 / mkdir 全是每次
+       * 现算的。七处改成现读之后, 这条声明就撤了。
        *
-       * 要做热更新的话, 改法是把这七处都变成"每次用时现读", 并让
-       * `ConfigScope.onChange` 触发重新 apply —— 那是另一个量级的改动。
+       * `restartRequired` 这个字段留着: 真只能在启动时读的配置 (端口、
+       * 数据目录) 以后要靠它。现在没有一项标它 —— 界面上那句"重启后生效"
+       * 应该消失。
        */
-      restartRequired: true,
     }),
   },
 }

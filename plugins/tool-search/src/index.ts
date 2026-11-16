@@ -49,14 +49,18 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
   const tools = ctx.get<ToolService>('tools')
   if (!tools) throw new Error('能力面 tools 未装载')
 
-  const root = sandboxRoot(ctx)
+  /**
+   * 工作区根 —— **每次调用现读**。设置页改了工作区, 下一次 glob/grep 就按新根搜。
+   * 抓成常量的话, 改完工作区搜的还是旧目录, 而界面上看不出为什么。
+   */
+  const rootOf = (): string => sandboxRoot(ctx)
   const globMaxResults = config.globMaxResults ?? 100
   const grepMaxMatches = config.grepMaxMatches ?? 250
   const grepMaxLineBytes = config.grepMaxLineBytes ?? 2000
   const maxEntries = config.maxEntries ?? 50_000
   const grepTimeoutMs = config.grepTimeoutMs ?? 20_000
 
-  function fence(input: unknown): string {
+  function fence(input: unknown, root: string): string {
     const raw = String(input ?? '.')
     const abs = resolve(root, raw || '.')
     if (abs !== root && !abs.startsWith(root + sep)) {
@@ -66,7 +70,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
   }
 
   /** 收集 root 下的全部文件 (相对路径, posix 分隔符)。带熔断: 大仓库不许拖垮一轮 */
-  function walk(startDir: string): string[] {
+  function walk(startDir: string, root: string): string[] {
     const files: string[] = []
     const stack: Array<{ dir: string; depth: number }> = [{ dir: startDir, depth: 0 }]
     let visited = 0
@@ -109,10 +113,13 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
         try {
           const pattern = String(args.pattern ?? '')
           if (!pattern) return fail('缺参数 pattern')
-          const start = fence(args.path)
+          // 一个 handler 只取一次: walk 报的相对路径与后面 join 回绝对路径
+          // 必须基于**同一个**根, 否则中途换根会把文件指到别处
+          const root = rootOf()
+          const start = fence(args.path, root)
           const re = globToRegExp(pattern)
           const matched: Array<{ rel: string; mtimeMs: number }> = []
-          for (const rel of walk(start)) {
+          for (const rel of walk(start, root)) {
             if (!re.test(rel)) continue
             const abs = join(root, rel)
             const s = statSafe(abs)
@@ -160,10 +167,11 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
           } catch {
             return fail(`非法正则: ${pattern}`)
           }
-          const start = fence(args.path)
+          const root = rootOf()
+          const start = fence(args.path, root)
           const include = args.include ? globToRegExp(String(args.include)) : null
           const hits: string[] = []
-          for (const rel of walk(start)) {
+          for (const rel of walk(start, root)) {
             if (hits.length >= grepMaxMatches) break
             // 被叫停时把**已经搜到的**还回去: 部分结果比空结果有用,
             // 而且模型能从"搜了一半被停"读出"该缩小范围了"

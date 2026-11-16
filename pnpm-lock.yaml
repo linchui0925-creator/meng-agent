@@ -79,6 +79,9 @@ importers:
 
   apps/server:
     dependencies:
+      '@meng/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@meng/core':
         specifier: workspace:*
         version: link:../../packages/core

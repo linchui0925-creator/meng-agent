@@ -107,7 +107,6 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
   const exec = getExec(ctx)
   if (!exec) throw new Error('能力面 exec 未装载 —— bash 需要一个执行器')
 
-  const root = sandboxRoot(ctx)
   const defaultTimeoutMs = config.timeoutMs ?? 30_000
   // 上限问 executor 要, 不在这里再配一份。两处都写迟早漂移,
   // 而且"工具说能 600s、执行器只给 60s"是最难查的一类问题
@@ -154,6 +153,9 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
   }
 
   function fenceWorkdir(input: unknown): string {
+    // **每次调用现读根**: 工作区在设置页里改了, 下一条命令就按新根跑。
+    // 抓成常量的话, 改完工作区命令还在旧目录里跑, 而界面上只有"工作区已保存"
+    const root = sandboxRoot(ctx)
     const raw = String(input ?? '')
     if (!raw) return root
     const abs = resolveRoot(raw, root)

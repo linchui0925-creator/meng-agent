@@ -9,6 +9,7 @@
     "@meng/provider-mock": "workspace:*",
     "@meng/provider-openai": "workspace:*",
     "@meng/tools": "workspace:*",
-    "@meng/web": "workspace:*"
+    "@meng/web": "workspace:*",
+    "@meng/config": "workspace:*"
   }
 }
