@@ -180,7 +180,9 @@ export function registerBuiltinOps(
     // 形状由声明里的 schema 判定, 这里只挡"没给值"——
     // 在这里再列一遍允许的类型, 就是第二份规则, 而两份规则必然漂移
     if (!('value' in payload)) throw new HttpError('bad-request', '缺 value')
-    return shape(await svc.set(entry.scope, entry.name, payload.value))
+    // 带了 path = 只改组合配置里的那一格 (从磁盘上的当前值出发)。
+    // 不带 = 写整值, 与以前完全一样
+    return shape(await svc.set(entry.scope, entry.name, payload.value, pathOf(payload.path)))
   })
 
   op('config.unset', async (payload) => {
@@ -225,4 +227,26 @@ function declared(svc: ConfigService, raw: unknown) {
 
 function shape(result: ConfigWriteResult) {
   return { entry: result.entry, scopeEntries: result.scopeEntries }
+}
+
+/**
+ * `config.set` 的 `path`: 只改组合配置里的一格。
+ *
+ * 为什么要在这一层挡而不是交给下面: 下面只认 `(scope, key, value, path)` 四件,
+ * 一个 `path: 'zai.baseURL'` (字符串) 传下去会被当成"没有 path" —— 于是
+ * **整张路由表被这一格的值替换掉**。那是静默的数据删除, 比 400 难查一万倍。
+ *
+ * 数组下标也允许 (改列表里的第 n 项), 但每一段必须是字符串或数字:
+ * 数字字符串 `'0'` 按对象键处理, JS 里对数组也成立。
+ */
+function pathOf(raw: unknown): Array<string | number> | undefined {
+  if (raw === undefined || raw === null) return undefined
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new HttpError('bad-request', 'path 必须是非空数组, 如 ["zai", "baseURL"]')
+  }
+  return raw.map((seg: unknown) => {
+    if (typeof seg === 'number' && Number.isFinite(seg)) return seg
+    if (typeof seg === 'string' && seg !== '') return seg
+    throw new HttpError('bad-request', 'path 的每一段必须是非空字符串或数字')
+  })
 }

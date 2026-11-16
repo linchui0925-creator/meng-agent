@@ -64,6 +64,16 @@ export interface SessionMeta {
   at: number
   lastSeq: number
   turns: number
+  /**
+   * 这段对话最近一条**用户**消息的前 ~60 字。没有就不给 (不是空串)。
+   *
+   * 侧栏列表只有标题和时间时, 用户得靠标题猜"这段聊过什么", 而标题常常是
+   * 自动生成的、猜不准。这是给列表第二行用的内容预览。
+   *
+   * 为什么截 60 字而不是整段: 它要在一行里放下, 太长了界面上只能硬截,
+   * 而硬截会把"关键那句"截掉 —— 后端截的时候还能先压平空白。
+   */
+  preview?: string
 }
 
 export interface SessionService {
@@ -111,12 +121,14 @@ export function apply(ctx: Ctx): Disposer {
         const first = log[0]
         const last = log[log.length - 1]
         if (!first || !last) continue
+        const preview = previewOf(log)
         out.push({
           sessionId,
           title: titleOf(log),
           at: first.at,
           lastSeq: last.seq,
           turns: log.filter((e) => e.type === 'turn/started').length,
+          ...(preview === undefined ? {} : { preview }),
         })
       }
       return out.sort((a, b) => b.at - a.at)
@@ -229,6 +241,27 @@ function titleOf(log: SessionEvent[]): string {
   const first = log.find((e) => e.type === 'turn/started')
   const text = (first?.data as { text?: string } | undefined)?.text ?? ''
   return text.slice(0, 20) || '未命名会话'
+}
+
+/**
+ * 最近一条用户消息的前 60 字。**没有就不给**, 不给空串。
+ *
+ * 找的是**最后**一条 `turn/started` —— 用户问过的最后一句最能说明这段对话
+ * 现在在聊什么。从后往前扫而不是先 filter 再取尾: 会话可能有几千条事件,
+ * 而这条信息只需要最后一次。
+ */
+function previewOf(log: SessionEvent[]): string | undefined {
+  for (let i = log.length - 1; i >= 0; i--) {
+    const event = log[i]
+    if (!event || event.type !== 'turn/started') continue
+    const text = (event.data as { text?: string } | undefined)?.text ?? ''
+    // 压平空白: 用户可能贴了一段带换行的日志, 不压的话预览第一行只剩半句
+    const flat = text.replace(/\s+/g, ' ').trim()
+    // 空消息 (只按了回车 / 只发附件) 不给 preview —— 给空串等于让界面
+    // 渲染一行空白, 那比单行还难看
+    return flat === '' ? undefined : flat.slice(0, 60)
+  }
+  return undefined
 }
 
 export const invariant = defineInvariant('@meng/session', [

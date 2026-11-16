@@ -99,12 +99,63 @@ function typeOf(json: Record<string, unknown>): ConfigType {
   return 'string'
 }
 
+/**
+ * 在组合配置的**当前值**上改一格。
+ *
+ * 深拷贝之后再改, 不动传进来的对象 —— 那份可能是 `resolveOne` 返回的默认值
+ * (schema.parse 的结果), 就地改它等于污染下一次 resolve。
+ *
+ * 中间层不存在时报错, 不自动建: `['zai','baseURL']` 里 `zai` 不存在时,
+ * 自动建一个 `{ baseURL }` 会产出一条没协议、没密钥变量名的半截路由 ——
+ * 而 schema 恰好允许它 (那些字段有默认值)。用户于是得到一条存得进去、
+ * 发不出去的路由, 且界面上看不出哪里不对。
+ */
+function setAtPath(
+  base: unknown,
+  path: Array<string | number>,
+  value: unknown,
+  full: string,
+): unknown {
+  const next = structuredClone(base) as Record<string | number, unknown>
+  let cursor: Record<string | number, unknown> = next
+  for (let i = 0; i < path.length - 1; i++) {
+    const seg = path[i]
+    if (seg === undefined) break
+    const child = cursor[seg]
+    if (child === undefined || child === null || typeof child !== 'object') {
+      throw new ConfigError(
+        CONFIG_CODE.TYPE,
+        full,
+        `${full} 里没有 ${path.slice(0, i + 1).join('.')} —— 先用整表写把这一条建出来`,
+      )
+    }
+    cursor = child as Record<string | number, unknown>
+  }
+  const last = path[path.length - 1]
+  if (last === undefined) return next
+  cursor[last] = value
+  return next
+}
+
 interface SlotMeta {
   secret: boolean
   env?: string
   required: boolean
   desc?: string
+  /** 值是路径。`list()` 多给一个 `resolved` */
+  path?: boolean
+  /** 改了要重启才生效 */
+  restartRequired?: boolean
 }
+
+/**
+ * 本层自己的元信息键 —— **不进导出的 JSON Schema**。
+ *
+ * 以前它们原样漏进 schema 里 (`z.toJSONSchema` 会把 meta 展开成关键字),
+ * 于是 `"required": true` 混进了标准 JSON Schema, 而标准里 `required` 必须是
+ * 字符串数组。前端拿到的 schema 是"唯一真相", 里面就不该有非标准关键字。
+ */
+const META_KEYS = ['secret', 'env', 'required', 'path', 'restartRequired'] as const
 
 interface Slot {
   schema: z.ZodType
@@ -141,6 +192,9 @@ function normalize(schema: z.ZodType, full: string): Omit<Slot, 'scope'> {
     // 被列进 required (输出类型非可选), 于是前端严格校验时会拦下一条本来能用的
     // 配置 —— 而服务端 parse 一下就会补上默认值。required 说谎比 required 苛刻糟。
     json = z.toJSONSchema(schema, { io: 'input' }) as Record<string, unknown>
+    // meta 会被 zod 原样展开进 schema。我们自己的那几个键不是 JSON Schema
+    // 关键字, 留着就是给前端送进去一批"看不懂但可能存在"的东西
+    for (const key of META_KEYS) delete json[key]
   } catch {
     // 有些 zod 类型本来就无法表示成 JSON Schema (bigint / date / transform)。
     // **不阻断启动**: 取值照样能走, 只是设置页画不出控件 —— 那比整个内核起不来好
@@ -157,6 +211,10 @@ function normalize(schema: z.ZodType, full: string): Omit<Slot, 'scope'> {
   }
   if (typeof rawMeta['env'] === 'string') meta.env = rawMeta['env']
   if (typeof rawMeta['description'] === 'string') meta.desc = rawMeta['description']
+  // 只认 `=== true`: 脏值 ('yes' / 1) 不当成声明 —— 猜错方向的后果是
+  // 界面显示"要重启"而实际立刻生效 (或反过来), 两种都比"不显示"坏
+  if (rawMeta['path'] === true) meta.path = true
+  if (rawMeta['restartRequired'] === true) meta.restartRequired = true
 
   let defaultValue: unknown
   try {
@@ -406,12 +464,21 @@ export async function apply(
       entry.default = slot.defaultValue
     }
     if (slot.meta.desc !== undefined) entry.desc = slot.meta.desc
+    // 声明自己说的"要重启" —— 界面据此显示提示, 而不是每个分区各写一句文案
+    if (slot.meta.restartRequired) entry.restartRequired = true
     // 密钥行的 value **恒不给**: 这条 if 是这一层唯一的安全边界
     if (!slot.meta.secret) {
       // 原样给。形状由 schema 说, 这层不做转述 —— 也**转述不了**:
       // `routes` 是一张字典, 转成字符串就再也改不回去了
       if (r.value !== undefined) entry.value = r.value
       if (r.source !== undefined) entry.source = r.source
+      // 这一项会从哪个环境变量读。给**生效**的那个名字 (meta.env 优先,
+      // 否则按命名规则推) —— 用户找的是真名, 不是"声明里写没写"
+      entry.envName = slot.meta.env ?? envNameOf(scope, name)
+      // 路径类配置: 把 `.` 展开成真目录。界面大字那行终于能写绝对路径
+      if (slot.meta.path && typeof r.value === 'string' && r.value.trim() !== '') {
+        entry.resolved = resolve(r.value)
+      }
     } else {
       if (r.secretRef !== undefined) entry.secretRef = r.secretRef
       // 只报"有没有", 不带值 —— 见 ConfigEntry.present 的注释
@@ -478,11 +545,25 @@ export async function apply(
       return [...slots.keys()].sort().map(entryOf)
     },
 
-    async set(scope: string, key: string, value: unknown): Promise<ConfigWriteResult> {
+    async set(
+      scope: string,
+      key: string,
+      value: unknown,
+      path?: Array<string | number>,
+    ): Promise<ConfigWriteResult> {
       const slot = slotOf(scope, key)
       return write(scope, key, (full) => {
         if (!slot) return
         if (slot.meta.secret) {
+          // 密钥写的是变量名, 是一格标量 —— "按路径改"对它没有意义,
+          // 静默忽略比报错更坏 (用户会以为改到了别的地方)
+          if (path && path.length > 0) {
+            throw new ConfigError(
+              CONFIG_CODE.TYPE,
+              full,
+              `${full} 是密钥 (存的是一格环境变量名), 不支持按路径改`,
+            )
+          }
           // **密钥写的是变量名, 不是值。** 值永远不经过这条通道 ——
           // 这样 settings.json 进备份/进截图/进 git 都不出事
           const name = String(value).trim()
@@ -490,6 +571,24 @@ export async function apply(
           else settings[full] = name
           return
         }
+
+        if (path && path.length > 0) {
+          // 从**当前生效值**出发改一格。只读这一份, 所以不存在
+          // "前端读的和后端写的不是同一份" —— 那正是整表读-改-写的问题
+          const base = resolveOne(scope, key).value
+          if (base === undefined || base === null || typeof base !== 'object') {
+            throw new ConfigError(
+              CONFIG_CODE.TYPE,
+              full,
+              `${full} 现在还不是组合配置, 没有 ${path.join('.')} 可改 —— 直接写整值`,
+            )
+          }
+          // 整份 schema 校验, 不是只校验那一格: 改一格之后整张表必须仍然成立,
+          // 否则会写出"字段对了但整条路由不成立"的半坏配置
+          settings[full] = parseVia(slot, setAtPath(base, path, value, full), full)
+          return
+        }
+
         // 先按声明校验, 坏值不落盘。否则下次启动读到一份自己写坏的 settings,
         // 而报错会指向"读不出来", 指不回写它的那一刻
         const parsed = parseVia(slot, value, full)

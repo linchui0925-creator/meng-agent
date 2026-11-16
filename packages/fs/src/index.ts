@@ -93,7 +93,15 @@ export function isWithin(root: string, target: string): boolean {
 }
 
 export function apply(ctx: Ctx, config: Config = {}): Disposer {
-  const root = resolve(config.root ?? process.cwd())
+  // 工作区根由 `@meng/config` 统一给 —— 和 policy-fs / tool-search / bash-local /
+  // spill / net-local 同一个来源。
+  //
+  // 这里曾经是 `config.root ?? process.cwd()`: 全仓唯一一个**不读** sandbox.root
+  // 的消费方。默认值 `.` 恰好等于 cwd, 所以平时看不出来; 一旦用户在设置页把
+  // 工作区改成别的目录, 它还在启动目录上解析路径, 而 policy-fs 已经按新根围栏 ——
+  // 每一次 write/edit 都被判"越界", 而 read 读到的是旧目录里的同名文件。
+  // 表现是"改了工作区之后文件功能全废", 原因却指向"路径越界", 完全指不回这一行。
+  const root = resolve(config.root ?? sandboxRoot(ctx))
 
   function safeResolve(input: unknown): string {
     const raw = String(input ?? '')

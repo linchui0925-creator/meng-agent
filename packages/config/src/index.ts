@@ -93,13 +93,23 @@ export type ConfigType = 'string' | 'number' | 'boolean' | 'object' | 'array' | 
  *
  * ## 元信息挂在 `.meta()` 上, 不另建一套字段
  *
- * 认得的四个键, 其余原样进 JSON Schema:
+ * 认得的六个键, 其余原样进 JSON Schema:
  *
  *   · `secret: true`   —— 密钥。语义见下, 这是本层唯一的安全边界
  *   · `env: 'NAME'`    —— 绑定的环境变量名 (写它是为了兼容老名字)
  *   · `required: true` —— 给设置页显示的"必填"标记 (真正的必填由"没有 default"
  *                        决定: `parse(undefined)` 抛错, 天然就是缺了不行)
  *   · `description`    —— 界面说明。用**标准名**, 因为我们直接吃 JSON Schema
+ *   · `path: true`     —— 值是路径。`list()` 会多给一个 `resolved` (resolve 后的绝对路径)
+ *   · `restartRequired: true` —— 改了要重启才生效。界面据此显示提示, 而不是自己猜
+ *
+ * 前四个是"给界面看的", 后两个是"让界面不必猜的"。两类都挂在同一个地方,
+ * 因为它们要解决的是同一个问题: 声明是唯一真相, 界面不许有第二份判断。
+ *
+ * 注意 `secret` / `env` / `required` / `path` / `restartRequired` 这几个**不进
+ * 导出的 JSON Schema** —— 它们是本层的元信息, 不是 JSON Schema 的关键字。
+ * 以前原样漏出去过, 于是 `required: true` (布尔) 混进了 schema, 而标准里
+ * `required` 必须是字符串数组: 一个严格的校验器会当场判整份 schema 非法。
  *
  * 为什么用 meta 而不是自定义接口: `z.toJSONSchema()` 会把 meta 原样带进
  * JSON Schema, 于是**同一条通道同时喂界面和安全边界** —— 不会出现
@@ -172,6 +182,34 @@ export interface ConfigEntry {
    * 设置页于是白屏, 用户连"去配它"的输入框都看不到。
    */
   unresolved?: string
+  /**
+   * 非密钥行: 这一项会从**哪个环境变量**读 (`.meta({env})` 或按命名规则推出来的名字)。
+   *
+   * 为什么要有: 界面上那句"环境变量优先于这一页"是对的但不够用 —— 用户会去
+   * 找那个变量。以前只有密钥行有 `secretRef`, 普通配置项前端只能把
+   * `MENG_WORKSPACE` 这类名字硬编码在文案里, 后端一改名就静默过期。
+   *
+   * 密钥行**不给**: 那里 `secretRef` 才是真相 (它可能被绑到别的变量上),
+   * 两个字段说同一件事迟早打架。
+   */
+  envName?: string
+  /**
+   * 值 **resolve 之后**的形态。目前只有标了 `.meta({ path: true })` 的路径类配置给。
+   *
+   * 为什么要有: `sandbox.root` 的默认值是 `.`, 界面照原样显示一个点, 而用户
+   * 真正想知道的是"现在到底在哪个绝对路径"。前端不知道服务进程的 cwd,
+   * 算不出来, 只能写一句人话("启动梦时所在的目录")绕着走。
+   */
+  resolved?: string
+  /**
+   * 改了**要重启**才生效。由声明自己说 (`.meta({ restartRequired: true })`),
+   * 不让界面去猜。
+   *
+   * 为什么值得一个字段: "要重启"这件事现在是每个设置分区各写一句文案,
+   * 将来端口、数据目录这些同类配置都得再写一遍 —— 而文案和实现对不上时,
+   * 界面就会替后端撒谎 (写了"立刻生效", 实际要重启)。
+   */
+  restartRequired?: boolean
   /**
    * 这一项的**标准 JSON Schema** (draft 2020-12)。
    *
@@ -284,8 +322,29 @@ export interface ConfigService {
   /**
    * 写一层 settings。未声明的键直接拒绝: 设置页只画已声明的项,
    * 写未声明的键等于往黑箱里塞东西, 而用户永远看不到它、也删不掉它。
+   *
+   * ## `path`: 只改组合配置里的一个字段
+   *
+   * 组合配置 (`llm.openai.routes` 那种字典) 的值是整张表。不带 `path` 时写的是
+   * **整张表**, 于是"改一条路由的一个字段"只能靠前端读-改-写:
+   *
+   *     list() → 改副本 → set(整张)
+   *
+   * 这条路上有两份状态, 任何一处先写都会把另一处覆盖掉 —— 而覆盖是**静默**的,
+   * 用户看到的是"我刚改的那个字段又变回去了"。带上 `path` 之后, 后端从磁盘上
+   * 的当前值出发改那一格, 只有一份状态, 覆盖窗口消失:
+   *
+   *     set('llm.openai', 'routes', 'https://x/v1', ['zai', 'baseURL'])
+   *
+   * 校验仍是**整份 schema**: 改一格之后整张表必须仍然合法, 否则拒绝落盘 ——
+   * 只校验那一格的话, 会写出"字段对了但整条路由不成立"的半坏配置。
    */
-  set(scope: string, key: string, value: unknown): Promise<ConfigWriteResult>
+  set(
+    scope: string,
+    key: string,
+    value: unknown,
+    path?: Array<string | number>,
+  ): Promise<ConfigWriteResult>
 
   /** 清掉 settings 层 → 回落到 env / default。同样只接受已声明的键 */
   unset(scope: string, key: string): Promise<ConfigWriteResult>
@@ -399,6 +458,18 @@ export const KERNEL_CONFIG: Record<string, ConfigDecl> = {
       // 老名字。已经写进部署脚本和文档里了, 改掉就是静默失效 —— 比报错难查得多
       env: 'MENG_WORKSPACE',
       description: '工作区根目录。文件读写、搜索、bash 的 cwd 都不能越过它',
+      // 值是个路径, 界面要显示"现在到底在哪个绝对路径"而不是一个点
+      path: true,
+      /**
+       * **改了要重启。** 不是懒: 七个消费方 (fs / policy-fs / tool-search /
+       * tool-bash / bash-local / spill / net-local) 都在 `apply()` 里把
+       * 根目录抓成了常量 —— 它们要在启动时就把围栏、cwd、落盘目录建好。
+       * 中途改只会得到"一半新一半旧"的混合状态, 那比"没生效"难查得多。
+       *
+       * 要做热更新的话, 改法是把这七处都变成"每次用时现读", 并让
+       * `ConfigScope.onChange` 触发重新 apply —— 那是另一个量级的改动。
+       */
+      restartRequired: true,
     }),
   },
 }
