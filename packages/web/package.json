@@ -9,6 +9,7 @@
     "@meng/core": "workspace:*",
     "@meng/llm": "workspace:*",
     "@meng/pi": "workspace:*",
+    "@meng/records": "workspace:*",
     "@meng/session": "workspace:*",
     "@meng/transport": "workspace:*"
   }

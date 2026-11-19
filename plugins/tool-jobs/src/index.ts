@@ -136,6 +136,8 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
   // ── job_output ────────────────────────────────────────────
   const outputDef: ToolDef = {
     name: 'job_output',
+    // 后台任务三件套单独一组: 没起过后台任务的会话用不上它们
+    group: 'jobs',
     description:
       '读取后台任务的输出。**增量**的: 每次只返回上次读到之后的新内容。' +
       '默认不阻塞; wait:true 会等到它结束或超时 (超时返回 [status: running], 任务仍然活着)。' +
@@ -190,6 +192,8 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
   // ── job_list ──────────────────────────────────────────────
   const listDef: ToolDef = {
     name: 'job_list',
+    // 后台任务三件套单独一组: 没起过后台任务的会话用不上它们
+    group: 'jobs',
     description: '列出这个会话的后台任务 (跑着的和已结束的), 带 id、种类和状态。',
     parameters: { type: 'object', properties: {} },
     handler(_args, _ctx, call): ToolResult {
@@ -208,6 +212,8 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
   // ── job_kill ──────────────────────────────────────────────
   const killDef: ToolDef = {
     name: 'job_kill',
+    // 后台任务三件套单独一组: 没起过后台任务的会话用不上它们
+    group: 'jobs',
     description:
       '请求停掉一个后台任务。立刻返回 —— 任务在真正停下之后才会变成 killed, ' +
       '期间状态是 stopping。已经结束的任务会告诉你 already-finished。',

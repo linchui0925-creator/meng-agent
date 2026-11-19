@@ -5,15 +5,16 @@
   "type": "module",
   "main": "./src/index.ts",
   "dependencies": {
-    "@meng/core": "workspace:*",
     "@meng/config": "workspace:*",
-    "@meng/plugin-config-local": "workspace:*",
+    "@meng/core": "workspace:*",
     "@meng/llm": "workspace:*",
-    "@meng/session": "workspace:*",
-    "@meng/tools": "workspace:*",
-    "@meng/prompt": "workspace:*",
     "@meng/loop": "workspace:*",
-    "@meng/plugin-loop-basic": "workspace:*"
+    "@meng/plugin-config-local": "workspace:*",
+    "@meng/plugin-loop-basic": "workspace:*",
+    "@meng/prompt": "workspace:*",
+    "@meng/records": "workspace:*",
+    "@meng/session": "workspace:*",
+    "@meng/tools": "workspace:*"
   },
   "meng": {
     "bundle": {

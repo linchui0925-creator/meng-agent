@@ -170,6 +170,9 @@ importers:
       '@meng/prompt':
         specifier: workspace:*
         version: link:../../packages/prompt
+      '@meng/records':
+        specifier: workspace:*
+        version: link:../../packages/records
       '@meng/session':
         specifier: workspace:*
         version: link:../../packages/session
@@ -359,6 +362,12 @@ importers:
         specifier: workspace:*
         version: link:../session
 
+  packages/records:
+    dependencies:
+      '@meng/core':
+        specifier: workspace:*
+        version: link:../core
+
   packages/session:
     dependencies:
       '@meng/core':
@@ -394,6 +403,9 @@ importers:
 
   packages/tools:
     dependencies:
+      '@meng/config':
+        specifier: workspace:*
+        version: link:../config
       '@meng/core':
         specifier: workspace:*
         version: link:../core
@@ -444,6 +456,9 @@ importers:
       '@meng/pi':
         specifier: workspace:*
         version: link:../pi
+      '@meng/records':
+        specifier: workspace:*
+        version: link:../records
       '@meng/session':
         specifier: workspace:*
         version: link:../session

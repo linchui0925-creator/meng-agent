@@ -489,6 +489,15 @@ export const KERNEL_CONFIG: Record<string, ConfigDecl> = {
         '权限模式: ask=每次都问 / auto=只问高风险(越界、敏感路径) / full=不问也不围栏',
     }),
   },
+  /**
+   * 工具分组的开关。**和 sandbox 分开一个 scope**: 它管的是"模型能看见哪些工具",
+   * 和"能碰哪儿"是两件事 —— 混在一起会让设置页把两个概念画成一行。
+   */
+  tools: {
+    disabled: z.array(z.string()).default([]).meta({
+      description: '不放进 prompt 的工具组（core / web / jobs …）。留空 = 全部启用',
+    }),
+  },
 }
 
 /**

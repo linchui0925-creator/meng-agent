@@ -78,6 +78,9 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
 
   const def: ToolDef = {
     name: 'web_fetch',
+    // 联网工具单独一组: "这一轮不需要上网"是能提前判断的, 关掉它省下的
+    // 不只是 prompt 里的几行, 还有模型点它的概率
+    group: 'web',
     description:
       '抓取一个网址并返回可读文本。用来读某个具体链接的内容。\n' +
       '返回 = 去掉 script/样式后的开头一段 + **原文落盘的路径**。\n' +

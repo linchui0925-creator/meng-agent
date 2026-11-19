@@ -57,7 +57,9 @@ export function apply(ctx: Ctx, config: { maxTurns?: number; defaultModel?: stri
             { role: 'system', content: [{ type: 'text', text: system }] } satisfies Message,
             ...session.project(input.sessionId),
           ],
-          tools: tools.list(),
+          // 只给**启用的组**。全量进 prompt 会吃掉上下文, 也让模型更容易选错;
+          // 分组开关在设置页里 (配置 tools.disabled)
+          tools: tools.active(),
           signal: input.signal,
         }
 

@@ -8,6 +8,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Ctx, Disposer } from '@meng/core'
 import type { ConfigService, ConfigWriteResult } from '@meng/config'
+import type { RecordStore } from '@meng/records'
 import type { SessionService } from '@meng/session'
 import { LlmError, type LLMService } from '@meng/llm'
 import { PROTOCOLS } from '@meng/pi'
@@ -166,6 +167,51 @@ export function registerBuiltinOps(
   })
 
   op('tools.list', () => tools().list())
+
+  /**
+   * 工具分组 + 开关状态。设置页那张"哪些组进 prompt"的表就靠它。
+   *
+   * 为什么要一个单独的 op 而不是让前端从 `tools.list()` 自己分组:
+   * 组的**名单**是后端的事实 (插件注册时声明), 前端只该知道"有哪些组、
+   * 现在开没开", 不该自己猜 core 之外还有什么。
+   */
+  op('tools.groups', () => tools().groups())
+
+  /**
+   * 取一次工具调用的**完整记录**（三层 + 全文）。
+   *
+   * 事件流里的 `tool/completed.result` 截到 2000 字, 全文在这里。界面点
+   * "查看完整输出"就走这一条 —— 不带这个 op 的话, 那 2000 字就是用户能看到的全部。
+   */
+  op('tool.record', (payload) => {
+    const recordId = String(payload.recordId ?? '')
+    if (!recordId) throw new HttpError('bad-request', '缺 recordId')
+    const records = ctx.get<RecordStore>('records')
+    if (!records) throw new HttpError('no-capability', '记录库未装载 (缺 @meng/records)', 503)
+    const rec = records.get(recordId)
+    // 记录是**可丢的**附属数据 (可能被清理): 找不到就是 404, 不是 500
+    if (!rec) throw new HttpError('not-found', `记录 ${recordId} 不存在 (可能已被清理)`, 404)
+    return rec
+  })
+
+  op('tool.recent', (payload) => {
+    const records = ctx.get<RecordStore>('records')
+    if (!records) throw new HttpError('no-capability', '记录库未装载 (缺 @meng/records)', 503)
+    const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : undefined
+    const tool = typeof payload.tool === 'string' ? payload.tool : undefined
+    const limit = Number(payload.limit ?? 50)
+    return records.list({
+      ...(sessionId ? { sessionId } : {}),
+      ...(tool ? { tool } : {}),
+      ...(Number.isFinite(limit) ? { limit } : {}),
+    })
+  })
+
+  op('tool.stats', () => {
+    const records = ctx.get<RecordStore>('records')
+    if (!records) throw new HttpError('no-capability', '记录库未装载 (缺 @meng/records)', 503)
+    return records.stats()
+  })
 
   // ── 配置读写 ──────────────────────────────────────────
   // 设置页跨进程生效的值必须走后端 (localStorage 只管纯视觉偏好)。

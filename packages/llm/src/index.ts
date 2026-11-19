@@ -85,6 +85,11 @@ export interface ToolSpec {
   name: string
   description: string
   parameters: Record<string, unknown>
+  /**
+   * 工具分组（`core` / `web` / `jobs` …）。只给"要不要把这一组塞进 prompt"用,
+   * 模型看不见它 —— 进 wire 的只有上面三个字段。
+   */
+  group?: string
 }
 
 /** 取一条消息的纯文本。给"我只关心文字"的调用方 (mock / 标题生成 / 日志) */
