@@ -74,6 +74,13 @@ export interface SessionMeta {
    * 而硬截会把"关键那句"截掉 —— 后端截的时候还能先压平空白。
    */
   preview?: string
+  /**
+   * 这段会话属于哪个目录（绝对路径）。**缺 = 普通任务**，不给空串。
+   *
+   * 空串会变成"一个 id 为空的工作区"，前端得再判一次 —— 而"没有"和"空"
+   * 在界面上是两种画法（分两段 vs 落在任务里）。
+   */
+  workspace?: string
 }
 
 export interface SessionService {
@@ -122,6 +129,7 @@ export function apply(ctx: Ctx): Disposer {
         const last = log[log.length - 1]
         if (!first || !last) continue
         const preview = previewOf(log)
+        const workspace = workspaceOf(log)
         out.push({
           sessionId,
           title: titleOf(log),
@@ -129,6 +137,7 @@ export function apply(ctx: Ctx): Disposer {
           lastSeq: last.seq,
           turns: log.filter((e) => e.type === 'turn/started').length,
           ...(preview === undefined ? {} : { preview }),
+          ...(workspace === undefined ? {} : { workspace }),
         })
       }
       return out.sort((a, b) => b.at - a.at)
@@ -241,6 +250,13 @@ function titleOf(log: SessionEvent[]): string {
   const first = log.find((e) => e.type === 'turn/started')
   const text = (first?.data as { text?: string } | undefined)?.text ?? ''
   return text.slice(0, 20) || '未命名会话'
+}
+
+/** 会话属于哪个目录。写在 `session/created` 里, 缺省 = 普通任务 */
+function workspaceOf(log: SessionEvent[]): string | undefined {
+  const created = log.find((e) => e.type === 'session/created')
+  const raw = (created?.data as { workspace?: unknown } | undefined)?.workspace
+  return typeof raw === 'string' && raw !== '' ? raw : undefined
 }
 
 /**

@@ -6,9 +6,12 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { existsSync, statSync } from 'node:fs'
+import { basename } from 'node:path'
 import type { Ctx, Disposer } from '@meng/core'
 import type { ConfigService, ConfigWriteResult } from '@meng/config'
 import type { RecordStore } from '@meng/records'
+import { normalizePath, type WorkspaceStore } from '@meng/workspaces'
 import type { SessionService } from '@meng/session'
 import { LlmError, type LLMService } from '@meng/llm'
 import { PROTOCOLS } from '@meng/pi'
@@ -49,12 +52,70 @@ export function registerBuiltinOps(
   // ── 会话 ──────────────────────────────────────────────
   op('session.create', (payload) => {
     const title = String(payload.title ?? '新会话')
+    /**
+     * 工作区 = **目录的绝对路径**（不是 uuid，见 §1.16 第 1 条）。
+     *
+     * 缺省 / 空串 = 普通任务 —— **不写空串进去**：空串会变成一个 id 为空的
+     * 工作区，前端还得再判一次，而"没有"和"空"在界面上是两种画法。
+     */
+    const rawWorkspace = payload.workspace
+    let workspace: string | undefined
+    if (rawWorkspace !== undefined && rawWorkspace !== null && String(rawWorkspace).trim() !== '') {
+      workspace = normalizePath(String(rawWorkspace))
+      // 目录没了就明确拒掉：让它"创建成功但所有工具都跑不动"是更坏的失败
+      if (!existsSync(workspace)) throw new HttpError('bad-request', `工作区不存在: ${workspace}`)
+      if (!statSync(workspace).isDirectory()) throw new HttpError('bad-request', `不是目录: ${workspace}`)
+    }
     const sessionId = randomUUID().slice(0, 8)
-    session().append(sessionId, 'session/created', { title })
-    return { sessionId, at: Date.now() }
+    session().append(sessionId, 'session/created', { title, ...(workspace ? { workspace } : {}) })
+    return { sessionId, at: Date.now(), ...(workspace ? { workspace } : {}) }
   })
 
   op('session.list', () => session().sessions())
+
+  /**
+   * 工作区列表。**两份来源合起来**:
+   *
+   *   1. 用户主动加过的（`workspaces.json`）—— 里面还没有会话的那些也要在,
+   *      否则"在这个目录里开一个"就没有入口
+   *   2. 会话里出现过的（`session/created.workspace`）—— 用户没加过、但开过会话
+   *
+   * 目录已经不存在的**不给**（§1.16 第 4 条允许两种做法，选"不给"）:
+   * 前端拿到一个已删除的目录只会多一次失败点击。
+   *
+   * 排序按名字 —— 侧栏和选择器都按它画，顺序乱跳会让人以为列表变了。
+   */
+  op('workspace.list', () => {
+    const store = ctx.get<WorkspaceStore>('workspaces')
+    const seen = new Map<string, { id: string; name: string; path: string }>()
+    for (const w of store?.list() ?? []) {
+      if (w.missing) continue
+      seen.set(w.path, { id: w.path, name: w.name, path: w.path })
+    }
+    for (const s of session().sessions()) {
+      const path = s.workspace
+      if (!path || seen.has(path) || !existsSync(path)) continue
+      seen.set(path, { id: path, name: basename(path) || path, path })
+    }
+    return { workspaces: [...seen.values()].sort((a, b) => a.name.localeCompare(b.name)) }
+  })
+
+  /**
+   * 新建工作区 = **建目录 + 记住它**。浏览器建不了目录，所以这一步必须在后端。
+   */
+  op('workspace.create', (payload) => {
+    const store = ctx.get<WorkspaceStore>('workspaces')
+    if (!store) throw new HttpError('no-capability', '工作区清单未装载 (缺 @meng/workspaces)', 503)
+    const raw = String(payload.path ?? '').trim()
+    if (!raw) throw new HttpError('bad-request', '缺 path')
+    try {
+      const w = store.add(raw)
+      return { id: w.path, name: w.name, path: w.path }
+    } catch (err) {
+      // 建不出来（权限 / 路径已是一个文件）时说人话，别把 fs 的错误码丢出去
+      throw new HttpError('bad-request', (err as Error).message)
+    }
+  })
 
   op('session.read', (payload) => {
     const sessionId = String(payload.sessionId ?? '')

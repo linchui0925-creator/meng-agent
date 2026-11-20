@@ -36,10 +36,24 @@
       config:
         dir: !!js process.env.MENG_DATA_DIR || '.meng'
 
+    # 记住"用户加过哪些目录"。会话自己带 workspace（写在事件里），这里存的是
+    # **还没有会话的那部分** —— 选择器要用它（"在这个目录里开一个"）
+    - id: workspaces
+      name: '@meng/workspaces'
+      config:
+        dir: !!js process.env.MENG_DATA_DIR || '.meng'
+
     # 工具调用的完整记录 (本地 SQLite)。**可丢的附属数据**, 不是真相源:
     # 事件流里只留 2000 字回显 + 一个 recordId, 全文在这里 —— 回放不该读几 MB 的 stdout
     - id: records
       name: '@meng/records'
+      config:
+        dir: !!js process.env.MENG_DATA_DIR || '.meng'
+
+    # 记住"用户加过哪些目录"。会话自己带 workspace（写在事件里），这里存的是
+    # **还没有会话的那部分** —— 选择器要用它（"在这个目录里开一个"）
+    - id: workspaces
+      name: '@meng/workspaces'
       config:
         dir: !!js process.env.MENG_DATA_DIR || '.meng'
 

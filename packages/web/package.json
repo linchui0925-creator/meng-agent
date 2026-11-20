@@ -11,6 +11,7 @@
     "@meng/pi": "workspace:*",
     "@meng/records": "workspace:*",
     "@meng/session": "workspace:*",
-    "@meng/transport": "workspace:*"
+    "@meng/transport": "workspace:*",
+    "@meng/workspaces": "workspace:*"
   }
 }

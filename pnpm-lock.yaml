@@ -179,6 +179,9 @@ importers:
       '@meng/tools':
         specifier: workspace:*
         version: link:../../packages/tools
+      '@meng/workspaces':
+        specifier: workspace:*
+        version: link:../../packages/workspaces
 
   bundles/kit:
     dependencies:
@@ -465,6 +468,9 @@ importers:
       '@meng/transport':
         specifier: workspace:*
         version: link:../transport
+      '@meng/workspaces':
+        specifier: workspace:*
+        version: link:../workspaces
 
   packages/web-react:
     dependencies:
@@ -480,6 +486,12 @@ importers:
       react:
         specifier: ^19.0.0
         version: 19.3.1
+
+  packages/workspaces:
+    dependencies:
+      '@meng/core':
+        specifier: workspace:*
+        version: link:../core
 
   plugins/bash-local:
     dependencies:

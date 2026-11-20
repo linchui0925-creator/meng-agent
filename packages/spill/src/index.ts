@@ -206,7 +206,11 @@ export function createSpill(
       const now = Date.now()
       let removed = 0
       for (const ref of all) {
-        const tooOld = byAge && now - ref.createdAt >= maxAgeMs
+        // 年龄不能是负数: 文件的 mtime 可能比 Date.now() 还新一点点 (时间戳精度),
+        // 于是 `now - createdAt` 偶尔为负 —— 而 `maxAgeMs: 0` 的语义是"全清",
+        // 这一格算负就会让"全清"随机删不掉东西, 表现为自检 1/3 概率误报
+        const age = Math.max(0, now - ref.createdAt)
+        const tooOld = byAge && age >= maxAgeMs
         const tooMany = maxFiles > 0 ? all.indexOf(ref) >= maxFiles : false
         if (!tooOld && !tooMany) continue
         try {

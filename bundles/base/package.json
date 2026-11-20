@@ -14,7 +14,8 @@
     "@meng/prompt": "workspace:*",
     "@meng/records": "workspace:*",
     "@meng/session": "workspace:*",
-    "@meng/tools": "workspace:*"
+    "@meng/tools": "workspace:*",
+    "@meng/workspaces": "workspace:*"
   },
   "meng": {
     "bundle": {
