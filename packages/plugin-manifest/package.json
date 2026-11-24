@@ -1,0 +1,12 @@
+{
+  "name": "@meng/plugin-manifest",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "插件 manifest、profile 模型与原子配置写入",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "dependencies": {
+    "yaml": "^2.9.1"
+  }
+}

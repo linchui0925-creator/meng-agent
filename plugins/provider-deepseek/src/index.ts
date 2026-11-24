@@ -15,14 +15,14 @@
  *   - ❌ schemastery 配置 schema / credentials seam / settings 热更新 /
  *     registerModelDiscovery —— 我们没有这三个包，抄进来就是死代码
  *
- * 凭据的最小替代：`apiKeyEnv` 存的是**环境变量名**，不是密钥本身。
- * dsh 的原话是「a literal key is not a configuration value」——
- * 密钥一旦写进清单，就会跟着清单进 git、进日志、进别人的截图。
+ * 凭据引用：配置里存的是**引用名**，不是密钥本身；值由本机凭据库保存，
+ * 找不到时回退到同名环境变量。dsh 的原话仍是底线：
+ * 「a literal key is not a configuration value」——密钥不写进 settings/清单。
  */
 
 import * as z from 'zod'
 import type { Ctx, Disposer } from '@meng/core'
-import { openScope, probeSecret } from '@meng/config'
+import { getCredentials, openScope, probeSecret } from '@meng/config'
 import {
   LLM_CODE,
   LlmError,
@@ -30,12 +30,15 @@ import {
   toModelInfo,
   type LLMService,
   type ModelInfo,
+  type ModelModality,
+  type ReasoningEffort as LlmReasoningEffort,
   type Provider,
   type StreamChunk,
   type StreamRequest,
 } from '@meng/llm'
 import {
   ReasoningEffortError,
+  UnsupportedImageError,
   serializeRequest,
   type ReasoningEffort,
   type ThinkingMode,
@@ -58,6 +61,26 @@ export const CONFIG_SCOPE = 'llm.deepseek'
 const DEFAULT_BASE_URL = 'https://api.deepseek.com'
 const DEFAULT_MODELS = ['deepseek-chat', 'deepseek-reasoner']
 const DEFAULT_IDLE_TIMEOUT_MS = 300_000
+
+const EFFORT_LEVELS: readonly LlmReasoningEffort[] = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+
+/** 端点内容是外部输入：只归一已知类型，未知值不拿来冒充能力。 */
+function modalitiesOf(value: unknown): ModelModality[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  return value.filter((item): item is ModelModality => item === 'text' || item === 'image')
+}
+
+function effortsOf(value: unknown): LlmReasoningEffort[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  return value.filter((item): item is LlmReasoningEffort =>
+    typeof item === 'string' && (EFFORT_LEVELS as readonly string[]).includes(item))
+}
+
+function effortOf(value: unknown): LlmReasoningEffort | undefined {
+  return typeof value === 'string' && (EFFORT_LEVELS as readonly string[]).includes(value)
+    ? value as LlmReasoningEffort
+    : undefined
+}
 
 /**
  * 官方两款的容量。**只有这两个是"知道"的** —— 用户改成一个我们没听说过的
@@ -103,8 +126,8 @@ export const CONFIG = {
   }),
 
   /**
-   * **存的是环境变量名, 不是密钥。** 值只从 `process.env` 读, 永不落盘 ——
-   * 这条来自 dsh: a literal key is not a configuration value。
+   * **存的是凭据引用名, 不是密钥。** 值由本机凭据库保存（0600），
+   * 找不到时回退到同名环境变量；密钥不经过配置通道、不进 settings/清单。
    */
   apiKey: z.string().meta({
     secret: true,
@@ -121,8 +144,8 @@ export const CONFIG = {
     description: 'wire 上的思考开关。留空 = 不写这个字段, 让服务端默认生效',
   }),
 
-  reasoningEffort: z.enum(['off', 'high', 'max']).optional().meta({
-    description: '推理档位。off 落到 wire 是 thinking=disabled 且不带 effort',
+  reasoningEffort: z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']).optional().meta({
+    description: '默认推理档位；具体可选项以厂商实时模型能力为准，off = 关闭思考',
   }),
 
   temperature: z.number().min(0).max(2).optional().meta({
@@ -143,6 +166,7 @@ export function apply(ctx: Ctx): Disposer {
   if (!llm) throw new Error('provider-deepseek 依赖 llm')
 
   const { scope, dispose } = openScope(ctx, CONFIG_SCOPE, CONFIG)
+  const credentials = getCredentials(ctx)
   ctx.effect(() => dispose)
 
   /**
@@ -200,7 +224,7 @@ export function apply(ctx: Ctx): Disposer {
           maxTokens: cfg.maxTokens,
         })
       } catch (err) {
-        if (err instanceof ReasoningEffortError) throw new LlmError(err.message, err.code)
+        if (err instanceof ReasoningEffortError || err instanceof UnsupportedImageError) throw new LlmError(err.message, err.code)
         throw err
       }
 
@@ -226,6 +250,70 @@ export function apply(ctx: Ctx): Disposer {
     },
   }
 
+  const discover = async (request: import('@meng/llm').ModelDiscoveryRequest): Promise<import('@meng/llm').DiscoveredModel[]> => {
+    const cfg = read()
+    const baseURL = request.baseURL ? stripSlash(request.baseURL) : cfg.baseURL
+    const keyEnv = request.apiKeyEnv || cfg.keyEnv
+    const apiKey = request.apiKeyEnv
+      ? (credentials?.get(keyEnv) || process.env[keyEnv] || '').trim()
+      : cfg.apiKey
+    if (!apiKey) {
+      throw new LlmError(`环境变量 ${keyEnv} 里没有值，无法读取 DeepSeek 模型清单`, LLM_CODE.MISSING_CREDENTIAL)
+    }
+
+    let res: Response
+    try {
+      res = await fetch(`${baseURL}/models`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'User-Agent': 'meng-agent/0.1 (+https://github.com/linc/meng)',
+          Accept: 'application/json',
+        },
+        ...(request.signal ? { signal: request.signal } : {}),
+      })
+    } catch (err) {
+      throw new LlmError(`连不上 DeepSeek 模型清单: ${(err as Error).message}`, LLM_CODE.DISCOVERY_FAILED)
+    }
+    if (!res.ok) throw wireError(ROUTE, res.status, await res.text().catch(() => ''), res.headers)
+
+    let body: unknown
+    try {
+      body = await res.json()
+    } catch {
+      throw new LlmError('DeepSeek /models 返回的不是 JSON', LLM_CODE.DISCOVERY_FAILED)
+    }
+    const rows = (body as { data?: unknown }).data
+    if (!Array.isArray(rows)) {
+      throw new LlmError('DeepSeek /models 没有 data 数组，本次未拉到模型清单', LLM_CODE.DISCOVERY_FAILED)
+    }
+    return rows.flatMap((row): import('@meng/llm').DiscoveredModel[] => {
+      if (!row || typeof row !== 'object') return []
+      const item = row as Record<string, unknown>
+      if (typeof item.id !== 'string' || !item.id) return []
+      const known = KNOWN_MODELS[item.id]
+      const input = modalitiesOf(item.input_modalities)
+      const output = modalitiesOf(item.output_modalities)
+      const effort = item.effort && typeof item.effort === 'object'
+        ? item.effort as Record<string, unknown>
+        : undefined
+      const reasoningEfforts = effortsOf(effort?.supported_levels)
+      const defaultReasoningEffort = effortOf(effort?.default_level)
+      return [{
+        ...(known ?? {}),
+        id: item.id,
+        name: typeof item.name === 'string' ? item.name : known?.name ?? item.id,
+        ...(typeof item.context_window === 'number' ? { contextWindow: item.context_window } : {}),
+        ...(typeof item.max_output_tokens === 'number' ? { maxTokens: item.max_output_tokens } : {}),
+        ...(input === undefined ? {} : { input }),
+        ...(output === undefined ? {} : { output }),
+        ...(reasoningEfforts === undefined ? {} : { reasoning: reasoningEfforts.length > 0, reasoningEfforts }),
+        ...(defaultReasoningEffort === undefined ? {} : { defaultReasoningEffort }),
+      }]
+    })
+  }
+  const offDiscovery = llm.registerModelDiscovery(CONFIG_SCOPE, discover)
+  ctx.effect(() => scope.onChange(() => llm.invalidateModels()))
   const off = llm.register(provider)
   if (!process.env.MENG_QUIET) {
     const cfg = read()
@@ -238,6 +326,7 @@ export function apply(ctx: Ctx): Disposer {
     console.log(`[meng] provider ${ROUTE} · ${names} · ${cfg.baseURL}${think}${key}`)
   }
   return () => {
+    offDiscovery()
     off()
     dispose()
   }

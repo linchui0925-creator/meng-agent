@@ -50,6 +50,7 @@ import {
   type ExecStream,
 } from '@meng/exec'
 import { getJobs, type JobService } from '@meng/jobs'
+import type { SessionService } from '@meng/session'
 import type { ToolDef, ToolResult, ToolService } from '@meng/tools'
 
 export const name = 'meng-plugin-tool-bash'
@@ -113,6 +114,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
   const maxTimeoutMs = exec.maxTimeoutMs
   // jobs 可有可无: 没有它 bash 只是不能进后台, 前台照常能用
   const jobs = getJobs(ctx)
+  const session = ctx.get<SessionService>('session')
 
   function startBackground(service: JobService, executor: ExecService, command: string, spec: ExecSpec, sessionId: string | undefined): ToolResult {
     try {
@@ -159,10 +161,11 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
    * workdir 下都能跑。命令级风险由 policy-bash 的灾难命令表和审批层负责,
    * 这里只防"模型不小心把 cwd 设到工作区外"。
    */
-  function fenceWorkdir(input: unknown, outside: boolean): string {
+  function fenceWorkdir(input: unknown, outside: boolean, sessionId?: string): string {
     // **每次调用现读根**: 工作区在设置页里改了, 下一条命令就按新根跑。
     // 抓成常量的话, 改完工作区命令还在旧目录里跑, 而界面上只有"工作区已保存"
-    const root = sandboxRoot(ctx)
+    const workspace = sessionId ? session?.workspaceOf(sessionId) : undefined
+    const root = workspace ? resolve(workspace) : sandboxRoot(ctx)
     const raw = String(input ?? '')
     if (!raw) return root
     const abs = resolveRoot(raw, root)
@@ -232,7 +235,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
 
       let workdir: string
       try {
-        workdir = fenceWorkdir(args.workdir, call?.grants?.outside === true)
+        workdir = fenceWorkdir(args.workdir, call?.grants?.outside === true, call?.sessionId)
       } catch (err) {
         return fail(`bash 失败: ${errText(err)}`)
       }

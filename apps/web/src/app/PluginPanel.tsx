@@ -25,37 +25,7 @@ import { CopyButton } from './CopyButton.tsx'
 import { CloseIcon, RefreshIcon } from './icons.tsx'
 import styles from './App.module.css'
 
-/** 与 core/status.ts 的 PluginStatus 逐字对应。宽类型 + 运行期兜底, 不到前端崩 */
-export type PluginStatus =
-  | 'discovered'
-  | 'pending'
-  | 'disabled'
-  | 'loading'
-  | 'active'
-  | 'failed'
-  | 'disposed'
-
-export interface GraphNode {
-  id: string
-  name: string
-  status: PluginStatus
-  inject?: string[]
-  /** 有值 = 有前端面。面板只读不下载 —— 下载是 modules 的活 */
-  client?: { platforms?: string[]; immediately?: boolean; slots?: string[] }
-  /** pending 专属: 缺哪些依赖。这是这一行最有价值的信息 */
-  missing?: string[]
-  error?: string
-  since?: number
-}
-
-export interface PluginGraphState {
-  nodes: GraphNode[]
-  /** 拉取失败的原因。**必须与"零插件"区分开** —— 一个是没配, 一个是查询不出去 */
-  error?: string
-  /** 上次成功拉取的时间 */
-  at?: number
-  loading: boolean
-}
+import type { PluginGraphState, PluginStatus } from './layout.ts'
 
 const STATUS_TEXT: Record<PluginStatus, string> = {
   discovered: '已发现',

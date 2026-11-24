@@ -29,8 +29,10 @@
   color-scheme: light dark;
 
   /* 字体: 中文优先落到系统黑体, 等宽用于代码与工具输出 */
-  --meng-specific-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
-    'Hiragino Sans GB', 'Microsoft YaHei', 'Source Han Sans SC', sans-serif;
+  --meng-specific-font-sans: 'LXGW WenKai', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --meng-specific-font-display: 'LXGW WenKai', 'PingFang SC', 'Hiragino Sans GB',
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --meng-specific-font-mono: 'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, Consolas,
     'Liberation Mono', monospace;
 
@@ -38,12 +40,14 @@
   --meng-specific-text-xs: 11px;
   --meng-specific-text-sm: 12px;
   --meng-specific-text-md: 13px;
-  --meng-specific-text-base: 15px;
+  --meng-specific-text-base: 16px;
+  --meng-specific-text-reading: 15px;
   --meng-specific-text-lg: 17px;
   --meng-specific-text-xl: 21px;
 
   --meng-specific-leading-tight: 1.3;
-  --meng-specific-leading-normal: 1.65;
+  --meng-specific-leading-reading: 1.65;
+  --meng-specific-leading-normal: 1.78;
 
   --meng-specific-weight-normal: 400;
   --meng-specific-weight-medium: 500;
@@ -74,7 +78,7 @@
   --meng-specific-row-h: 30px;
 
   /* 布局 */
-  --meng-specific-sidebar-w: 248px;
+  --meng-specific-sidebar-w: 264px;
   --meng-specific-content-max: 744px;
   --meng-specific-composer-max: 744px;
   /* 状态面板宽。比侧栏窄一点: 它装的是等宽的 id 与状态词, 不需要 248。
@@ -162,20 +166,47 @@ html[data-density='compact'] {
  */
 :root,
 [data-theme='light'] {
-  /* 表面层级: canvas 最底, inset 用于代码块与工具输出 */
-  --meng-alias-bg-canvas: #f6f6f7;
+  /* 表面层级: canvas 最底, inset 用于代码块与工具输出。
+   *
+   * canvas 比白面板**深一档** (#eceef3): 早先两边都是接近白的 (#f6f6f7 vs #fff),
+   * 结果是「白底白框」—— 面板既没有边也没有影子, 就糊在背景里, 怎么调间距都像
+   * 蒙了一层雾。深一档之后, 白色面板自己就立起来了, 不用再靠阴影硬撑。 */
+  --meng-alias-bg-canvas: #eceef3;
   --meng-alias-bg-surface: #ffffff;
   --meng-alias-bg-raised: #ffffff;
   --meng-alias-bg-overlay: #ffffff;
-  --meng-alias-bg-inset: #f1f2f4;
-  --meng-alias-bg-hover: #eeeef1;
-  --meng-alias-bg-active: #e6e7ea;
-  --meng-alias-bg-selected: #e8effc;
+  --meng-alias-bg-inset: #f3f4f8;
+  --meng-alias-bg-hover: #e8eaf0;
+  --meng-alias-bg-active: #dfe2ea;
+  --meng-alias-bg-selected: #e6eefc;
+  /* 磨砂表面与柔光只负责层级，正文仍使用高对比度文字令牌。
+   *
+   * 玻璃不透明度从 62% 提到 78%: 62% 的白叠在近白画布上, 磨砂等于没磨,
+   * 底下的东西一透出来就脏。
+   *
+   * border-glass 换成**深色发丝线**: 原来它是一条白边 (rgb(255 255 255 / 76%)),
+   * 而面板底色也是白 —— 白边画在白底上等于没画, 面板就永远缺一条边,
+   * 看着"跟背景不搭"。深色发丝线才给得出边界。 */
+  --meng-alias-bg-glass: rgb(255 255 255 / 78%);
+  --meng-alias-bg-glass-strong: rgb(255 255 255 / 92%);
+  --meng-alias-border-glass: rgb(17 18 20 / 10%);
+  /* 环境光: 左上一束冷光, 右上一点紫, 右下一块暖。
+   * 暖的那块是刻意的 —— 全冷色会回到「AI 蓝」那种味道, 有一块暖光画面才像房间。 */
+  --meng-alias-ambient-a: rgb(112 146 255 / 20%);
+  --meng-alias-ambient-b: rgb(168 132 232 / 17%);
+  --meng-alias-ambient-c: rgb(255 206 160 / 15%);
+  /*
+    遮罩。卡片/对话框后面那一层压暗。
+    **它必须和 bg-overlay 分开**: 后者是"浮起来的那个面"（不透明），
+    这是"浮起来之前先把底下压下去"（半透明）。用一个不透明的面当遮罩,
+    底下那层就整片消失了 —— 用户会以为页面被替换了, 而不是"上面开了一层"。
+  */
+  --meng-alias-scrim: rgb(17 18 20 / 32%);
 
   /* 文字 */
   --meng-alias-fg-primary: #17181a;
   --meng-alias-fg-secondary: #54575d;
-  --meng-alias-fg-muted: #6b6f76;
+  --meng-alias-fg-muted: #656970;
   --meng-alias-fg-disabled: #a3a7ae;
   --meng-alias-fg-on-accent: #ffffff;
   --meng-alias-fg-code: #2b2d31;
@@ -249,6 +280,14 @@ html[data-density='compact'] {
   --meng-alias-bg-hover: #212328;
   --meng-alias-bg-active: #2a2d33;
   --meng-alias-bg-selected: #1e2a44;
+  --meng-alias-bg-glass: rgb(23 25 31 / 68%);
+  --meng-alias-bg-glass-strong: rgb(28 30 37 / 88%);
+  --meng-alias-border-glass: rgb(255 255 255 / 9%);
+  --meng-alias-ambient-a: rgb(70 96 180 / 26%);
+  --meng-alias-ambient-b: rgb(116 72 148 / 20%);
+  --meng-alias-ambient-c: rgb(122 86 46 / 20%);
+  /* 深色底上压暗要靠更重的不透明度: 32% 的黑压在 #0f1012 上几乎看不出来 */
+  --meng-alias-scrim: rgb(0 0 0 / 58%);
 
   /* 不是把浅色反过来的 #eee: 纯反色会让文字发灰、accent 发脏 */
   --meng-alias-fg-primary: #eceef1;

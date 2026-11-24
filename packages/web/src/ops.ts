@@ -6,19 +6,58 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { existsSync, statSync } from 'node:fs'
-import { basename } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import type { Ctx, Disposer } from '@meng/core'
-import type { ConfigService, ConfigWriteResult } from '@meng/config'
+import { getCredentials, sandboxRoot, type ConfigService, type ConfigWriteResult, type CredentialService } from '@meng/config'
 import type { RecordStore } from '@meng/records'
-import { normalizePath, type WorkspaceStore } from '@meng/workspaces'
-import type { SessionService } from '@meng/session'
-import { LlmError, type LLMService } from '@meng/llm'
+import { normalizePath, readGitStatus, type WorkspaceStore } from '@meng/workspaces'
+import type { SessionAttachment, SessionEvent, SessionService } from '@meng/session'
+import { LlmError, type LLMService, type ReasoningEffort } from '@meng/llm'
 import { PROTOCOLS } from '@meng/pi'
 import type { ToolService } from '@meng/tools'
-import type { LoopService } from '@meng/loop'
+import type { LoopService, MemoryService, RunInterruption } from '@meng/loop'
+import { getJobs, JOBS_CODE, JobError } from '@meng/jobs'
+import { FsError, type FsService } from '@meng/fs'
 import { HttpError, type OpHandler, type WebService } from './index.ts'
 import { catalogOf } from './catalog.ts'
+
+const execFileAsync = promisify(execFile)
+const REASONING_EFFORTS = new Set<ReasoningEffort>(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+
+/** 粗估输入 token：中文按 1 字 1 token，其他字符按 4 字符 1 token。 */
+function estimateTextTokens(text: string): number {
+  let cjk = 0
+  for (const ch of text) {
+    if (/[\u3400-\u9fff]/.test(ch)) cjk++
+  }
+  return Math.ceil(cjk + Math.max(0, text.length - cjk) / 4)
+}
+
+/** 切换模型的参考稿只保留用户/助手最终文字，不带工具日志。 */
+function modelReferenceUntil(events: readonly SessionEvent[], throughSeq: number): string {
+  const parts: string[] = []
+  for (const event of events) {
+    if (event.seq > throughSeq) break
+    if (event.type === 'turn/started') {
+      const text = String((event.data as { text?: unknown }).text ?? '').trim()
+      if (text) parts.push(`[用户]\n${text}`)
+    } else if (event.type === 'llm/completed') {
+      const text = String((event.data as { text?: unknown }).text ?? '').trim()
+      if (text) parts.push(`[助手]\n${text}`)
+    }
+  }
+  return parts.join('\n\n')
+}
+
+function latestModelSwitch(events: readonly SessionEvent[]): SessionEvent | undefined {
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i]?.type === 'model/switched') return events[i]
+  }
+  return undefined
+}
 
 interface RunRegistry {
   runs: Map<string, AbortController>
@@ -35,15 +74,23 @@ export function registerBuiltinOps(
   const session = () => need<SessionService>(ctx, 'session')
   const llm = () => need<LLMService>(ctx, 'llm')
   const tools = () => need<ToolService>(ctx, 'tools')
+  const jobs = () => {
+    const service = getJobs(ctx)
+    if (!service) throw new HttpError('no-capability', '后台任务能力未装载', 503)
+    return service
+  }
   const loop = () => need<LoopService>(ctx, 'loop')
+  const memory = () => need<MemoryService>(ctx, 'memory')
   const config = () => ctx.get<ConfigService>('config')
+  const credentials = () => ctx.get<CredentialService>('credentials')
+  const runSessions = new Map<string, string>()
 
   // ── 内核 ──────────────────────────────────────────────
   // 与 ws hello 帧同一份 manifest, 给"用不了长连接"的环境 (HTTP 轮询) 兜底
   op('kernel.hello', () => web.manifest())
 
   op('kernel.status', () => ({
-    capabilities: ['llm', 'session', 'tools', 'prompt', 'loop', 'questions', 'web'].filter((n) => ctx.get(n)),
+    capabilities: ['llm', 'session', 'tools', 'prompt', 'loop', 'memory', 'questions', 'web'].filter((n) => ctx.get(n)),
     ops: web.ops(),
     connections: web.connections,
     uptimeMs: Math.round(process.uptime() * 1000),
@@ -101,6 +148,30 @@ export function registerBuiltinOps(
   })
 
   /**
+   * 打开这台电脑自带的文件夹选择窗口。浏览器只拿到最终绝对路径，
+   * 不需要网页目录树，也不需要用户手填路径。取消选择是正常结果，不是错误。
+   */
+  op('workspace.pick', async () => {
+    if (process.platform !== 'darwin') {
+      throw new HttpError('no-capability', '当前系统还没有接入系统文件夹选择窗口', 503)
+    }
+    try {
+      const { stdout } = await execFileAsync(
+        '/usr/bin/osascript',
+        ['-e', 'POSIX path of (choose folder with prompt "选择要作为工作区的文件夹")'],
+        { windowsHide: true, maxBuffer: 64 * 1024 },
+      )
+      const path = normalizePath(stdout.trim())
+      if (!statSync(path).isDirectory()) throw new Error('选择的不是文件夹')
+      return { path }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      if (message.includes('-128')) return { cancelled: true }
+      throw new HttpError('bad-request', `系统文件夹选择失败: ${message}`)
+    }
+  })
+
+  /**
    * 新建工作区 = **建目录 + 记住它**。浏览器建不了目录，所以这一步必须在后端。
    */
   op('workspace.create', (payload) => {
@@ -117,44 +188,301 @@ export function registerBuiltinOps(
     }
   })
 
+  /**
+   * 本机目录浏览。只读目录项，不读文件内容，也不上传或复制任何东西。
+   * 与模型工具共用 fs 能力面和路径围栏；这是用户选目录的入口，不是越权后门。
+   */
+  op('fs.list', async (payload) => {
+    const raw = String(payload.path ?? '').trim()
+    if (!raw) throw new HttpError('bad-request', '缺 path')
+    const fs = need<FsService>(ctx, 'fs')
+    const path = normalizePath(raw)
+    try {
+      const info = await fs.stat(path)
+      if (!info.exists) throw new HttpError('bad-request', `目录不存在: ${path}`)
+      if (!info.isDir) throw new HttpError('bad-request', `不是目录: ${path}`)
+      const entries = (await fs.listDir(path))
+        .map(({ name, dir }) => ({ name, dir }))
+        .sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name))
+      const parent = dirname(path)
+      return { path, ...(parent === path ? {} : { parent }), entries }
+    } catch (err) {
+      if (err instanceof HttpError) throw err
+      if (err instanceof FsError && err.code === 'FS_OUT_OF_ROOT') {
+        throw new HttpError('forbidden', err.message, 403)
+      }
+      throw new HttpError('bad-request', `目录读取失败: ${(err as Error).message}`)
+    }
+  })
+
+  op('git.status', async (payload) => {
+    const raw = typeof payload.path === 'string' && payload.path.trim() ? payload.path : sandboxRoot(ctx)
+    return readGitStatus(normalizePath(raw))
+  })
+
   op('session.read', (payload) => {
     const sessionId = String(payload.sessionId ?? '')
     if (!sessionId) throw new HttpError('bad-request', '缺 sessionId')
+
+    // 老调用仍拿数组，前端与导出不用改；显式传 before/limit 才启用分页信封。
+    if (payload.before !== undefined || payload.limit !== undefined) {
+      const before = payload.before === undefined ? undefined : Number(payload.before)
+      const limit = payload.limit === undefined ? undefined : Number(payload.limit)
+      if (before !== undefined && !Number.isSafeInteger(before)) {
+        throw new HttpError('bad-request', 'before 必须是整数事件序号')
+      }
+      if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1)) {
+        throw new HttpError('bad-request', 'limit 必须是正整数')
+      }
+      return session().readPage(sessionId, { ...(before === undefined ? {} : { before }), ...(limit === undefined ? {} : { limit }) })
+    }
+
     const since = Number(payload.since ?? 0)
     const events = session().read(sessionId)
     return since > 0 ? events.filter((e) => e.seq > since) : events
+  })
+
+  op('session.rename', (payload) => {
+    const sessionId = String(payload.sessionId ?? '')
+    const title = String(payload.title ?? '').trim()
+    if (!sessionId) throw new HttpError('bad-request', '缺 sessionId')
+    if (!title) throw new HttpError('bad-request', '会话标题不能为空')
+    if (title.length > 200) throw new HttpError('bad-request', '会话标题不能超过 200 字')
+    try {
+      return { ok: true as const, session: session().rename(sessionId, title) }
+    } catch (err) {
+      throw new HttpError('not-found', (err as Error).message, 404)
+    }
+  })
+
+  op('session.setPermission', (payload) => {
+    const sessionId = String(payload.sessionId ?? '')
+    if (!sessionId) throw new HttpError('bad-request', '缺 sessionId')
+    const raw = payload.mode ?? 'inherit'
+    if (raw !== 'inherit' && raw !== 'ask' && raw !== 'auto' && raw !== 'full') {
+      throw new HttpError('bad-request', 'mode 必须是 inherit / ask / auto / full')
+    }
+    try {
+      return {
+        ok: true as const,
+        session: session().setPermission(sessionId, raw === 'inherit' ? undefined : raw),
+      }
+    } catch (err) {
+      throw new HttpError('not-found', (err as Error).message, 404)
+    }
+  })
+
+  op('session.delete', (payload) => {
+    const sessionId = String(payload.sessionId ?? '')
+    if (!sessionId) throw new HttpError('bad-request', '缺 sessionId')
+    let result
+    try {
+      result = session().delete(sessionId)
+    } catch (err) {
+      throw new HttpError('not-found', (err as Error).message, 404)
+    }
+    // 先删库再取消，同一同步调用里不会插入新事件；普通 append 也无法复活已删会话。
+    for (const [runId, owner] of runSessions) {
+      if (owner !== sessionId) continue
+      registry.runs.get(runId)?.abort()
+      registry.runs.delete(runId)
+      runSessions.delete(runId)
+    }
+    return result
+  })
+
+  op('attachment.put', (payload) => {
+    const sessionId = String(payload.sessionId ?? '')
+    if (!sessionId) throw new HttpError('bad-request', '缺 sessionId')
+    try {
+      const saved = session().putAttachment({
+        sessionId,
+        name: String(payload.name ?? ''),
+        mime: String(payload.mime ?? ''),
+        dataBase64: String(payload.dataBase64 ?? ''),
+      })
+      return { id: saved.id }
+    } catch (err) {
+      const message = (err as Error).message
+      const missing = /^会话 .* 不存在$/.test(message)
+      throw new HttpError(missing ? 'not-found' : 'bad-request', message, missing ? 404 : 400)
+    }
   })
 
   /**
    * 不等待结果 —— 一轮 agent 可能跑几十秒、调十几个工具。
    * 返回 runId 后所有进展走 WS, 前端靠 runId 分组。
    */
+  /**
+   * 会话历史里的图片内容。事件流只存附件元数据；刷新后要画真缩略图时按 id
+   * 回到这里读。session 存储会再次校验附件属于当前会话。
+   */
+  op('attachment.read', (payload) => {
+    const sessionId = String(payload.sessionId ?? '')
+    const attachmentId = String(payload.attachmentId ?? '')
+    if (!sessionId || !attachmentId) throw new HttpError('bad-request', '缺 sessionId 或 attachmentId')
+    try {
+      const found = session().readAttachments(sessionId, [attachmentId])[0]
+      if (!found) throw new HttpError('not-found', `附件不存在: ${attachmentId}`, 404)
+      return found
+    } catch (err) {
+      if (err instanceof HttpError) throw err
+      throw new HttpError('not-found', (err as Error).message, 404)
+    }
+  })
+
+  /**
+   * 切模型 = 建立新的逻辑上下文，不新增侧栏会话。
+   * 旧对话只在后续请求里作为参考文字再次发送，因此会额外消耗 input tokens。
+   */
+  op('session.switchModel', (payload) => {
+    const sessionId = String(payload.sessionId ?? '')
+    if (!sessionId) throw new HttpError('bad-request', '缺 sessionId')
+    const from = payload.from === undefined ? undefined : String(payload.from)
+    const to = String(payload.to ?? '').trim()
+    if (!to) throw new HttpError('bad-request', '缺 to 模型')
+    const events = session().read(sessionId)
+    if (events.length === 0) throw new HttpError('not-found', `会话不存在: ${sessionId}`, 404)
+    const referenceThroughSeq = events.at(-1)?.seq ?? 0
+    const reference = modelReferenceUntil(events, referenceThroughSeq)
+    const event = session().append(sessionId, 'model/switched', {
+      ...(from === undefined ? {} : { from }),
+      to,
+      referenceThroughSeq,
+      estimatedInputTokens: estimateTextTokens(reference),
+      at: Date.now(),
+    })
+    return { ok: true, sessionId, seq: event.seq }
+  })
+
   op('session.send', (payload) => {
     const sessionId = String(payload.sessionId ?? '')
     const text = String(payload.text ?? '')
     if (!sessionId) throw new HttpError('bad-request', '缺 sessionId')
-    if (!text) throw new HttpError('bad-request', '缺 text')
+    const rawAttachments = payload.attachments
+    if (rawAttachments !== undefined && !Array.isArray(rawAttachments)) {
+      throw new HttpError('bad-request', 'attachments 必须是附件 id 数组')
+    }
+    const attachmentIds = (rawAttachments ?? []) as unknown[]
+    if (attachmentIds.some((id) => typeof id !== 'string' || !id)) {
+      throw new HttpError('bad-request', 'attachments 必须只含非空附件 id')
+    }
+    if (!text && attachmentIds.length === 0) throw new HttpError('bad-request', '缺 text 或 attachments')
+
+    const rawReasoningEffort = payload.reasoningEffort
+    if (rawReasoningEffort !== undefined
+      && (typeof rawReasoningEffort !== 'string' || !REASONING_EFFORTS.has(rawReasoningEffort as ReasoningEffort))) {
+      throw new HttpError('bad-request', 'reasoningEffort 必须是 minimal / low / medium / high / xhigh / max')
+    }
+    const reasoningEffort = rawReasoningEffort as ReasoningEffort | undefined
+
+    let interruption: RunInterruption | undefined
+    if (payload.interruption !== undefined) {
+      const raw = payload.interruption
+      if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+        throw new HttpError('bad-request', 'interruption 必须是对象')
+      }
+      const record = raw as Record<string, unknown>
+      if (record.mode !== 'insert') {
+        throw new HttpError('bad-request', 'interruption.mode 必须是 insert')
+      }
+      if (record.sourceRunId !== undefined && (typeof record.sourceRunId !== 'string' || !record.sourceRunId)) {
+        throw new HttpError('bad-request', 'interruption.sourceRunId 必须是非空字符串')
+      }
+      interruption = {
+        mode: 'insert',
+        ...(typeof record.sourceRunId === 'string' ? { sourceRunId: record.sourceRunId } : {}),
+      }
+    }
+
+    let attachments: SessionAttachment[] = []
+    try {
+      attachments = session().readAttachments(sessionId, attachmentIds as string[]).map((attachment) => {
+        const { dataBase64: _dataBase64, ...metadata } = attachment
+        return metadata
+      })
+    } catch (err) {
+      throw new HttpError('bad-request', (err as Error).message)
+    }
 
     const runId = randomUUID().slice(0, 8)
     const ctrl = new AbortController()
     registry.runs.set(runId, ctrl)
+    runSessions.set(runId, sessionId)
 
     const model = payload.model ? String(payload.model) : undefined
+    const events = session().read(sessionId)
+    const switchEvent = latestModelSwitch(events)
+    const switchData = switchEvent?.data as {
+      referenceThroughSeq?: unknown
+      estimatedInputTokens?: unknown
+    } | undefined
+    const referenceThroughSeq = typeof switchData?.referenceThroughSeq === 'number'
+      ? switchData.referenceThroughSeq
+      : undefined
+    const contextReset = switchEvent !== undefined && referenceThroughSeq !== undefined
+      ? {
+          afterSeq: switchEvent.seq,
+          reference: modelReferenceUntil(events, referenceThroughSeq),
+          ...(typeof switchData?.estimatedInputTokens === 'number'
+            ? { estimatedInputTokens: switchData.estimatedInputTokens }
+            : {}),
+        }
+      : undefined
 
     void (async () => {
+      let doneReason: 'stop' | 'max-turns' | 'error' | 'aborted' | undefined
+      let runError: string | undefined
+      let runCode: string | undefined
       try {
-        for await (const ev of loop().run({ sessionId, text, model, runId, signal: ctrl.signal })) {
+        for await (const ev of loop().run({
+          sessionId,
+          text,
+          attachments,
+          model,
+          reasoningEffort,
+          runId,
+          signal: ctrl.signal,
+          ...(contextReset === undefined ? {} : { contextReset }),
+          ...(interruption === undefined ? {} : { interruption }),
+        })) {
           if (ev.type === 'text') {
             // chunk 不落库: 一轮几千个, 落进去事件流会爆炸。
             // 代价是断线重放没有 chunk, 前端用 llm/completed 的整段补齐
             web.broadcast('llm/chunk', { delta: ev.text, runId }, { sessionId, runId })
           }
+          if (ev.type === 'done') {
+            doneReason = ev.reason
+            if (ev.error !== undefined) runError = ev.error
+          }
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
+        runError = message
+        runCode = err instanceof Error && 'code' in err ? String(err.code) : 'INTERNAL'
         web.broadcast('error', { code: 'internal', message, runId }, { sessionId, runId })
       } finally {
+        // 插件实现可能漏写终态，或者工具异常直接把生成器打断。前端队列靠
+        // turn/ended 才能继续发送，所以内核必须兜底：每个 run 有且只有一个终态。
+        try {
+          const ended = session().read(sessionId).some((event) => {
+            if (event.type !== 'turn/ended') return false
+            return (event.data as { runId?: unknown } | undefined)?.runId === runId
+          })
+          if (!ended) {
+            const reason = ctrl.signal.aborted ? 'aborted' : (doneReason ?? 'error')
+            session().append(sessionId, 'turn/ended', {
+              runId,
+              reason,
+              ...(runError === undefined ? {} : { error: runError }),
+              ...(runCode === undefined ? {} : { code: runCode }),
+            })
+          }
+        } catch {
+          // 会话被删除是合法竞态；这时没有可写的终态。
+        }
         registry.runs.delete(runId)
+        runSessions.delete(runId)
       }
     })()
 
@@ -172,7 +500,10 @@ export function registerBuiltinOps(
   // ── 模型 / 工具 ───────────────────────────────────────
   // 只给**能用**的模型: 这个 op 喂的是"选模型", 列出没配 key 的那家的模型
   // 等于给用户一个点了就报错的选项
-  op('llm.models', () => llm().models())
+  op('llm.models', async () => {
+    await llm().refreshModels({ force: true })
+    return llm().models()
+  })
 
   /**
    * 供应商目录 —— 设置页「模型」分区的唯一数据源。
@@ -181,9 +512,32 @@ export function registerBuiltinOps(
    * 为什么现在不能用 (missing)。所以前端不需要自己拼 llm 和 config 两份数据,
    * 也不需要认识任何 provider 插件。
    */
-  op('llm.catalog', () =>
-    catalogOf(llm().listProviders(), config()?.list() ?? [], llm().listConfigurableProviders()),
-  )
+  op('llm.catalog', async () => {
+    await llm().refreshModels({ force: true })
+    return catalogOf(llm().listProviders(), config()?.list() ?? [], llm().listConfigurableProviders())
+  })
+
+  // ── 上下文与记忆 ───────────────────────────────────────
+  op('context.status', async (payload) => {
+    const sessionId = String(payload.sessionId ?? '').trim()
+    if (!sessionId) throw new HttpError('bad-request', '缺 sessionId')
+    const model = typeof payload.model === 'string' && payload.model ? payload.model : undefined
+    return memory().status({ sessionId, ...(model ? { model } : {}) })
+  })
+
+  op('context.compact', async (payload) => {
+    const sessionId = String(payload.sessionId ?? '').trim()
+    if (!sessionId) throw new HttpError('bad-request', '缺 sessionId')
+    const model = typeof payload.model === 'string' && payload.model ? payload.model : undefined
+    const result = await memory().compactNow({ sessionId, ...(model ? { model } : {}) })
+    return {
+      compacted: result.compacted,
+      ...(result.beforeTokens === undefined ? {} : { beforeTokens: result.beforeTokens }),
+      ...(result.afterTokens === undefined ? {} : { afterTokens: result.afterTokens }),
+      ...(result.summarySeq === undefined ? {} : { summarySeq: result.summarySeq }),
+      ...(result.reason === undefined ? {} : { reason: result.reason }),
+    }
+  })
 
   /**
    * 可选的 wire 协议（9 种）。
@@ -225,6 +579,59 @@ export function registerBuiltinOps(
       if (err instanceof LlmError) throw new HttpError(err.failure.code.toLowerCase(), err.message, 400)
       throw err
     }
+  })
+
+  // ── 后台任务网页控制面 ─────────────────────────────────
+  // 工具侧给模型用；这几条给界面用。围栏仍由 jobs 的 ownerSession 决定。
+  op('job.list', (payload) => {
+    const sessionId = String(payload.sessionId ?? '')
+    if (!sessionId) throw new HttpError('bad-request', '缺 sessionId')
+    return jobs().list({ sessionId })
+  })
+
+  op('job.output', (payload) => {
+    const sessionId = String(payload.sessionId ?? '')
+    const jobId = String(payload.jobId ?? '')
+    if (!sessionId || !jobId) throw new HttpError('bad-request', '缺 sessionId 或 jobId')
+    try {
+      return jobs().read(jobId, { sessionId })
+    } catch (err) {
+      throw jobHttpError(err)
+    }
+  })
+
+  op('job.kill', (payload) => {
+    const sessionId = String(payload.sessionId ?? '')
+    const jobId = String(payload.jobId ?? '')
+    if (!sessionId || !jobId) throw new HttpError('bad-request', '缺 sessionId 或 jobId')
+    try {
+      const outcome = jobs().kill(jobId, { sessionId }, String(payload.reason ?? '用户从界面停止'))
+      return { ok: true, outcome, job: jobs().get(jobId, { sessionId }) }
+    } catch (err) {
+      throw jobHttpError(err)
+    }
+  })
+
+  op('job.startCommand', async (payload) => {
+    const sessionId = String(payload.sessionId ?? '')
+    const command = String(payload.command ?? '').trim()
+    if (!sessionId) throw new HttpError('bad-request', '缺 sessionId')
+    if (!command) throw new HttpError('bad-request', '缺命令')
+    if (session().read(sessionId).length === 0) throw new HttpError('not-found', `会话不存在: ${sessionId}`, 404)
+    const rawDescription = String(payload.description ?? '').trim() || command.slice(0, 80)
+    // tool-bash 用“至少两个空格分隔词”校验意图；中文短描述本身没有空格，
+    // 补一段不可见意图后缀，任务标签仍然只显示命令原文。
+    const description = rawDescription.split(/\s+/).filter(Boolean).length >= 2
+      ? rawDescription
+      : `${rawDescription} background task`
+    const result = await tools().call({
+      id: `web-job-${randomUUID().slice(0, 8)}`,
+      name: 'bash',
+      args: { command, description, run_in_background: true },
+      sessionId,
+    })
+    if (!result.ok) throw new HttpError('bad-request', result.error ?? result.text)
+    return { ok: true, text: result.text }
   })
 
   op('tools.list', () => tools().list())
@@ -298,6 +705,33 @@ export function registerBuiltinOps(
     return shape(await svc.unset(entry.scope, entry.name))
   })
 
+  // ── 本机 API Key ─────────────────────────────────────
+  // 只收发“引用名 + 是否存在”，永远不把已保存的明文回传给浏览器。
+  op('credential.status', (payload) => {
+    const svc = needCredentials(ctx)
+    const ref = typeof payload.ref === 'string' ? payload.ref.trim() : ''
+    if (!ref) return { refs: svc.list() }
+    return { ref, present: svc.has(ref) }
+  })
+
+  op('credential.set', async (payload) => {
+    const svc = needCredentials(ctx)
+    const ref = String(payload.ref ?? '').trim()
+    const value = String(payload.value ?? '')
+    if (!ref) throw new HttpError('bad-request', '缺 ref')
+    if (!value.trim()) throw new HttpError('bad-request', 'API Key 不能为空')
+    await svc.set(ref, value)
+    return { ref, present: true }
+  })
+
+  op('credential.unset', async (payload) => {
+    const svc = needCredentials(ctx)
+    const ref = String(payload.ref ?? '').trim()
+    if (!ref) throw new HttpError('bad-request', '缺 ref')
+    await svc.unset(ref)
+    return { ref, present: false }
+  })
+
   // ── 插件状态图 ────────────────────────────────────────
   op('plugin.graph', () => {
     const graph = ctx.get<{ toJSON(): unknown }>('graph')
@@ -310,6 +744,15 @@ export function registerBuiltinOps(
   }
 }
 
+function jobHttpError(err: unknown): HttpError {
+  if (err instanceof HttpError) return err
+  if (err instanceof JobError) {
+    const status = err.code === JOBS_CODE.UNKNOWN ? 404 : err.code === JOBS_CODE.FORBIDDEN ? 403 : err.code === JOBS_CODE.LIMIT ? 409 : 400
+    return new HttpError(status === 404 ? 'not-found' : status === 403 ? 'forbidden' : status === 409 ? 'conflict' : 'bad-request', err.message, status)
+  }
+  return new HttpError('bad-request', err instanceof Error ? err.message : String(err))
+}
+
 function need<T>(ctx: Ctx, name: string): T {
   const service = ctx.get<T>(name)
   if (!service) throw new HttpError('no-capability', `能力面 ${name} 未装载`, 503)
@@ -320,6 +763,12 @@ function need<T>(ctx: Ctx, name: string): T {
 function needConfig(ctx: Ctx): ConfigService {
   const service = ctx.get<ConfigService>('config')
   if (!service) throw new HttpError('no-capability', '配置层未装载 (缺 plugins/config-local)', 503)
+  return service
+}
+
+function needCredentials(ctx: Ctx): CredentialService {
+  const service = getCredentials(ctx)
+  if (!service) throw new HttpError('no-capability', '本机凭据库未装载 (缺 plugins/config-local)', 503)
   return service
 }
 

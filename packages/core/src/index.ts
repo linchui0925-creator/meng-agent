@@ -45,3 +45,15 @@ export {
 } from './invariant.ts'
 
 export { MengError, errorFacts } from './error.ts'
+
+export {
+  ADAPTER_KINDS,
+  ADAPTER_RUNTIME_MODES,
+  type AdapterCapabilityReport,
+  type AdapterHealth,
+  type AdapterHostContext,
+  type AdapterKind,
+  type AdapterRuntimeMode,
+  type ProjectAdapter,
+  type ProjectSource,
+} from './adapter.ts'

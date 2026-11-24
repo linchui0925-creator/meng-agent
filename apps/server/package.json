@@ -10,6 +10,8 @@
     "@meng/provider-openai": "workspace:*",
     "@meng/tools": "workspace:*",
     "@meng/web": "workspace:*",
-    "@meng/config": "workspace:*"
+    "@meng/plugin-schedules-local": "workspace:*",
+    "@meng/config": "workspace:*",
+    "@meng/kernel": "workspace:*"
   }
 }

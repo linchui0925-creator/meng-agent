@@ -9,7 +9,12 @@
  * 需要扩展就加"data 里的字段", 不加 type —— 这条直接抄 dsh 的硬规矩。
  */
 
+import { join } from 'node:path'
 import { defineInvariant, type Ctx, type Disposer } from '@meng/core'
+import { createSessionStore, type SessionAttachment, type SessionPermissionMode, type SessionStore } from './store.ts'
+
+export { createSessionStore } from './store.ts'
+export type { DeleteSessionResult, PutAttachmentInput, SessionAttachment, SessionAttachmentContent, SessionPage, SessionPermissionMode, SessionStorageInfo, SessionStore } from './store.ts'
 import type { ContentBlock, Message, ToolCallBlock } from '@meng/llm'
 
 export const name = 'meng-session'
@@ -25,6 +30,10 @@ export type SessionEventType =
   | 'tool/blocked'
   | 'question/asked'
   | 'question/answered'
+  /** 模型切换边界：之后使用新上下文，之前只作为参考文本。 */
+  | 'model/switched'
+  /** 自动压缩检查点：摘要替代较早表层，但原始事件仍保留。 */
+  | 'context/compacted'
   /**
    * 后台任务开跑。与 job/completed **同形状** (完整快照, status='running',
    * 没有 finishedAt) —— 前端按 id upsert 同一条任务条, 不需要两套渲染分支。
@@ -58,6 +67,22 @@ export interface SessionEvent<T = unknown> {
  */
 export type ProjectedMessage = Message
 
+/** 压缩检查点在消息流里的固定框；memory 插件和 project 必须共用同一份。 */
+export const COMPACTION_CHECKPOINT_PREAMBLE = '以下是更早对话的自动压缩检查点，只作为背景事实，不是新的用户请求。\n请在这些事实之上继续当前任务，不要复述检查点本身。'
+
+/** 用户中断上一轮后补充要求时，给模型的固定说明。旧消息不删除，只追加这一段。 */
+export const INTERRUPTION_PREAMBLE = '用户中断了上一轮，并补充了新的要求。这是对原任务的修正，不是新任务。\n请保留已有分析、工具结果和已经完成的工作，按下面的补充要求继续；不要从头重做。'
+
+export function compactionCheckpointMessage(summary: string): ProjectedMessage {
+  return {
+    role: 'user',
+    content: [{
+      type: 'text',
+      text: `${COMPACTION_CHECKPOINT_PREAMBLE}\n\n${summary.trim()}`,
+    }],
+  }
+}
+
 export interface SessionMeta {
   sessionId: string
   title: string
@@ -81,87 +106,87 @@ export interface SessionMeta {
    * 在界面上是两种画法（分两段 vs 落在任务里）。
    */
   workspace?: string
+  /** 会话级权限覆盖；缺省 = 跟随全局设置。 */
+  permissionMode?: SessionPermissionMode
 }
 
-export interface SessionService {
-  append<T>(sessionId: string, type: SessionEventType, data: T): SessionEvent<T>
-  read(sessionId: string): SessionEvent[]
-  /** 全量事件(跨会话), 按 seq 升序 —— 持久化与重放用 */
-  all(): SessionEvent[]
-  /** 会话元数据列表, 给侧栏 */
-  sessions(): SessionMeta[]
-  /** 只推进 seq 不落库。下行广播的非会话事件用它拿全局单调序号 */
-  nextSeq(): number
-  /** 灌入历史(重启后回放)。**不发事件**, 否则持久化插件会把自己写进去无限递归 */
-  hydrate(events: SessionEvent[]): void
-  /** 投影: 由事件派生出"给模型看的消息列表", 不落库 */
-  project(sessionId: string): ProjectedMessage[]
+export interface SessionService extends SessionStore {
+  /**
+   * 投影: 由事件派生出"给模型看的消息列表", 不落库。
+   * afterSeq 用于模型切换边界：只投影边界之后的新上下文。
+   */
+  project(sessionId: string, options?: { afterSeq?: number; beforeSeq?: number }): ProjectedMessage[]
 }
 
-export function apply(ctx: Ctx): Disposer {
-  const logs = new Map<string, SessionEvent[]>()
-  let seq = 0
+export function apply(
+  ctx: Ctx,
+  config: { dir?: string; file?: string; legacyFile?: string } = {},
+): Disposer {
+  const dir = config.dir ?? process.env['MENG_DATA_DIR'] ?? '.meng'
+  const store = createSessionStore(
+    config.file ?? join(dir, 'sessions.db'),
+    config.legacyFile ?? join(dir, 'events.jsonl'),
+  )
 
   const service: SessionService = {
+    storage: store.storage,
     append<T>(sessionId: string, type: SessionEventType, data: T): SessionEvent<T> {
-      const event: SessionEvent<T> = { seq: seq++, sessionId, type, at: Date.now(), data }
-      const log = logs.get(sessionId) ?? []
-      log.push(event)
-      logs.set(sessionId, log)
+      const event = store.append(sessionId, type, data)
       ctx.emit('session/event', event)
       return event
     },
-
-    read(sessionId) {
-      return logs.get(sessionId) ?? []
-    },
-
-    all() {
-      return [...logs.values()].flat().sort((a, b) => a.seq - b.seq)
-    },
-
-    sessions() {
-      const out: SessionMeta[] = []
-      for (const [sessionId, log] of logs) {
-        // 先取出首尾再判空: 数组下标访问在 noUncheckedIndexedAccess 下是
-        // "可能不存在" 的, 直接 log[0].at 等于把一个检查跳过的事实写在脸上
-        const first = log[0]
-        const last = log[log.length - 1]
-        if (!first || !last) continue
-        const preview = previewOf(log)
-        const workspace = workspaceOf(log)
-        out.push({
-          sessionId,
-          title: titleOf(log),
-          at: first.at,
-          lastSeq: last.seq,
-          turns: log.filter((e) => e.type === 'turn/started').length,
-          ...(preview === undefined ? {} : { preview }),
-          ...(workspace === undefined ? {} : { workspace }),
-        })
-      }
-      return out.sort((a, b) => b.at - a.at)
-    },
-
-    nextSeq() {
-      return seq++
-    },
-
-    hydrate(events) {
+    read: store.read,
+    readPage: store.readPage,
+    all: store.all,
+    sessions: store.sessions,
+    workspaceOf: store.workspaceOf,
+    permissionOf: store.permissionOf,
+    setPermission: store.setPermission,
+    putAttachment: store.putAttachment,
+    readAttachments: store.readAttachments,
+    nextSeq: store.nextSeq,
+    hydrate: store.hydrate,
+    rename: store.rename,
+    delete: store.delete,
+    flush: store.flush,
+    close: store.close,
+    project(sessionId, options = {}) {
+      const events = service.read(sessionId)
+      const latestCompact = [...events].reverse().find((event) => {
+        if (event.type !== 'context/compacted') return false
+        const data = event.data as { summary?: unknown; throughSeq?: unknown } | null
+        return typeof data?.summary === 'string' && data.summary.trim() !== '' &&
+          typeof data?.throughSeq === 'number' && Number.isInteger(data.throughSeq)
+      })
+      const compactData = latestCompact?.data as { summary: string; throughSeq: number } | undefined
+      const boundary = Math.max(options.afterSeq ?? -1, compactData?.throughSeq ?? -1)
+      const beforeSeq = options.beforeSeq
+      const out: ProjectedMessage[] = compactData ? [compactionCheckpointMessage(compactData.summary)] : []
       for (const event of events) {
-        const log = logs.get(event.sessionId) ?? []
-        log.push(event)
-        logs.set(event.sessionId, log)
-        if (event.seq >= seq) seq = event.seq + 1
-      }
-    },
-
-    project(sessionId) {
-      const out: ProjectedMessage[] = []
-      for (const event of service.read(sessionId)) {
+        if (event.seq <= boundary) continue
+        if (beforeSeq !== undefined && event.seq >= beforeSeq) continue
+        if (event.type === 'context/compacted') continue
         if (event.type === 'turn/started') {
-          const { text } = event.data as { text?: string }
-          out.push({ role: 'user', content: [{ type: 'text', text: text ?? '' }] })
+          const { text, attachments, interruption } = event.data as {
+            text?: string
+            attachments?: SessionAttachment[]
+            interruption?: { mode?: string }
+          }
+          const refs = Array.isArray(attachments) ? attachments : []
+          const content: ContentBlock[] = []
+          const projectedText = interruption?.mode === 'insert'
+            ? `${INTERRUPTION_PREAMBLE}\n\n${text ?? ''}`.trimEnd()
+            : (text ?? '')
+          if (projectedText || refs.length === 0) content.push({ type: 'text', text: projectedText })
+          for (const attachment of store.readAttachments(sessionId, refs.map((item) => item.id))) {
+            content.push({
+              type: 'image',
+              name: attachment.name,
+              mime: attachment.mime,
+              dataBase64: attachment.dataBase64,
+            })
+          }
+          out.push({ role: 'user', content })
         }
         if (event.type === 'llm/completed') {
           const { text, toolCalls } = event.data as {
@@ -195,7 +220,7 @@ export function apply(ctx: Ctx): Disposer {
           // 多个工具结果 (并发调用时就是这样), 也便于将来结果里带图片。
           // 归属靠 toolCallId, 和 assistant 侧的 tool-call 块配对
           out.push({
-            role: 'user',
+            role: 'tool',
             content: [
               {
                 type: 'tool-result',
@@ -240,44 +265,7 @@ export function apply(ctx: Ctx): Disposer {
   }
 
   ctx.set('session', service)
-  return () => logs.clear()
-}
-
-function titleOf(log: SessionEvent[]): string {
-  const created = log.find((e) => e.type === 'session/created')
-  const fromCreated = (created?.data as { title?: string } | undefined)?.title
-  if (fromCreated) return fromCreated
-  const first = log.find((e) => e.type === 'turn/started')
-  const text = (first?.data as { text?: string } | undefined)?.text ?? ''
-  return text.slice(0, 20) || '未命名会话'
-}
-
-/** 会话属于哪个目录。写在 `session/created` 里, 缺省 = 普通任务 */
-function workspaceOf(log: SessionEvent[]): string | undefined {
-  const created = log.find((e) => e.type === 'session/created')
-  const raw = (created?.data as { workspace?: unknown } | undefined)?.workspace
-  return typeof raw === 'string' && raw !== '' ? raw : undefined
-}
-
-/**
- * 最近一条用户消息的前 60 字。**没有就不给**, 不给空串。
- *
- * 找的是**最后**一条 `turn/started` —— 用户问过的最后一句最能说明这段对话
- * 现在在聊什么。从后往前扫而不是先 filter 再取尾: 会话可能有几千条事件,
- * 而这条信息只需要最后一次。
- */
-function previewOf(log: SessionEvent[]): string | undefined {
-  for (let i = log.length - 1; i >= 0; i--) {
-    const event = log[i]
-    if (!event || event.type !== 'turn/started') continue
-    const text = (event.data as { text?: string } | undefined)?.text ?? ''
-    // 压平空白: 用户可能贴了一段带换行的日志, 不压的话预览第一行只剩半句
-    const flat = text.replace(/\s+/g, ' ').trim()
-    // 空消息 (只按了回车 / 只发附件) 不给 preview —— 给空串等于让界面
-    // 渲染一行空白, 那比单行还难看
-    return flat === '' ? undefined : flat.slice(0, 60)
-  }
-  return undefined
+  return () => store.close()
 }
 
 export const invariant = defineInvariant('@meng/session', [
@@ -286,10 +274,14 @@ export const invariant = defineInvariant('@meng/session', [
     run(ctx) {
       const session = ctx.get<SessionService>('session')
       if (!session) throw new Error('能力面 session 未注册')
-      const probe = '__invariant_probe__'
-      const a = session.append(probe, 'session/created', {})
-      const b = session.append(probe, 'turn/ended', {})
-      if (b.seq !== a.seq + 1) throw new Error('seq 不单调, 事件流被改写')
+      const probe = createSessionStore(':memory:')
+      try {
+        const a = probe.append('__invariant_probe__', 'session/created', {})
+        const b = probe.append('__invariant_probe__', 'turn/ended', {})
+        if (b.seq !== a.seq + 1) throw new Error('seq 不单调, 事件流被改写')
+      } finally {
+        probe.close()
+      }
     },
   },
 ])

@@ -7,10 +7,9 @@
  *   2. 拉 manifest → 创建 entries → 静默 → 全量 sweep
  *   3. settled 翻转, 一次性切到真 UI
  *
- * 当前阶段 (M3-M4) 的 transport 是 **inproc + fixture**:
- * `?fixture=ok|blocked|error` 三个脚本化路径, 走的是与真 ws 完全相同的
- * Transport 接口。等 F6 的 ws 实现到位, 这里只换一行 createXxxTransport,
- * App 与投影逻辑一行都不用动 —— 这是当初把 inproc 做成"第三种实现"的目的。
+ * 默认连接真实后端；`?transport=fixture&fixture=ok|blocked|error` 才进入
+ * 脚本化演示。两种模式走同一个 Transport 接口，App 与投影逻辑不用分岔。
+ * 否则在本机功能（例如系统文件夹选择窗口）上，演示模式会表现为"点了没反应"。
  */
 
 import '@meng/ui/tokens.css'
@@ -18,6 +17,8 @@ import '@meng/ui/tokens.css'
 import * as React from 'react'
 import { StrictMode, useCallback, useRef, useState } from 'react'
 import * as ReactJsxRuntime from 'react/jsx-runtime'
+import * as ReactDom from 'react-dom'
+import * as ReactDomClient from 'react-dom/client'
 import { createRoot } from 'react-dom/client'
 
 import * as MengCore from '@meng/core'
@@ -44,9 +45,10 @@ import { AppearanceSection } from './app/settings/AppearanceSection.tsx'
 import { ConversationSection } from './app/settings/ConversationSection.tsx'
 import { KeysSection } from './app/settings/KeysSection.tsx'
 import { ModelSection } from './app/settings/ModelSection.tsx'
+import { SessionExport } from './app/SessionExport.tsx'
 import { SettingsView } from './app/settings/SettingsView.tsx'
+import { ToolSection } from './app/settings/ToolSection.tsx'
 import { WorkspaceSection } from './app/settings/WorkspaceSection.tsx'
-import { createFixtureKernel, fixtureFromSearch } from './dev/fixture-kernel.ts'
 import { applyTheme } from './theme.ts'
 import { readPrefs } from './prefs.ts'
 import { applyPresentation } from './presentation.ts'
@@ -74,10 +76,18 @@ applyPresentation(bootPrefs)
 const SLOT_DEFS: Array<[string, SlotDef]> = [
   // 整体布局: 空着 = 内置布局 (fallback), 有插件占用 = 整块换掉
   ['layout.root', { kind: 'single', scope: 'root' }],
+  // 消息卡 / 工具卡: single。只换呈现，不换消息数据；空位由内建行 / 内置卡兜底
+  ['conversation.message', { kind: 'single', scope: 'session' }],
+  ['conversation.tool', { kind: 'single', scope: 'session' }],
   // 输入框: chain。既要能被「永久替换」(皮肤), 又要能被「临时接管」(审批条) ——
   // 同一个座位不能既 single 又 chain, 所以声明成 chain, 永久替换 = select 恒返回非 null
   ['composer', { kind: 'chain', scope: 'session-maybe' }],
   ['sidebar.footer', { kind: 'list', scope: 'root' }],
+  ['sidebar.nav', { kind: 'list', scope: 'root' }],
+  // 新会话空屏、输入建议下方。插件可放一张轻量入口卡，不抢输入框。
+  ['home.actions', { kind: 'list', scope: 'session-maybe' }],
+  // 右侧第三栏。与内置插件状态面板并列，插件可贡献自己的紧凑面板。
+  ['right.panel', { kind: 'list', scope: 'root' }],
   ['conversation.actions', { kind: 'list', scope: 'session' }],
 
   /* ── F2b 扩容的一批 (5 个) ──
@@ -161,6 +171,8 @@ interface Booted {
 const SHARED: Record<string, unknown> = {
   react: React,
   'react/jsx-runtime': ReactJsxRuntime,
+  'react-dom': ReactDom,
+  'react-dom/client': ReactDomClient,
   '@meng/core': MengCore,
   '@meng/slots': MengSlots,
   '@meng/ui': MengUi,
@@ -213,7 +225,7 @@ async function fetchManifestPlugins(transport: Transport, timeoutMs = 2500): Pro
 }
 
 async function bootstrap(report: (entries: EntryState[]) => void): Promise<Booted> {
-  const mode = params.get('transport') ?? 'fixture'
+  const mode = params.get('transport') ?? 'ws'
 
   if (mode !== 'fixture' && mode !== 'ws') {
     throw new Error(`transport=${mode} 不支持 (只有 fixture 与 ws)`)
@@ -300,9 +312,22 @@ async function bootstrap(report: (entries: EntryState[]) => void): Promise<Boote
     order: 320,
     meta: { label: '接口密钥', group: '内核', origin: 'kernel' },
   })
+  /**
+   * 工具分区: order 330 —— 内核组的最后一块（B-27 的工具组开关）。
+   *
+   * 为什么排在密钥之后而不是模型旁边: 前四页回答的是"用哪个脑子、在哪儿动手、
+   * 拿什么钥匙"，这一页回答的是"它**能看见哪些手**"。它是前面几项的结果，
+   * 不是前提 —— 用户按这个顺序想事情。
+   */
+  slots.register('builtin.settings.tools', {
+    name: 'settings.section',
+    component: ToolSection,
+    order: 330,
+    meta: { label: '工具', group: '内核', origin: 'kernel' },
+  })
 
   let transport: Transport
-  let fixture: ReturnType<typeof fixtureFromSearch> | null = null
+  let fixture: string | null = null
 
   if (mode === 'ws') {
     // 同源: dev 下由 vite 代理 /api 与 /ws 到后端 4721, 生产由后端自己发静态资源
@@ -316,10 +341,20 @@ async function bootstrap(report: (entries: EntryState[]) => void): Promise<Boote
       },
     })
   } else {
+    /**
+     * **动态 import**: 假内核只在 `?transport=fixture` 时有意义, 而它现在带
+     * 一份 154KB 的真目录投影（37 家 / 1109 条, 见 `dev/directory.gen.ts`）。
+     * 静态 import 会把这份数据塞进生产 bundle —— 一个只在开发时用的假后端,
+     * 让每个用户多下 150KB。
+     *
+     * 代价是 boot 多一次网络往返（同源 chunk, 通常已被预热）。boot 本来就是
+     * 异步的, 这一步排在"拉 manifest"之前, 感知不到。
+     */
+    const { createFixtureKernel, fixtureFromSearch } = await import('./dev/fixture-kernel.ts')
     fixture = fixtureFromSearch(location.search)
     // gap 18ms: node 里是 0 (测得快), 浏览器里留一点间隔才看得出"流式"。
     // ?gap=250 之类可以慢放 —— 验"运行中"这类一闪而过的中间态全靠它
-    const kernel = createFixtureKernel(fixture, {
+    const kernel = createFixtureKernel(fixture as Parameters<typeof createFixtureKernel>[0], {
       gap: Math.max(0, Number(params.get('gap')) || 18),
     })
     transport = createInprocTransport(kernel)
@@ -328,6 +363,28 @@ async function bootstrap(report: (entries: EntryState[]) => void): Promise<Boote
   const ctx = createContext('shell')
   ctx.set('slots', slots)
   ctx.set('transport', transport)
+
+  /**
+   * 侧栏会话行上的「导出」。
+   *
+   * **注册必须放在 `transport` 建好之后** —— 上面的设置分区是在它之前注册的
+   * （那些分区拿到的 invoke 由宿主转发, 不需要 transport 本身）, 而导出要真去
+   * `session.read` 拿事件流。
+   *
+   * order -10: 排在内置示例插件（order 0）前面。导出是**真功能**, 示例只是演示,
+   * 真功能不该被演示项挤到后面。
+   */
+  slots.register('builtin.sessions.export', {
+    name: 'sidebar.item.actions',
+    order: -10,
+    component: (props: { sessionId?: string; title?: string }) => (
+      <SessionExport
+        sessionId={props.sessionId}
+        title={props.title}
+        invoke={(op, payload) => transport.invoke(op, payload)}
+      />
+    ),
+  })
   /**
    * 主题控制器是**宿主提供的能力**, 不是插件各干各的。
    * 插件只 apply 自己那一层, 撤销由控制器重算 —— 这样两个皮肤同时开着也不会互相抹。
@@ -364,11 +421,13 @@ async function bootstrap(report: (entries: EntryState[]) => void): Promise<Boote
           {
             id: DEMO_PLUGIN_ID,
             url: 'fixture:demo',
-            platforms: ['web'] as const,
+            // `as const` 会变成 readonly, 而 `PluginRow.platforms` 是可变数组;
+            // 不写又会被推断成 `string[]`。整个对象标一次类型最省事
+            platforms: ['web'],
             inject: ['slots'],
             immediately: false,
-            origin: 'builtin' as const,
-          },
+            origin: 'builtin',
+          } satisfies PluginRow,
         ]),
   ]
 

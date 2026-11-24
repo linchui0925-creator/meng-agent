@@ -21,8 +21,10 @@
  * 塞进去, 用户会在设置页里看到一堆路径输入框。它是**运行时数据**, 不是配置。
  */
 
+import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
+import { promisify } from 'node:util'
 import { defineInvariant, type Ctx, type Disposer } from '@meng/core'
 
 export const WORKSPACES_CAPABILITY = 'workspaces'
@@ -111,6 +113,36 @@ export function createWorkspaceStore(file: string): WorkspaceStore {
     has(path) {
       return paths.includes(normalizePath(path))
     },
+  }
+}
+
+export interface WorkspaceGitStatus {
+  branch?: string
+  dirty?: boolean
+}
+
+const execFileAsync = promisify(execFile)
+
+/** 工作区的 Git 摘要。目录不存在、不是仓库或 Git 不可用都返回空对象。 */
+export async function readGitStatus(path: string): Promise<WorkspaceGitStatus> {
+  const cwd = normalizePath(path)
+  const git = async (args: string[]): Promise<string> => {
+    const { stdout } = await execFileAsync('git', ['-C', cwd, ...args], {
+      timeout: 5_000,
+      maxBuffer: 16 * 1024 * 1024,
+      windowsHide: true,
+    })
+    return stdout.trim()
+  }
+  try {
+    if (await git(['rev-parse', '--is-inside-work-tree']) !== 'true') return {}
+    const [branch, porcelain] = await Promise.all([
+      git(['branch', '--show-current']),
+      git(['status', '--porcelain=v1', '--untracked-files=normal']),
+    ])
+    return { ...(branch ? { branch } : {}), dirty: porcelain.length > 0 }
+  } catch {
+    return {}
   }
 }
 

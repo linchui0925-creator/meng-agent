@@ -128,7 +128,7 @@ export interface ApprovalService {
     toolName?: string
     callId?: string
     signal?: AbortSignal
-  }): Promise<{ outcome: string }>
+  }): Promise<{ outcome: string; answer?: string; error?: string }>
 }
 
 export interface ToolService {
@@ -285,6 +285,7 @@ export function apply(ctx: Ctx): Disposer {
             body: decision.reason,
             choices: [
               { key: 'approve', label: '允许' },
+              ...(call.sessionId ? [{ key: 'approve_session', label: '本会话都允许' }] : []),
               { key: 'deny', label: '拒绝' },
             ],
             sessionId: call.sessionId,
@@ -294,7 +295,13 @@ export function apply(ctx: Ctx): Disposer {
             signal: call.signal,
           })
           allowed = verdict.outcome === 'approved'
-          denyReason = `用户未批准: ${decision.reason}`
+          if (allowed && verdict.answer === 'approve_session' && call.sessionId) {
+            session?.setPermission(call.sessionId, 'full')
+          }
+          denyReason =
+            verdict.outcome === 'failed'
+              ? `审批提交失败: ${JSON.stringify({ ok: false, error: verdict.error ?? '用户回答提交失败' })}`
+              : `用户未批准: ${decision.reason}`
         } else {
           // 无审批通道 (纯 CLI / 未装 questions) —— 退化为拒绝并说明原因
           session?.append(at, 'tool/blocked', {
@@ -313,10 +320,26 @@ export function apply(ctx: Ctx): Disposer {
 
       session?.append(at, 'tool/called', { ...meta, args: call.args })
 
-      const raw = await ctx.waterfall<ToolResult>('tools/execute', [call, def], () =>
-        def.handler(call.args, ctx, call),
-      )
-      const result = await ctx.waterfall<ToolResult>('tools/post-execute', [call, raw], () => raw)
+      let result: ToolResult
+      try {
+        const raw = await ctx.waterfall<ToolResult>('tools/execute', [call, def], () =>
+          def.handler(call.args, ctx, call),
+        )
+        result = await ctx.waterfall<ToolResult>('tools/post-execute', [call, raw], () => raw)
+      } catch (err) {
+        // tool/called 已经写出去了；异常也不能留下没有配对的 tool-call。
+        // 照旧把异常向上抛，让本轮按原逻辑失败，同时补一个可投影的失败结果。
+        const message = err instanceof Error ? err.message : String(err)
+        session?.append(at, 'tool/completed', {
+          ...meta,
+          result: message.slice(0, 2000),
+          ok: false,
+          bytes: Buffer.byteLength(message),
+          truncated: message.length > 2000,
+          ...(call.signal?.aborted ? { interrupted: true } : {}),
+        })
+        throw err
+      }
       const finishedAt = Date.now()
 
       // 事件里那份是**回显**, 不是数据。全文落记录库, 事件只带一个 id。

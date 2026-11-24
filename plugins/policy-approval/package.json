@@ -8,6 +8,7 @@
     "@meng/config": "workspace:*",
     "@meng/core": "workspace:*",
     "@meng/fs": "workspace:*",
+    "@meng/session": "workspace:*",
     "@meng/tools": "workspace:*"
   }
 }

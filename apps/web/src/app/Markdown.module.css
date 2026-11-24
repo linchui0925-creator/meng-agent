@@ -1,0 +1,221 @@
+/*
+  聊天长文排版：内容优先，正文只保留一种字号和一种字重。
+  中文回落霞鹜文楷，英文与数字优先 Inter；标题只靠小幅字号和留白分层，
+  Markdown 粗体不再改变字重，避免长回答里出现一屏互相争抢的重点。
+*/
+
+.md {
+  max-width: 68ch;
+  min-width: 0;
+  white-space: normal;
+  color: var(--meng-alias-fg-primary);
+  font-family: Inter, 'LXGW WenKai', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
+  font-size: var(--meng-specific-text-reading);
+  font-weight: var(--meng-specific-weight-normal);
+  font-kerning: normal;
+  line-height: var(--meng-specific-leading-reading);
+  letter-spacing: 0;
+}
+
+.md > :last-child {
+  margin-bottom: 0;
+}
+
+.para {
+  margin: 0 0 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.heading {
+  margin: 16px 0 6px;
+  color: var(--meng-alias-fg-primary);
+  font-family: inherit;
+  font-weight: var(--meng-specific-weight-normal);
+  letter-spacing: -0.006em;
+  line-height: 1.4;
+}
+
+.md > .heading:first-child {
+  margin-top: 0;
+}
+
+.heading[data-level='1'] {
+  font-size: 1.08em;
+}
+
+.heading[data-level='2'] {
+  font-size: 1.04em;
+}
+
+.heading[data-level='3'] {
+  font-size: 1em;
+}
+
+.heading[data-level='4'],
+.heading[data-level='5'],
+.heading[data-level='6'] {
+  color: var(--meng-alias-fg-secondary);
+  font-size: 0.98em;
+  letter-spacing: 0;
+}
+
+/* `**重点**` 仍保留 Markdown 语义，但视觉上不再加粗或放大。 */
+.md strong {
+  color: inherit;
+  font-weight: inherit;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 10px;
+  padding-left: 1.25em;
+  line-height: 1.65;
+}
+
+.item {
+  padding-left: 2px;
+  overflow-wrap: anywhere;
+}
+
+.list li::marker {
+  color: var(--meng-alias-accent);
+}
+
+.quote {
+  margin: 14px 0;
+  padding: 1px 0 1px 11px;
+  border-left: 1px solid var(--meng-alias-border-l3);
+  color: var(--meng-alias-fg-secondary);
+  line-height: 1.65;
+}
+
+.hr {
+  margin: 20px 0;
+  border: 0;
+  border-top: 1px solid var(--meng-alias-border-l1);
+}
+
+.inlineCode {
+  padding: 1px 4px;
+  border: 0;
+  border-radius: var(--meng-specific-radius-sm);
+  background: color-mix(in srgb, currentColor 7%, transparent);
+  color: var(--meng-alias-fg-code);
+  font-family: var(--meng-specific-font-mono);
+  font-size: 0.88em;
+  overflow-wrap: anywhere;
+}
+
+.codeBox {
+  position: relative;
+  margin: 12px 0;
+  overflow: hidden;
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: var(--meng-specific-radius-lg);
+  background: var(--meng-alias-bg-inset);
+}
+
+.codeHeader {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 24px;
+  padding: 2px var(--meng-specific-space-3);
+  border-bottom: 1px solid var(--meng-alias-border-l1);
+  background: var(--meng-alias-bg-glass);
+}
+
+.codeLang {
+  color: var(--meng-alias-fg-muted);
+  font-family: var(--meng-specific-font-mono);
+  font-size: 10px;
+  font-weight: var(--meng-specific-weight-normal);
+  line-height: 1;
+  pointer-events: none;
+}
+
+.code {
+  margin: 0;
+  padding: 12px 14px;
+  overflow-x: auto;
+  color: var(--meng-alias-fg-code);
+  font-family: var(--meng-specific-font-mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  tab-size: 2;
+}
+
+.code code {
+  font: inherit;
+}
+
+.tableWrap {
+  margin: 12px 0 14px;
+  overflow-x: auto;
+  border-top: 1px solid var(--meng-alias-border-l1);
+  border-bottom: 1px solid var(--meng-alias-border-l1);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86em;
+  line-height: 1.5;
+}
+
+.table th,
+.table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--meng-alias-border-l1);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.table tr:last-child td {
+  border-bottom: 0;
+}
+
+.table th {
+  background: color-mix(in srgb, currentColor 3%, transparent);
+  color: var(--meng-alias-fg-secondary);
+  font-weight: var(--meng-specific-weight-normal);
+}
+
+.table [data-align='right'] {
+  text-align: right;
+}
+
+.table [data-align='center'] {
+  text-align: center;
+}
+
+.link {
+  color: var(--meng-alias-accent);
+  text-decoration: none;
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  background: var(--meng-alias-live);
+  vertical-align: text-bottom;
+  animation: blink 1s steps(2, start) infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}

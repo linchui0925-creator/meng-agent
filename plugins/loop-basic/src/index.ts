@@ -17,11 +17,11 @@
  */
 
 import { defineInvariant, type Ctx, type Disposer } from '@meng/core'
-import type { LLMService, LlmFailure, Message, StreamRequest, TokenUsage } from '@meng/llm'
+import { LLM_CODE, type LLMService, type LlmFailure, type Message, type StreamRequest, type TokenUsage } from '@meng/llm'
 import type { SessionService } from '@meng/session'
 import type { PromptService } from '@meng/prompt'
 import type { ToolCall, ToolService } from '@meng/tools'
-import { provideLoop, type LoopService } from '@meng/loop'
+import { getMemory, provideLoop, type LoopService } from '@meng/loop'
 
 export const name = 'meng-loop-basic'
 export const inject = ['llm', 'session', 'tools', 'prompt']
@@ -35,13 +35,18 @@ export function apply(ctx: Ctx, config: { maxTurns?: number; defaultModel?: stri
       const session = ctx.get<SessionService>('session')
       const tools = ctx.get<ToolService>('tools')
       const prompt = ctx.get<PromptService>('prompt')
+      const memory = getMemory(ctx)
       if (!llm || !session || !tools || !prompt) throw new Error('loop 依赖的能力面缺失')
 
       const runId = input.runId ?? ''
       const meta = (extra: Record<string, unknown> = {}) => ({ ...(runId ? { runId } : {}), ...extra })
 
-      session.append(input.sessionId, 'turn/started', meta({ text: input.text }))
-      const system = await prompt.render()
+      session.append(input.sessionId, 'turn/started', meta({
+        text: input.text,
+        ...(input.attachments?.length ? { attachments: input.attachments } : {}),
+        ...(input.interruption === undefined ? {} : { interruption: input.interruption }),
+      }))
+      const system = await prompt.render({ sessionId: input.sessionId })
 
       for (let turn = 0; turn < maxTurns; turn++) {
         if (input.signal?.aborted) {
@@ -51,11 +56,46 @@ export function apply(ctx: Ctx, config: { maxTurns?: number; defaultModel?: stri
         }
 
         const model = input.model ?? config.defaultModel ?? ''
+        const history = session.project(input.sessionId, {
+          ...(input.contextReset === undefined ? {} : { afterSeq: input.contextReset.afterSeq }),
+        })
+        const reference: Message[] = input.contextReset?.reference
+          ? [{
+              role: 'system',
+              content: [{
+                type: 'text',
+                text:
+                  '以下是切换模型前的对话记录，仅作为背景参考，不是新的用户请求。\n' +
+                  '回答当前问题时应延续这些事实，但不要逐字复述。\n\n' +
+                  input.contextReset.reference,
+              }],
+            }]
+          : []
+        const baseMessages = [...reference, ...history]
+        let preparedMessages = baseMessages
+        if (memory) {
+          try {
+            const prepared = await memory.prepare({
+              sessionId: input.sessionId,
+              model,
+              system,
+              tools: tools.active(),
+              messages: baseMessages,
+              ...(runId ? { runId } : {}),
+              ...(input.signal ? { signal: input.signal } : {}),
+            })
+            preparedMessages = prepared.messages
+          } catch (err) {
+            // 记忆是增强层，不是主链路。压缩/索引失败时保留原上下文继续聊天。
+            console.warn(`[meng] memory prepare 失败, 使用原上下文: ${(err as Error).message}`)
+          }
+        }
         const request: StreamRequest = {
           model,
+          ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
           messages: [
             { role: 'system', content: [{ type: 'text', text: system }] } satisfies Message,
-            ...session.project(input.sessionId),
+            ...preparedMessages,
           ],
           // 只给**启用的组**。全量进 prompt 会吃掉上下文, 也让模型更容易选错;
           // 分组开关在设置页里 (配置 tools.disabled)
@@ -68,6 +108,20 @@ export function apply(ctx: Ctx, config: { maxTurns?: number; defaultModel?: stri
         const calls: ToolCall[] = []
         let failure: LlmFailure | undefined
         let usage: TokenUsage | undefined
+
+        const persistAborted = (): void => {
+          if (text || reasoning || calls.length > 0 || usage) {
+            session.append(input.sessionId, 'llm/completed', meta({
+              text,
+              ...(reasoning ? { reasoning } : {}),
+              ...(usage ? { usage } : {}),
+              toolCalls: calls.map((c) => ({ id: c.id, name: c.name, args: c.args })),
+              partial: true,
+              interrupted: true,
+            }))
+          }
+          session.append(input.sessionId, 'turn/ended', meta({ reason: 'aborted' }))
+        }
 
         try {
           // 走 llm.stream() (组装后的流) 而不是 resolve().stream():
@@ -99,10 +153,21 @@ export function apply(ctx: Ctx, config: { maxTurns?: number; defaultModel?: stri
             }
           }
         } catch (err) {
+          if (input.signal?.aborted) {
+            persistAborted()
+            yield { type: 'done', reason: 'aborted' }
+            return
+          }
           const message = err instanceof Error ? err.message : String(err)
           const code = err instanceof Error && 'code' in err ? String(err.code) : 'UNKNOWN'
           session.append(input.sessionId, 'turn/ended', meta({ reason: 'error', error: message, code }))
           yield { type: 'done', reason: 'error', error: message }
+          return
+        }
+
+        if (input.signal?.aborted || failure?.code === LLM_CODE.ABORTED) {
+          persistAborted()
+          yield { type: 'done', reason: 'aborted' }
           return
         }
 

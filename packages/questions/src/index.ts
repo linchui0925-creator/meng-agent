@@ -7,7 +7,7 @@
  *
  * 每个问题的一生落在事件流里 (这是"唯一真相源"的兑现):
  *   question/asked    { questionId, kind, title, body, choices, toolName, callId, runId }
- *   question/answered { questionId, outcome, answer, note }
+ *   question/answered { questionId, outcome, answer, note, error }
  * 前端不轮询: 事件经 session/event 自动广播到 WS, 断线重放也能补回卡片。
  *
  * 回答的唯一入口是 answer() (由 questions-web 插件接到 POST /api/question.answer)。
@@ -43,11 +43,13 @@ export interface Question {
 
 export interface QuestionResolution {
   questionId: string
-  /** answered=自由回答; approved/denied=审批结论; timeout=超时; aborted=轮次被中止 */
-  outcome: 'answered' | 'approved' | 'denied' | 'timeout' | 'aborted'
+  /** answered=自由回答; approved/denied=审批结论; failed=回答提交失败; timeout=超时; aborted=轮次被中止 */
+  outcome: 'answered' | 'approved' | 'denied' | 'failed' | 'timeout' | 'aborted'
   /** 用户给出的 choice key 或自由文本 */
   answer?: string
   note?: string
+  /** outcome=failed 时的机器可读原因，供工具以 JSON 形式交给模型 */
+  error?: string
 }
 
 export interface AskInput {
@@ -67,6 +69,11 @@ export interface QuestionsService {
   ask(input: AskInput): Promise<QuestionResolution>
   /** 回答一个挂起中的问题。不存在/已答/已超时 → false */
   answer(questionId: string, answer: string, note?: string): boolean
+  /**
+   * 回答提交失败时结算问题。它不会伪造用户答案，只把失败原因交给等待中的工具。
+   * 不存在/已答/已超时 → false。
+   */
+  fail(questionId: string, error: string): boolean
   /** 挂起中的问题 (给 UI 恢复状态用; 断线重放才是主通道) */
   pending(): Question[]
 }
@@ -101,6 +108,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
       outcome: resolution.outcome,
       ...(resolution.answer !== undefined ? { answer: resolution.answer } : {}),
       ...(resolution.note ? { note: resolution.note } : {}),
+      ...(resolution.error ? { error: resolution.error } : {}),
       ...(entry.question.runId ? { runId: entry.question.runId } : {}),
     })
     entry.resolve(resolution)
@@ -159,13 +167,20 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
       const entry = pending.get(questionId)
       if (!entry) return false
       const outcome =
-        entry.question.kind === 'approval' ? (answer === 'approve' ? 'approved' : 'denied') : 'answered'
+        entry.question.kind === 'approval' ? (answer === 'approve' || answer === 'approve_session' ? 'approved' : 'denied') : 'answered'
       settle(entry, {
         questionId,
         outcome,
         answer,
         ...(note ? { note } : {}),
       })
+      return true
+    },
+
+    fail(questionId, error) {
+      const entry = pending.get(questionId)
+      if (!entry) return false
+      settle(entry, { questionId, outcome: 'failed', error })
       return true
     },
 
@@ -204,6 +219,16 @@ export const invariant = defineInvariant('@meng/questions', [
       }
       // 已答的再答必须是 false —— 双击/重放不能造成第二次 settle
       if (questions.answer(q.questionId, 'again')) throw new Error('已回答的问题竟还能再答')
+
+      // 提交失败也必须结算问题，否则模型会一直等一个永远不会来的回答
+      const failed = questions.ask({ kind: 'info', title: 'invariant fail 探针', sessionId: '__invariant__' })
+      const fq = questions.pending()[0]
+      if (!fq) throw new Error('fail 探针没有进入 pending')
+      if (!questions.fail(fq.questionId, 'probe-error')) throw new Error('fail 对挂起中的问题竟返回 false')
+      const failedResolution = await failed
+      if (failedResolution.outcome !== 'failed' || failedResolution.error !== 'probe-error') {
+        throw new Error(`失败结算回路断了: ${JSON.stringify(failedResolution)}`)
+      }
 
       // 事件落库检查: asked + answered 都要在流里
       const events = session.read('__invariant__').filter((e) => e.type.startsWith('question/'))

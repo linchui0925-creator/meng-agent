@@ -31,16 +31,20 @@
  */
 
 import {
+  createAssistantMessageEventStream,
   createProvider,
+  type Api,
   type AssistantMessage,
   type AssistantMessageEvent,
   type Context,
   type Model,
   type Provider,
   type ProviderStreams,
+  type SimpleStreamOptions,
   type Tool,
   type Usage,
 } from '@earendil-works/pi-ai'
+import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from '@earendil-works/pi-ai/api/openai-responses-shared'
 import { builtinProviders, getBuiltinModels, getBuiltinProviders } from '@earendil-works/pi-ai/providers/all'
 
 // 9 种协议，每种一个懒加载工厂。**调用工厂不等于加载实现** ——
@@ -171,6 +175,330 @@ const STREAMS: Record<string, ProviderStreams> = {
   'bedrock-converse-stream': bedrockConverseStreamApi(),
   'google-vertex': googleVertexApi(),
   'openai-codex-responses': openAICodexResponsesApi(),
+}
+
+/**
+ * Responses 网关的一次性 JSON 版本。
+ *
+ * 有些本地网关只实现 `POST /responses` 的 `stream:false`，或者在发完
+ * `response.completed` 后不关闭 SSE 连接。前者用通用流客户端会一直等，
+ * 后者会让整轮对话永远不落库。这里直接用 JSON 请求，拿到完整响应后
+ * 再还原成 pi/梦需要的流事件。
+ *
+ * 这是**传输方式**，不是另一套模型协议：模型仍然标 `openai-responses`。
+ */
+export function responsesJsonApi(): ProviderStreams {
+  const run = ((model: Model<Api>, context: Context, options: SimpleStreamOptions = {}) => {
+    const events = createAssistantMessageEventStream()
+    const usage = zeroUsage()
+    const message: AssistantMessage = {
+      role: 'assistant',
+      content: [],
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      usage,
+      stopReason: 'stop',
+      timestamp: Date.now(),
+    }
+
+    const fail = (err: unknown): void => {
+      const reason = err instanceof Error ? err.message : String(err)
+      message.stopReason = 'error'
+      message.errorMessage = reason
+      events.push({ type: 'error', reason: 'error', error: message })
+      events.end(message)
+    }
+
+    events.push({ type: 'start', partial: message })
+    void (async () => {
+      if (!options.apiKey) throw new Error(`No API key for provider: ${model.provider}`)
+      const base = String(model.baseUrl ?? '').trim().replace(/\/+$/, '')
+      if (!base) throw new Error(`模型 ${model.id} 没有接口地址`)
+      const url = base.endsWith('/responses') ? base : `${base}/responses`
+
+      const input = convertResponsesMessages(model, context, new Set([String(model.provider), 'openai']), {
+        toolOptions: { supportsStrictMode: false },
+      })
+      const tools = context.tools?.length
+        ? convertResponsesTools(context.tools, { supportsStrictMode: false })
+        : undefined
+      const body: Record<string, unknown> = {
+        model: model.id,
+        input,
+        stream: false,
+        store: false,
+        ...(context.systemPrompt ? { instructions: context.systemPrompt } : {}),
+        ...(tools ? { tools } : {}),
+        ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
+        ...(options.maxTokens === undefined ? {} : { max_output_tokens: options.maxTokens }),
+        ...(options.reasoning
+          ? { reasoning: { effort: options.reasoning, summary: 'auto' } }
+          : {}),
+      }
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${options.apiKey}`,
+        },
+        body: JSON.stringify(body),
+        ...(options.signal ? { signal: options.signal } : {}),
+      })
+      const text = await res.text()
+      if (!res.ok) throw new Error(`Responses JSON ${res.status}: ${text.slice(0, 1200)}`)
+      const payload = JSON.parse(text) as ResponsesJsonPayload
+
+      message.responseId = payload.id
+      message.responseModel = payload.model
+      message.usage = usageOf(payload.usage)
+
+      const output = Array.isArray(payload.output) ? payload.output : []
+      let index = 0
+      for (const item of output) {
+        if (item.type === 'reasoning') {
+          const thinking = (item.summary ?? [])
+            .map((part) => part.text ?? '')
+            .filter(Boolean)
+            .join('\n\n')
+          if (thinking || item.encrypted_content) {
+            const at = index++
+            const block = {
+              type: 'thinking' as const,
+              thinking,
+              thinkingSignature: JSON.stringify(item),
+            }
+            message.content.push(block)
+            if (thinking) {
+              events.push({ type: 'thinking_start', contentIndex: at, partial: message })
+              events.push({ type: 'thinking_delta', contentIndex: at, delta: thinking, partial: message })
+              events.push({ type: 'thinking_end', contentIndex: at, content: thinking, partial: message })
+            }
+          }
+          continue
+        }
+
+        if (item.type === 'message') {
+          const text = (item.content ?? [])
+            .map((part) => (part.type === 'output_text' ? (part.text ?? '') : ''))
+            .join('')
+          if (!text) continue
+          const at = index++
+          message.content.push({
+            type: 'text',
+            text,
+            textSignature: JSON.stringify({ v: 1, id: item.id ?? `msg_json_${at}` }),
+          })
+          events.push({ type: 'text_start', contentIndex: at, partial: message })
+          events.push({ type: 'text_delta', contentIndex: at, delta: text, partial: message })
+          events.push({ type: 'text_end', contentIndex: at, content: text, partial: message })
+          continue
+        }
+
+        if (item.type === 'function_call') {
+          const at = index++
+          const callId = item.call_id || item.id || `call_${at}`
+          const toolCall = {
+            type: 'toolCall' as const,
+            id: item.id ? `${callId}|${item.id}` : callId,
+            name: item.name || 'unknown',
+            arguments: parseArgs(item.arguments ?? '{}'),
+          }
+          message.content.push(toolCall)
+          events.push({ type: 'toolcall_start', contentIndex: at, partial: message })
+          events.push({ type: 'toolcall_delta', contentIndex: at, delta: item.arguments ?? '{}', partial: message })
+          events.push({ type: 'toolcall_end', contentIndex: at, toolCall, partial: message })
+        }
+      }
+
+      if (message.content.length === 0) throw new Error('Responses JSON 没有返回可用的文本或工具调用')
+      message.stopReason = message.content.some((block) => block.type === 'toolCall') ? 'toolUse' : 'stop'
+      events.push({ type: 'done', reason: message.stopReason, message })
+      events.end(message)
+    })().catch(fail)
+
+    return events
+  }) as ProviderStreams['streamSimple']
+  return { stream: run as unknown as ProviderStreams['stream'], streamSimple: run }
+}
+
+/**
+ * Responses SSE，但收到 terminal event 就主动断开。
+ *
+ * 有些网关会把 `response.completed` 发完却一直不关 HTTP 连接。通用 OpenAI
+ * SDK 流会继续等 EOF，于是“内容已经出来了但这一轮永远不结束”。这个实现保留
+ * 真正的 SSE 增量，只在 `response.completed` / `response.incomplete` /
+ * `response.failed` 之后 cancel reader。
+ */
+type ResponsesStreamEvent = Parameters<typeof processResponsesStream>[0] extends AsyncIterable<infer T> ? T : never
+
+export function responsesSseCloseApi(): ProviderStreams {
+  const run = ((model: Model<Api>, context: Context, options: SimpleStreamOptions = {}) => {
+    const events = createAssistantMessageEventStream()
+    const message: AssistantMessage = {
+      role: 'assistant',
+      content: [],
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      usage: zeroUsage(),
+      stopReason: 'stop',
+      timestamp: Date.now(),
+    }
+    const fail = (err: unknown): void => {
+      const reason = err instanceof Error ? err.message : String(err)
+      message.stopReason = 'error'
+      message.errorMessage = reason
+      events.push({ type: 'error', reason: 'error', error: message })
+      events.end(message)
+    }
+
+    events.push({ type: 'start', partial: message })
+    void (async () => {
+      if (!options.apiKey) throw new Error(`No API key for provider: ${model.provider}`)
+      const base = String(model.baseUrl ?? '').trim().replace(/\/+$/, '')
+      if (!base) throw new Error(`模型 ${model.id} 没有接口地址`)
+      const url = base.endsWith('/responses') ? base : `${base}/responses`
+      const input = convertResponsesMessages(model, context, new Set([String(model.provider), 'openai']), {
+        toolOptions: { supportsStrictMode: false },
+      })
+      const tools = context.tools?.length
+        ? convertResponsesTools(context.tools, { supportsStrictMode: false })
+        : undefined
+      const body: Record<string, unknown> = {
+        model: model.id,
+        input,
+        stream: true,
+        store: false,
+        ...(context.systemPrompt ? { instructions: context.systemPrompt } : {}),
+        ...(tools ? { tools } : {}),
+        ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
+        ...(options.maxTokens === undefined ? {} : { max_output_tokens: Math.max(16, options.maxTokens) }),
+        ...(options.reasoning
+          ? { reasoning: { effort: options.reasoning, summary: 'auto' } }
+          : {}),
+      }
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'text/event-stream',
+          ...(model.headers ?? {}),
+          authorization: `Bearer ${options.apiKey}`,
+        },
+        body: JSON.stringify(body),
+        ...(options.signal ? { signal: options.signal } : {}),
+      })
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(`Responses SSE ${res.status}: ${text.slice(0, 1200)}`)
+      }
+      if (!res.body) throw new Error('Responses SSE 没有响应体')
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      const stream = async function* (): AsyncIterable<ResponsesStreamEvent> {
+        while (true) {
+          const { value, done } = await reader.read()
+          if (done) {
+            buffer += decoder.decode()
+            break
+          }
+          buffer += decoder.decode(value, { stream: true })
+          const blocks = buffer.split(/\r?\n\r?\n/)
+          buffer = blocks.pop() ?? ''
+          for (const block of blocks) {
+            const lines = block.split(/\r?\n/).filter((line) => line.startsWith('data:'))
+            if (!lines.length) continue
+            const data = lines.map((line) => line.slice(5).trimStart()).join('\n').trim()
+            if (!data || data === '[DONE]') return
+            const event = JSON.parse(data) as ResponsesStreamEvent
+            yield event
+            const type = String(event.type ?? '')
+            if (type === 'response.completed' || type === 'response.incomplete'
+              || type === 'response.failed' || type === 'error') return
+          }
+        }
+        if (buffer.trim().startsWith('data:')) {
+          const data = buffer.trim().slice(5).trim()
+          if (data && data !== '[DONE]') yield JSON.parse(data) as ResponsesStreamEvent
+        }
+      }
+
+      try {
+        await processResponsesStream(stream(), message, events, model, {})
+      } finally {
+        try { await reader.cancel() } catch { /* already closed */ }
+      }
+      if (message.content.length === 0) throw new Error('Responses SSE 没有返回可用的文本或工具调用')
+      if (options.signal?.aborted) throw new Error('Request was aborted')
+      if (message.stopReason === 'error' || message.stopReason === 'aborted') {
+        throw new Error(message.errorMessage || 'Responses SSE 失败')
+      }
+      events.push({ type: 'done', reason: message.stopReason, message })
+      events.end(message)
+    })().catch(fail)
+
+    return events
+  }) as ProviderStreams['streamSimple']
+  return { stream: run as unknown as ProviderStreams['stream'], streamSimple: run }
+}
+
+interface ResponsesJsonPart {
+  type?: string
+  text?: string
+}
+
+interface ResponsesJsonOutputItem {
+  type?: string
+  id?: string
+  call_id?: string
+  name?: string
+  arguments?: string
+  encrypted_content?: string
+  summary?: ResponsesJsonPart[]
+  content?: ResponsesJsonPart[]
+}
+
+interface ResponsesJsonPayload {
+  id?: string
+  model?: string
+  output?: ResponsesJsonOutputItem[]
+  usage?: {
+    input_tokens?: number
+    output_tokens?: number
+    input_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number }
+    output_tokens_details?: { reasoning_tokens?: number }
+  }
+}
+
+function zeroUsage(): Usage {
+  return {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  }
+}
+
+function usageOf(raw: ResponsesJsonPayload['usage']): Usage {
+  const cacheRead = raw?.input_tokens_details?.cached_tokens ?? 0
+  const cacheWrite = raw?.input_tokens_details?.cache_write_tokens ?? 0
+  const input = Math.max(0, (raw?.input_tokens ?? 0) - cacheRead - cacheWrite)
+  const output = raw?.output_tokens ?? 0
+  const reasoning = raw?.output_tokens_details?.reasoning_tokens
+  return {
+    input,
+    output,
+    cacheRead,
+    cacheWrite,
+    ...(reasoning === undefined ? {} : { reasoning }),
+    totalTokens: input + output + cacheRead + cacheWrite,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -380,6 +708,8 @@ export interface RouteSpec {
   headers?: Record<string, string>
   /** 这条路由能用的模型（含 `api` 字段，pi 按它分发到对应协议） */
   models: readonly CatalogModel[]
+  /** 只覆盖本路由需要的传输实现；键仍是模型的 `api` */
+  apiOverrides?: Record<string, ProviderStreams>
   /** **每次请求现读**：密钥可能刚在设置里换过 */
   key: () => string | undefined
 }
@@ -417,7 +747,7 @@ export function createRouteProvider(route: RouteSpec): Provider {
         },
       },
     },
-    api: STREAMS,
+    api: { ...STREAMS, ...route.apiOverrides },
   })
 }
 
@@ -447,9 +777,23 @@ function parseArgs(raw: string): Record<string, unknown> {
   }
 }
 
-function toPiContent(blocks: readonly ContentBlock[]): string | Array<{ type: 'text'; text: string }> {
-  const texts = blocks.filter((b) => b.type === 'text').map((b) => b.text)
-  return texts.length === 1 && blocks.length === 1 ? (texts[0] ?? '') : texts.map((text) => ({ type: 'text' as const, text }))
+type PiContent =
+  | { type: 'text'; text: string }
+  | { type: 'image'; data: string; mimeType: string }
+
+function toPiBlocks(blocks: readonly ContentBlock[]): PiContent[] {
+  const out: PiContent[] = []
+  for (const block of blocks) {
+    if (block.type === 'text') out.push({ type: 'text', text: block.text })
+    if (block.type === 'image') out.push({ type: 'image', data: block.dataBase64, mimeType: block.mime })
+  }
+  return out
+}
+
+function toPiContent(blocks: readonly ContentBlock[]): string | PiContent[] {
+  const content = toPiBlocks(blocks)
+  const first = content[0]
+  return content.length === 1 && blocks.length === 1 && first?.type === 'text' ? first.text : content
 }
 
 export interface ContextInput {
@@ -493,9 +837,7 @@ export function toContext(input: ContextInput): Context {
           role: 'toolResult',
           toolCallId: block.toolCallId,
           toolName: toolNames.get(block.toolCallId) ?? 'unknown',
-          content: block.content
-            .filter((b) => b.type === 'text')
-            .map((b) => ({ type: 'text' as const, text: b.text })),
+          content: toPiBlocks(block.content),
           isError: block.isError === true,
           timestamp: now,
         })

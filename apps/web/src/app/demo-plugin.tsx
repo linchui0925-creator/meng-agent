@@ -13,7 +13,7 @@
 import type { PluginRuntime } from '@meng/modules'
 import { Badge, IconButton, Tooltip } from '@meng/ui'
 
-import { CopyIcon, MoreIcon, PaperclipIcon, SearchIcon, ShareIcon } from './icons.tsx'
+import { CopyIcon, MoreIcon, SearchIcon, ShareIcon } from './icons.tsx'
 
 export const DEMO_PLUGIN_ID = 'demo.usage'
 
@@ -81,16 +81,6 @@ function ShareAction() {
     <Tooltip label="分享会话">
       <IconButton size="sm" aria-label="分享会话">
         <ShareIcon />
-      </IconButton>
-    </Tooltip>
-  )
-}
-
-function AttachAction() {
-  return (
-    <Tooltip label="添加附件">
-      <IconButton size="sm" aria-label="添加附件">
-        <PaperclipIcon />
       </IconButton>
     </Tooltip>
   )
@@ -252,7 +242,6 @@ export const demoRuntime: PluginRuntime = {
         ['sidebar.header', SearchAction],
         ['sidebar.item.actions', SessionMore],
         ['topbar.actions', ShareAction],
-        ['composer.actions', AttachAction],
         ['statusbar.item', LiveStatus],
       ] as const
     ).map(([name, component]) =>

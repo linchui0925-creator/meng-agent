@@ -1,222 +1,244 @@
 /*
-  模型分区 = 三栏里的后两栏: **列表（rail）+ 详情（panel）**。
-  设置导航是第一栏, 由 SettingsView 管。
+  模型分区 = **一张已接入的列表 + 一个添加卡片**（用户 2026-11-16 第二轮）。
 
-  列表窄、详情宽, 这个比例是刻意的: 列表只需要"认出是哪一家"（章 + 名字 +
-  一个小点）, 详情才是真正要读的东西（地址、变量名、模型容量）。
-  两边等宽会让 11 个名字各占一半屏幕, 而名字后面全是空白。
+  这里没有"三栏"了: 导航是第一栏（SettingsView 管）, 剩下的整块宽度都是这一页的。
+  之前那套 rail / panel 的尺寸变量跟着一起删掉 —— 留着一个没人用的 `--rail-w`
+  比删掉更糟: 下一个人会以为列表宽度还能调。
 */
 
 [data-model-list] {
-  --rail-w: 226px;
-  --split-gap: 26px;
+  --row-gap: 8px;
 }
 
-.split {
-  display: grid;
-  grid-template-columns: var(--rail-w) minmax(0, 1fr);
-  gap: var(--split-gap);
-  align-items: start;
+/* ── 顶部一行: 计数 + 两个动作 ── */
+
+.top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
 }
 
-/* 注脚跟着详情面板那一列, 不跟整页 —— 它说的是面板里的事 */
-.noteWrap {
-  margin-left: calc(var(--rail-w) + var(--split-gap));
+.topText {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.topCount {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--meng-alias-fg-primary);
+}
+
+.topHint {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--meng-alias-fg-muted);
+}
+
+.topActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
 }
 
 /* ── 列表 ── */
 
-.rail {
-  min-width: 0;
-}
-
-/* 两段之间的间距比行间距大得多 —— 它们是两种来路, 不是两组状态 */
-.railSection + .railSection {
-  margin-top: 18px;
-  padding-top: 16px;
-  border-top: 1px solid var(--meng-alias-border-l1);
-}
-
-.railHead {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 0 8px 6px;
-}
-
-.railTitle {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  color: var(--meng-alias-fg-muted);
-  text-transform: uppercase;
-}
-
-.railCount {
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  color: var(--meng-alias-fg-muted);
-  opacity: 0.75;
-}
-
-/* 「＋」贴着右边缘 —— 它属于这一段, 不属于某一行 */
-.railHead .railAdd {
-  margin-left: auto;
-}
-
-.railAdd {
-  flex: none;
-  width: 20px;
-  height: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font: inherit;
-  font-size: 13px;
-  line-height: 1;
-  padding: 0;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--meng-alias-fg-muted);
-  cursor: pointer;
-  transition:
-    background 0.15s,
-    color 0.15s;
-}
-
-.railAdd:hover {
-  background: var(--meng-alias-accent-subtle);
-  color: var(--meng-alias-accent);
-}
-
-.railList {
+.list {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--row-gap);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: 10px;
+  background: var(--meng-alias-bg-surface);
+  transition: border-color 0.15s;
 }
 
 /*
-  一行 = 章 + 名字 + 状态点。
-  **行内没有按钮**: 一行里塞两个可点区域, 点偏了就变成"我明明点的是添加,
-  却切走了"。动作全在右边的详情里。
+  展开的那一行**边框加深**, 不加背景色: 背景一变, 里面那些 bg-inset 的输入框
+  就全跟着变一次色, 看起来像"换了张表"。边框加深足够说明"这一行是打开的"。
 */
-.railRow {
+.row[data-open] {
+  border-color: var(--meng-alias-border-l3);
+}
+
+/* 停用不是删除：行还在、可恢复，但视觉上明确降权。 */
+.row[data-provider-enabled='false'] {
+  background: var(--meng-alias-bg-inset);
+}
+
+.row[data-provider-enabled='false'] .rowMain {
+  opacity: 0.68;
+}
+
+.rowHead {
   display: flex;
   align-items: center;
-  gap: 9px;
-  width: 100%;
-  padding: 5px 8px 5px 6px;
+  gap: 4px;
+  padding-right: 10px;
+}
+
+/* 整行可点 = 展开。它是 button, 所以要清掉所有默认外观 */
+.rowMain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 4px 11px 13px;
   font: inherit;
   text-align: left;
   border: 0;
-  border-radius: 7px;
   background: transparent;
   color: var(--meng-alias-fg-primary);
   cursor: pointer;
-  transition: background 0.12s;
+  border-radius: 10px 0 0 10px;
 }
 
-.railRow:hover {
+.rowMain:hover {
   background: var(--meng-alias-bg-hover);
 }
 
-/* 选中: 淡底 + 字重 + 左边一道 2px 的 accent 竖线。只靠底色的话, 深色下几乎看不出 */
-.railRow[data-active] {
-  background: var(--meng-alias-accent-subtle);
-  box-shadow: inset 2px 0 0 var(--meng-alias-accent);
-}
+/*
+  ── 状态点 ──
 
-.railRow[data-active] .railName {
-  font-weight: 600;
-  color: var(--meng-alias-accent);
-}
-
-.railStamp {
+  三种态**形状也不同**, 不只靠颜色: 绿=实心, 红=实心, 白=空心环。
+  只靠色相的话, 红绿色盲看到的是"两个一样的小点", 而这一页最要紧的信息
+  恰恰是"通不通"。
+*/
+.dot {
   flex: none;
-  width: 22px;
-  height: 22px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 6px;
-  font-size: 10.5px;
-  font-weight: 700;
-  background: var(--meng-alias-bg-inset);
-  color: var(--meng-alias-fg-secondary);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1.5px solid var(--meng-alias-border-l3);
 }
 
-.railStamp[data-state='available'] {
-  background: var(--meng-alias-accent-subtle);
-  color: var(--meng-alias-accent);
+.dot[data-link-dot='ok'] {
+  border-color: var(--meng-alias-positive);
+  background: var(--meng-alias-positive);
+  /* 一圈淡光: 绿点只有 8px, 在深色底上不给点光晕会看着像灰的 */
+  box-shadow: 0 0 0 3px var(--meng-alias-positive-subtle);
 }
 
-.railStamp[data-state='unconfigured'] {
-  background: var(--meng-alias-warning-subtle);
-  color: var(--meng-alias-warning);
+.dot[data-link-dot='fail'] {
+  border-color: var(--meng-alias-danger);
+  background: var(--meng-alias-danger);
 }
 
-/* 还没加进来的: 虚线 + 淡字。空心框在实心章旁边会读成渲染失败,
-   所以底色留着 */
-.railStamp[data-state='dormant'] {
-  background: var(--meng-alias-bg-inset);
-  border: 1px dashed var(--meng-alias-border-l2);
-  color: var(--meng-alias-fg-muted);
+.rowName {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
-.railName {
+.rowMeta {
   flex: 1;
   min-width: 0;
-  font-size: 12.5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--meng-alias-fg-muted);
+  overflow: hidden;
+}
+
+.rowProto {
+  font-family: var(--meng-specific-font-mono);
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--meng-alias-bg-inset);
   color: var(--meng-alias-fg-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/*
-  状态点。**用点不用字**: 11 行右边各挂一个「未配置」徽章, 那一列字会变成
-  第二列列表, 而且每行看起来一样重。点只有 6px, 一眼扫过去就知道哪几行活着。
-  具体是哪种态, 右边的详情里有字。
-*/
-.railDot {
+.rowCount {
+  white-space: nowrap;
+}
+
+/* 状态的说法。**颜色和点一致** —— 点和字各说一套颜色会让人以为是两件事 */
+.rowLink {
   flex: none;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-}
-
-.railDot[data-state='available'] {
-  background: var(--meng-alias-positive);
-}
-
-.railDot[data-state='unconfigured'] {
-  background: var(--meng-alias-warning);
-}
-
-.railDot[data-state='dormant'] {
-  border: 1px solid var(--meng-alias-border-l3);
-}
-
-.railEmpty {
-  margin: 0;
-  padding: 4px 8px;
   font-size: 11.5px;
-  line-height: 1.55;
+  font-variant-numeric: tabular-nums;
   color: var(--meng-alias-fg-muted);
+  white-space: nowrap;
 }
 
-.railNew {
-  margin-top: 4px;
-  width: 100%;
-  padding: 6px 8px;
+.rowLink[data-link-label='ok'] {
+  color: var(--meng-alias-positive);
+}
+
+.rowLink[data-link-label='fail'] {
+  color: var(--meng-alias-danger);
+}
+
+/* 展开箭头: 纯 CSS 三角形, 不引图标库 */
+.chev {
+  flex: none;
+  width: 0;
+  height: 0;
+  margin-left: 2px;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--meng-alias-fg-disabled);
+  transition: transform 0.15s;
+}
+
+.chev[data-open] {
+  transform: rotate(180deg);
+}
+
+.activation {
+  flex: none;
   font: inherit;
-  font-size: 12px;
-  text-align: left;
-  border: 1px dashed var(--meng-alias-border-l2);
-  border-radius: 7px;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--meng-alias-border-l2);
   background: transparent;
   color: var(--meng-alias-fg-muted);
+  cursor: pointer;
+}
+
+.activation[aria-pressed='true'] {
+  border-color: var(--meng-alias-positive);
+  background: var(--meng-alias-positive-subtle);
+  color: var(--meng-alias-positive);
+}
+
+.activation:hover {
+  border-color: var(--meng-alias-accent);
+  color: var(--meng-alias-accent);
+}
+
+.rowLink[data-link-label='disabled'] {
+  color: var(--meng-alias-fg-muted);
+}
+
+.rowTest {
+  flex: none;
+  font: inherit;
+  font-size: 11.5px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--meng-alias-border-l2);
+  background: transparent;
+  color: var(--meng-alias-fg-secondary);
   cursor: pointer;
   transition:
     background 0.15s,
@@ -224,132 +246,128 @@
     color 0.15s;
 }
 
-.railNew:hover {
+.rowTest:hover:not(:disabled) {
   border-color: var(--meng-alias-accent);
   color: var(--meng-alias-accent);
   background: var(--meng-alias-accent-subtle);
 }
 
-/* ── 详情面板 ── */
-
-.panel {
-  min-width: 0;
-  padding: 18px 20px 20px;
-  border: 1px solid var(--meng-alias-border-l1);
-  border-radius: var(--meng-specific-radius-xl);
-  background: var(--meng-alias-bg-surface);
+.rowTest:disabled {
+  cursor: default;
+  opacity: 0.55;
 }
 
-.panelHead {
-  display: flex;
-  align-items: center;
+/*
+  折叠状态下的失败原话。**必须在这儿**: 展开才看得见等于"红了但不知道为什么",
+  而红的原因只有后端知道（401 要配 key / 连不上要改地址 / 404 要改路径 ——
+  三种动作完全不同）。
+*/
+.rowFail {
+  margin: 0;
+  padding: 0 13px 10px 31px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--meng-alias-danger);
+  overflow-wrap: anywhere;
+}
+
+/* 展开区里的失败原话。和折叠时那一行是同一份数据, 只是位置不同 */
+.bodyFail {
+  margin: 0 0 12px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: var(--meng-alias-danger-subtle);
+  color: var(--meng-alias-danger);
+  font-size: 11.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+/* ── 展开区 ── */
+
+.body {
+  padding: 0 14px 14px;
+  border-top: 1px solid var(--meng-alias-border-l1);
+  margin-top: 2px;
+  padding-top: 14px;
+}
+
+.fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
-  margin-bottom: 16px;
 }
 
-.panelStamp {
-  flex: none;
-  width: 40px;
-  height: 40px;
+.block {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--meng-alias-border-l1);
+}
+
+.blockHead {
   display: flex;
   align-items: center;
-  justify-content: center;
-  border-radius: 11px;
-  font-size: 17px;
-  font-weight: 700;
-  background: var(--meng-alias-bg-inset);
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.blockTitle {
+  font-size: 12px;
+  font-weight: 600;
   color: var(--meng-alias-fg-secondary);
 }
 
-.panelStamp[data-state='available'] {
-  background: var(--meng-alias-accent-subtle);
-  color: var(--meng-alias-accent);
-}
-
-.panelStamp[data-state='unconfigured'] {
-  background: var(--meng-alias-warning-subtle);
-  color: var(--meng-alias-warning);
-}
-
-.panelStamp[data-state='dormant'] {
-  background: var(--meng-alias-bg-inset);
-  border: 1px dashed var(--meng-alias-border-l2);
+.blockCount {
+  font-size: 11.5px;
   color: var(--meng-alias-fg-muted);
 }
 
-.panelTitleGroup {
-  flex: 1;
-  min-width: 0;
+.blockHead .mini {
+  margin-left: auto;
 }
 
-.panelNameLine {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-}
-
-.panelName {
+.blockHint {
   margin: 0;
-  font-size: 15.5px;
-  font-weight: 650;
-  color: var(--meng-alias-fg-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.tag {
-  flex: none;
-  font-size: 10.5px;
-  padding: 1px 6px;
-  border-radius: 5px;
-  background: var(--meng-alias-bg-inset);
+  font-size: 11.5px;
+  line-height: 1.5;
   color: var(--meng-alias-fg-muted);
 }
 
-.panelSub {
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.modes {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-top: 3px;
-  font-size: 11.5px;
-  color: var(--meng-alias-fg-muted);
+  margin-top: 12px;
 }
 
-.panelSub code {
-  font-family: var(--meng-specific-font-mono);
-}
-
-.badge {
+.modes .fieldLabel {
   flex: none;
-  font-size: 11.5px;
-  padding: 3px 9px;
-  border-radius: 99px;
-  white-space: nowrap;
-  background: var(--meng-alias-bg-inset);
-  color: var(--meng-alias-fg-muted);
+  width: 64px;
 }
 
-.badge[data-state='available'] {
-  background: var(--meng-alias-positive-subtle);
-  color: var(--meng-alias-positive);
+.toggles {
+  display: flex;
+  gap: 6px;
 }
 
-.badge[data-state='unconfigured'] {
-  background: var(--meng-alias-warning-subtle);
-  color: var(--meng-alias-warning);
-}
-
-.add {
-  flex: none;
+/*
+  模态开关。`aria-pressed` 决定样子 —— 选中态用 accent-subtle 而不是 accent:
+  它是"多选里的勾", 不是"主按钮"。用实心 accent 会让一行里出现两个主按钮。
+*/
+.toggle {
   font: inherit;
-  font-size: 12.5px;
-  padding: 5px 15px;
-  border-radius: 7px;
-  border: 1px solid var(--meng-alias-accent);
+  font-size: 11.5px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--meng-alias-border-l2);
   background: transparent;
-  color: var(--meng-alias-accent);
+  color: var(--meng-alias-fg-secondary);
   cursor: pointer;
   transition:
     background 0.15s,
@@ -357,43 +375,134 @@
     color 0.15s;
 }
 
-.add:hover:not(:disabled) {
+.toggle[aria-pressed='true'] {
+  border-color: var(--meng-alias-accent);
   background: var(--meng-alias-accent-subtle);
+  color: var(--meng-alias-accent);
 }
 
-.add:disabled {
-  cursor: default;
-  border-color: var(--meng-alias-border-l2);
+/* ── 模型清单 ── */
+
+.models {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: 9px;
+  overflow: hidden;
+}
+
+.model {
+  min-width: 0;
+}
+
+.model + .model {
+  border-top: 1px solid var(--meng-alias-border-l1);
+}
+
+.modelTop {
+  display: flex;
+  align-items: stretch;
+}
+
+.modelTop .modelHead {
+  flex: 1;
+  min-width: 0;
+}
+
+.modelRemove {
+  flex: none;
+  width: 30px;
+  border: 0;
+  border-left: 1px solid var(--meng-alias-border-l1);
+  background: transparent;
   color: var(--meng-alias-fg-muted);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.modelRemove:hover {
+  background: var(--meng-alias-danger-subtle);
+  color: var(--meng-alias-danger);
+}
+
+.modelHead {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 11px;
+  font: inherit;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.modelHead:hover {
+  background: var(--meng-alias-bg-hover);
+}
+
+.modelName {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--meng-specific-font-mono);
+  font-size: 12px;
+  color: var(--meng-alias-fg-code);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modelMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--meng-alias-fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.flag {
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-secondary);
+  font-size: 10.5px;
+}
+
+.modelEdit {
+  flex: none;
+  font-size: 11px;
+  color: var(--meng-alias-accent);
+}
+
+.modelBody {
+  padding: 10px 11px 14px;
+  border-top: 1px solid var(--meng-alias-border-l1);
   background: var(--meng-alias-bg-inset);
 }
 
-/* 后端原话。黄而不是红: 它是"还没配", 不是"配错了" */
-.missing {
-  margin: -4px 0 14px;
-  padding: 8px 11px;
-  border-radius: 8px;
-  background: var(--meng-alias-warning-subtle);
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--meng-alias-warning);
+.modelBody .input {
+  background: var(--meng-alias-bg-surface);
 }
 
-.dormantNote {
-  margin: 0 0 16px;
-  font-size: 12.5px;
-  line-height: 1.6;
-  color: var(--meng-alias-fg-muted);
-}
-
-/* ── 可编辑的三格 ── */
-
-.fields {
+.manualModels {
   display: flex;
-  flex-direction: column;
-  gap: 13px;
-  margin-bottom: 4px;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
 }
+
+.manualModels .input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── 表单零件 ── */
 
 .field {
   display: flex;
@@ -433,6 +542,49 @@
   color: var(--meng-alias-fg-muted);
 }
 
+/*
+  下拉。和 `.input` 的区别只有两处: 不用等宽字体（选项是给人读的句子, 不是 id）,
+  以及 `cursor: pointer`。**不画自定义箭头** —— 原生 select 的箭头在各平台都
+  自带键盘与读屏语义, 自己画一个等于把这些重新实现一遍。
+*/
+.select {
+  width: 100%;
+  font: inherit;
+  font-size: 12.5px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  border: 1px solid var(--meng-alias-border-l2);
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-primary);
+  cursor: pointer;
+  outline: none;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.select:focus {
+  border-color: var(--meng-alias-accent);
+  background: var(--meng-alias-bg-surface);
+}
+
+/* 内置那家的协议: 只读一行。**不给输入框** —— 它来自目录, 改了会发不出去 */
+.readonly {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.readonlyValue {
+  font-family: var(--meng-specific-font-mono);
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 7px;
+  border: 1px dashed var(--meng-alias-border-l2);
+  color: var(--meng-alias-fg-secondary);
+  background: transparent;
+}
+
 .hint,
 .fieldError {
   font-size: 11px;
@@ -455,6 +607,7 @@
   color: var(--meng-alias-danger);
   font-size: 12px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .actions {
@@ -503,113 +656,120 @@
   opacity: 0.6;
 }
 
-/* ── 模型清单 ── */
-
-.modelBlock {
-  margin-top: 20px;
-  padding-top: 16px;
-  border-top: 1px solid var(--meng-alias-border-l1);
-}
-
-.modelHead {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.modelTitle {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--meng-alias-fg-secondary);
-}
-
-.modelCount {
-  font-size: 11.5px;
-  color: var(--meng-alias-fg-muted);
-}
-
-.modelList {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  border: 1px solid var(--meng-alias-border-l1);
-  border-radius: 9px;
-  overflow: hidden;
-}
-
-.modelRow {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 7px 11px;
-  min-width: 0;
-}
-
-.modelRow + .modelRow {
-  border-top: 1px solid var(--meng-alias-border-l1);
-}
-
-.modelName {
-  flex: 1;
-  min-width: 0;
-  font-family: var(--meng-specific-font-mono);
-  font-size: 12px;
-  color: var(--meng-alias-fg-code);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.modelMeta {
+/* 小号动作键（测试连接 / 重新拉取 / ＋添加）。和 ghost 的差别只有尺寸 */
+.mini {
   flex: none;
+  font: inherit;
+  font-size: 11.5px;
+  padding: 4px 11px;
+  border-radius: 6px;
+  border: 1px solid var(--meng-alias-border-l2);
+  background: transparent;
+  color: var(--meng-alias-fg-secondary);
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    color 0.15s;
+}
+
+.mini:hover:not(:disabled) {
+  border-color: var(--meng-alias-accent);
+  color: var(--meng-alias-accent);
+  background: var(--meng-alias-accent-subtle);
+}
+
+.mini:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+/* ── 移除一家 ──
+ * 放在最底下、最左边, 和「保存」分开: 它的后果比保存大一个数量级,
+ * 挨着摆会让两个按钮看起来是同一类操作。
+ */
+.removeRow {
   display: flex;
   align-items: center;
   gap: 9px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--meng-alias-border-l1);
+}
+
+.removeWarn {
+  flex: 1;
+  min-width: 12em;
   font-size: 11px;
-  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  color: var(--meng-alias-danger);
+}
+
+/* 平时只是"一行淡字", 不像按钮 —— 这个动作不该在视觉上抢注意力 */
+.removeBtn {
+  font: inherit;
+  font-size: 11.5px;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
   color: var(--meng-alias-fg-muted);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
-.modelFlag {
-  padding: 1px 5px;
-  border-radius: 4px;
-  background: var(--meng-alias-bg-inset);
-  font-size: 10px;
+.removeBtn:hover {
+  color: var(--meng-alias-danger);
 }
 
-/* ── 新建表单 ── */
-
-.form {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 18px 20px 20px;
-  border: 1px solid var(--meng-alias-border-l1);
-  border-radius: var(--meng-specific-radius-xl);
-  background: var(--meng-alias-bg-surface);
+/* 确认那一下才用实心 danger: 到这里已经没有退路了 */
+.danger {
+  font: inherit;
+  font-size: 12.5px;
+  padding: 6px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--meng-alias-danger);
+  background: var(--meng-alias-danger);
+  color: var(--meng-alias-fg-on-accent);
+  cursor: pointer;
+  transition: opacity 0.15s;
 }
 
-.formTitle {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 650;
+.danger:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.danger:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* ── 空态 / 加载 / 出错 ── */
+
+.empty {
+  padding: 34px 20px;
+  border: 1px dashed var(--meng-alias-border-l2);
+  border-radius: 12px;
+  text-align: center;
+}
+
+.emptyTitle {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
   color: var(--meng-alias-fg-primary);
 }
 
-/* ── 整页级状态 ── */
-
-.empty {
-  margin: 0;
-  padding: 20px;
-  border: 1px dashed var(--meng-alias-border-l2);
-  border-radius: var(--meng-specific-radius-xl);
-  font-size: 12.5px;
+.emptyHint {
+  margin: 0 auto;
+  max-width: 46em;
+  font-size: 12px;
+  line-height: 1.6;
   color: var(--meng-alias-fg-muted);
 }
 
 .loading {
-  padding: 18px 2px;
   font-size: 12.5px;
   color: var(--meng-alias-fg-muted);
 }
@@ -617,48 +777,320 @@
 .error {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 12px;
+  gap: 12px;
+  margin-bottom: 14px;
   padding: 10px 12px;
   border-radius: 9px;
   background: var(--meng-alias-danger-subtle);
   color: var(--meng-alias-danger);
-  font-size: 12.5px;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
-.retry {
+.error .ghost {
+  flex: none;
+  margin-left: auto;
+  padding: 4px 12px;
+  font-size: 11.5px;
+}
+
+.noteWrap {
+  margin-top: 20px;
+}
+
+/* ── 添加卡片（遮罩上的浮层） ── */
+
+/*
+  遮罩用 `--meng-alias-scrim`, **不是** bg-overlay: 后者是不透明的面,
+  拿它当遮罩会把底下的列表整片盖掉 —— 用户会以为页面被替换了,
+  而不是"上面开了一层"。
+*/
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--meng-specific-z-overlay);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--meng-alias-scrim);
+}
+
+.card {
+  width: min(560px, 100%);
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--meng-alias-border-l2);
+  border-radius: 14px;
+  background: var(--meng-alias-bg-overlay);
+  box-shadow: var(--meng-alias-shadow-lg);
+  overflow: hidden;
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px 12px;
+  border-bottom: 1px solid var(--meng-alias-border-l1);
+}
+
+.cardTitle {
+  flex: 1;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--meng-alias-fg-primary);
+}
+
+.cardClose {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
   font: inherit;
-  font-size: 12px;
-  padding: 3px 10px;
+  font-size: 15px;
+  line-height: 1;
+  border: 0;
   border-radius: 6px;
-  border: 1px solid var(--meng-alias-danger);
   background: transparent;
-  color: var(--meng-alias-danger);
+  color: var(--meng-alias-fg-muted);
   cursor: pointer;
 }
 
-.retry:hover {
+.cardClose:hover {
+  background: var(--meng-alias-bg-hover);
+  color: var(--meng-alias-fg-primary);
+}
+
+/* 内容区自己滚, 头尾不动 —— 滚到底才看得见「添加」是最糟的交互 */
+.cardBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  padding: 16px 18px;
+}
+
+.cardFoot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--meng-alias-border-l1);
   background: var(--meng-alias-bg-surface);
 }
 
+/* ── 模型 id 列表（卡片里那一格） ── */
+
+.modelEdit {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 148px;
+  overflow-y: auto;
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: 8px;
+  background: var(--meng-alias-bg-inset);
+}
+
+.modelEditRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 4px 10px;
+  min-width: 0;
+}
+
+.modelEditRow + .modelEditRow {
+  border-top: 1px solid var(--meng-alias-border-l1);
+}
+
+.modelEditId {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--meng-specific-font-mono);
+  font-size: 12px;
+  color: var(--meng-alias-fg-primary);
+}
+
+/* 删除键。**不用 danger 色** —— 它删的是一条还没保存的草稿, 不是已有数据 */
+.modelEditDel {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--meng-alias-fg-muted);
+  cursor: pointer;
+}
+
+.modelEditDel:hover {
+  background: var(--meng-alias-bg-hover);
+  color: var(--meng-alias-fg-primary);
+}
+
+.addRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.addRow .input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── 探测结果 ── */
+
+.discover {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.discoverRow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.probeOk,
+.probeFail {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.probeOk {
+  color: var(--meng-alias-positive);
+}
+
+.probeFail {
+  color: var(--meng-alias-danger);
+  overflow-wrap: anywhere;
+}
+
 /*
-  窄屏: 列表折到上面、详情在下面。**不折成一栏的两个 tabs** ——
-  折起来之后"这一家和上一家比谁缺 key"就做不到了, 而那是窄屏下唯一还能
-  横着看的机会（一行一个, 勉强还能扫）。
+  清单本身可以滚 —— 一个网关回一百多条是常事, 撑开卡片就没法填别的格子了。
+  滚动只包住条目, 不包住下面那条「写入」。
 */
-@media (max-width: 900px) {
-  .split {
+.discoverList {
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.discoverItems {
+  max-height: 34vh;
+  overflow-y: auto;
+  background: var(--meng-alias-bg-inset);
+}
+
+.discoverItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.discoverItem:hover {
+  background: var(--meng-alias-bg-hover);
+}
+
+.discoverItem + .discoverItem {
+  border-top: 1px solid var(--meng-alias-border-l1);
+}
+
+.discoverItem input {
+  flex: none;
+  accent-color: var(--meng-alias-accent);
+}
+
+.discoverId {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--meng-specific-font-mono);
+  font-size: 11.5px;
+  color: var(--meng-alias-fg-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.discoverCap {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--meng-alias-fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.discoverFoot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 11px;
+  border-top: 1px solid var(--meng-alias-border-l1);
+  background: var(--meng-alias-bg-surface);
+}
+
+.discoverFoot .hint {
+  flex: 1;
+  min-width: 0;
+}
+
+.discoverFoot .primary,
+.discoverFoot .ghost {
+  padding: 4px 11px;
+  font-size: 11.5px;
+}
+
+/* ── 窄屏 ── */
+
+@media (max-width: 760px) {
+  .top {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .topActions {
+    justify-content: flex-end;
+  }
+
+  .fields,
+  .grid {
     grid-template-columns: minmax(0, 1fr);
-    gap: 16px;
   }
 
-  /* 折成一栏后注脚不再缩进 —— 那时候缩进看起来像错位 */
-  .noteWrap {
-    margin-left: 0;
+  /* 窄屏放不下"协议 + 款数 + 最长"，只留款数 —— 其余在展开区里 */
+  .rowProto,
+  .rowCount:last-child {
+    display: none;
   }
 
-  .railSection + .railSection {
-    margin-top: 12px;
-    padding-top: 12px;
+  .scrim {
+    padding: 0;
+    place-items: end stretch;
+  }
+
+  .card {
+    width: 100%;
+    max-height: 92vh;
+    border-radius: 14px 14px 0 0;
   }
 }

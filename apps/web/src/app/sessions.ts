@@ -23,6 +23,24 @@ export interface SessionSummary {
   lastSeq: number
   /** 内容预览。后端目前不提供 —— 有就渲染第二行，没有就单行 */
   preview?: string
+  /**
+   * 这段会话绑在哪个工作区（工作区的 `id`）。
+   *
+   * 后端 `session.list` 现在**还不给**这个字段（HANDOFF §1.16）。缺 = 不属于任何
+   * 工作区 = 侧栏「任务」那一段。给了就按工作区分组 —— 见 `workspaces.ts`。
+   */
+  workspace?: string
+}
+
+/**
+ * 新会话的默认名字来自首条消息，而不是后端生成的流水号。
+ * 多行消息只取第一行；过长名字保留前 48 个字符，避免撑坏侧栏。
+ */
+export function sessionTitleFromInput(text: string): string {
+  const firstLine = text.trim().split(/\r?\n/, 1)[0]?.trim() ?? ''
+  const normalized = firstLine.replace(/[\t ]+/g, ' ')
+  const chars = Array.from(normalized)
+  return chars.length > 48 ? `${chars.slice(0, 48).join('')}…` : normalized
 }
 
 export interface SessionGroup {
@@ -79,6 +97,27 @@ export function groupSessions(list: readonly SessionSummary[], now: number): Ses
     .filter((g) => g.items.length > 0)
 }
 
+/** 侧栏任务区默认只展示最近 5 条，超过后折叠。 */
+export const TASK_PREVIEW_LIMIT = 5
+
+/**
+ * 任务预览。当前会话如果排在 5 条之外，要替换最后一条把它带出来 ——
+ * 否则用户点进一条旧任务，侧栏反而找不到当前项。
+ */
+export function previewTasks(
+  list: readonly SessionSummary[],
+  activeId: string | undefined,
+  limit = TASK_PREVIEW_LIMIT,
+): { items: SessionSummary[]; hidden: number } {
+  const size = Math.max(0, Math.floor(limit))
+  const items = list.slice(0, size)
+  if (activeId !== undefined && list.some((item) => item.sessionId === activeId) && !items.some((item) => item.sessionId === activeId)) {
+    const active = list.find((item) => item.sessionId === activeId)
+    if (active && items.length > 0) items[items.length - 1] = active
+  }
+  return { items, hidden: Math.max(0, list.length - items.length) }
+}
+
 /** 后端返回的脏数据一律兜底，不让一个坏字段把整张列表打空 */
 export function normalizeSessions(raw: unknown): SessionSummary[] {
   if (!Array.isArray(raw)) return []
@@ -94,6 +133,7 @@ export function normalizeSessions(raw: unknown): SessionSummary[] {
       at: typeof rec.at === 'number' && Number.isFinite(rec.at) ? rec.at : 0,
       lastSeq: typeof rec.lastSeq === 'number' && Number.isFinite(rec.lastSeq) ? rec.lastSeq : 0,
       preview: typeof rec.preview === 'string' && rec.preview ? rec.preview : undefined,
+      workspace: typeof rec.workspace === 'string' && rec.workspace ? rec.workspace : undefined,
     })
   }
   return out
@@ -108,5 +148,26 @@ export async function listSessions(transport: Transport): Promise<SessionSummary
     return normalizeSessions(await transport.invoke('session.list'))
   } catch {
     return []
+  }
+}
+
+/** 归档只是本机视图状态：不从后端删会话，也不改变会话内容。 */
+export const ARCHIVED_SESSIONS_KEY = 'meng.archivedSessions'
+
+export function readArchivedSessions(): string[] {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(ARCHIVED_SESSIONS_KEY) ?? '[]')
+    if (!Array.isArray(parsed)) return []
+    return [...new Set(parsed.filter((id): id is string => typeof id === 'string' && id !== ''))]
+  } catch {
+    return []
+  }
+}
+
+export function writeArchivedSessions(ids: readonly string[]): void {
+  try {
+    localStorage.setItem(ARCHIVED_SESSIONS_KEY, JSON.stringify(ids))
+  } catch {
+    // 隐私模式或存储已满时仍保留当前页面里的归档状态。
   }
 }

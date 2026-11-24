@@ -40,9 +40,10 @@
  */
 
 import { defineInvariant, type Ctx, type Disposer } from '@meng/core'
-import type { FsService } from '@meng/fs'
+import type { FsCallOptions, FsService } from '@meng/fs'
 import { collectBlocks, type LLMService } from '@meng/llm'
 import { mainOf, readable } from '@meng/net'
+import type { SessionService } from '@meng/session'
 import type { ToolDef, ToolResult, ToolService } from '@meng/tools'
 
 export const name = 'meng-plugin-tool-outline'
@@ -275,6 +276,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
   if (!tools) throw new Error('能力面 tools 未装载')
   const fs = ctx.get<FsService>('fs')
   if (!fs) throw new Error('能力面 fs 未装载')
+  const session = ctx.get<SessionService>('session')
 
   // 80 太紧: Node 文档的 API 条目是五级标题, 压到 80 块就只能按行硬切,
   // 地图上一连六块都叫"（续 Promises API）", 什么信息都没有。
@@ -309,7 +311,13 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
 
       let read
       try {
-        read = await fs.readText(raw)
+        const workspace = call?.sessionId ? session?.workspaceOf(call.sessionId) : undefined
+        const options: FsCallOptions = {
+          ...(workspace ? { root: workspace } : {}),
+          ...(call?.grants?.outside === true ? { outside: true } : {}),
+          ...(call?.grants?.sensitive === true ? { sensitive: true } : {}),
+        }
+        read = await fs.readText(raw, options)
       } catch (err) {
         return fail(`读不了 ${raw}: ${err instanceof Error ? err.message : String(err)}`)
       }

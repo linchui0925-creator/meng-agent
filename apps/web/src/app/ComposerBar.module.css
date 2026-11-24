@@ -1,0 +1,550 @@
+/*
+  输入框下面那一条。参考图里它是**贴着输入框底部**的一行小字级控件:
+  左边"在哪个目录、什么权限"，右边"用哪个模型、用了多少上下文"。
+
+  尺寸上刻意比正文小一档（11.5px）: 这一条是"环境信息", 不是要读的内容。
+  它比输入框本身更该安静 —— 否则用户会先看见一排按钮再看见自己打的字。
+*/
+
+.bar {
+  position: relative;
+  display: flex;
+  /* 吃掉整条剩余宽度: 右边的"用了多少"要贴到发送键左边,
+     否则整排控件会挤在左边、右边空出一大块 */
+  flex: 1;
+  align-items: center;
+  gap: var(--meng-specific-space-2);
+  min-width: 0;
+}
+
+/* 一组 = 一组同义的东西。组内 2px（它们是并列的），组间 8px + 一条竖线 */
+.group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* 模型与 Thinking 是发送键前的最后一组；有上下文时由 tail 把整段推到右边。 */
+.group[data-group='model'] {
+  flex: none;
+  margin-left: auto;
+}
+
+.tail ~ .group[data-group='model'] {
+  margin-left: 0;
+}
+
+.group[data-group='model'] .pop {
+  right: 0;
+  left: auto;
+}
+
+/*
+ * 分隔线。**高度只有 12px** —— 撑满整条会让它看起来像两栏表格；
+ * 它要表达的是"这两组不同类", 不是"这是两个区域"。
+ */
+.sep {
+  flex: none;
+  width: 1px;
+  height: 14px;
+  margin: 0 2px;
+  background: var(--meng-alias-border-l2);
+}
+
+/* 读数靠右。它是"已经花了多少", 不是开关 —— 和左边的控件分开站 */
+.tail {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  min-width: 0;
+}
+
+/* 弹层的定位锚。菜单必须长在**触发它的那颗胶囊**上方, 而不是整条的边上 */
+.anchor {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+/* ── 一颗小胶囊 ── */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 220px;
+  padding: 4px 7px;
+  font: inherit;
+  font-size: var(--meng-specific-text-xs);
+  line-height: 1.3;
+  border: 0;
+  border-radius: var(--meng-specific-radius-md);
+  background: transparent;
+  color: var(--meng-alias-fg-secondary);
+  cursor: pointer;
+  transition:
+    background 0.12s,
+    color 0.12s;
+}
+
+.chip:hover {
+  background: var(--meng-alias-bg-hover);
+  color: var(--meng-alias-fg-primary);
+}
+
+/* 打开时给它一个"按下去了"的样子: 弹层从它下面长出来, 两者必须连得上 */
+.chip[data-active] {
+  background: var(--meng-alias-bg-active);
+  color: var(--meng-alias-fg-primary);
+}
+
+.chipIcon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  color: var(--meng-alias-fg-muted);
+}
+
+.chipIcon svg {
+  width: 13px;
+  height: 13px;
+}
+
+.chipLabel,
+.chipMono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chipMono {
+  font-family: var(--meng-specific-font-mono);
+  font-size: 11px;
+}
+
+.chipChev {
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--meng-alias-fg-disabled);
+}
+
+.chipChev svg {
+  width: 11px;
+  height: 11px;
+}
+
+/* ＋ 是个方块, 不带文字 —— 和旁边那些"有名字的胶囊"区分开 */
+.plus {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--meng-specific-radius-md);
+  background: transparent;
+  color: var(--meng-alias-fg-muted);
+  cursor: pointer;
+}
+
+.plus:hover {
+  background: var(--meng-alias-bg-hover);
+  color: var(--meng-alias-fg-primary);
+}
+
+/* ── git ──
+ * 分支名 + 一个脏点。**没有分支就不画** —— 不是 git 目录时这一格不该出现。
+ */
+.git {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  font-size: var(--meng-specific-text-xs);
+  color: var(--meng-alias-fg-muted);
+  max-width: 180px;
+}
+
+.git svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+
+.gitName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--meng-specific-font-mono);
+  font-size: 11px;
+}
+
+/* 脏点用 warning 而不是 danger: 有未提交改动是**正常状态**, 不是错误 */
+.gitDirty {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--meng-alias-warning);
+}
+
+/* ── 上下文用量 ── */
+
+.context {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: var(--meng-specific-radius-md);
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-secondary);
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.contextLabel {
+  color: var(--meng-alias-fg-primary);
+  font-size: 10px;
+}
+
+.contextChev {
+  display: inline-flex;
+  color: var(--meng-alias-fg-muted);
+}
+
+.contextChev svg {
+  width: 10px;
+  height: 10px;
+}
+
+.context:disabled {
+  cursor: default;
+  color: var(--meng-alias-fg-muted);
+}
+
+.context:hover,
+.context[data-active] {
+  background: var(--meng-alias-bg-hover);
+  color: var(--meng-alias-fg-secondary);
+}
+
+.contextTrack {
+  width: 34px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--meng-alias-bg-active);
+  overflow: hidden;
+}
+
+.contextFill {
+  display: block;
+  height: 100%;
+  background: var(--meng-alias-accent);
+  transition: width 0.2s;
+}
+
+/* 快满了才换色。80% 以下都是"正常", 提前变黄会让人以为一直有问题 */
+.context[data-context='high'] .contextFill {
+  background: var(--meng-alias-warning);
+}
+
+.context[data-context='high'] .contextText,
+.context[data-context='high'] .contextLabel {
+  color: var(--meng-alias-warning);
+}
+
+/* ── 弹层 ──
+ * 贴着按钮**上方**弹出（输入框在屏幕底部, 往下弹会被裁掉）。
+ * 这是这一条里唯一必须 absolute 的地方。
+ */
+.pop {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: var(--meng-specific-z-overlay);
+  min-width: 208px;
+  max-width: 300px;
+  border: 1px solid var(--meng-alias-border-l2);
+  border-radius: var(--meng-specific-radius-lg);
+  background: var(--meng-alias-bg-overlay);
+  box-shadow: var(--meng-alias-shadow-lg);
+  overflow: hidden;
+}
+
+/* 模型菜单需要两列：左边分组，右边信息卡。右对齐时向左展开，避免出屏。 */
+.pop.popWide {
+  width: min(506px, calc(100vw - 28px));
+  max-width: none;
+}
+
+.pop.popRight {
+  right: 0;
+  left: auto;
+}
+
+/* 上下文面板比普通菜单宽；不能让通用 300px 上限把右侧裁掉。 */
+.pop.popContext {
+  width: 328px;
+  max-width: calc(100vw - 28px);
+  max-height: calc(100vh - 84px);
+  overflow-y: auto;
+}
+
+.menu {
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+}
+
+/* 模型可能有几十个: 只让**列表**滚, 标题和脚注不动 */
+.menuScroll {
+  max-height: 244px;
+  overflow-y: auto;
+}
+
+/* 模型菜单：左边是供应商分组，右边是悬停信息卡。 */
+.modelMenu {
+  position: relative;
+  width: 100%;
+  flex-direction: row;
+  align-items: stretch;
+  padding: 0;
+}
+
+.modelListPane {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 4px;
+}
+
+.modelGroup {
+  margin: 2px 0;
+}
+
+.modelGroup + .modelGroup {
+  border-top: 1px solid var(--meng-alias-border-l1);
+  padding-top: 5px;
+}
+
+.providerHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px 3px;
+  color: var(--meng-alias-fg-secondary);
+}
+
+.providerBadge {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border-radius: 5px;
+  background: var(--meng-alias-accent-subtle);
+  color: var(--meng-alias-accent);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.providerName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.modelInfo {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 250px;
+  min-width: 0;
+  padding: 14px 14px 12px;
+  border-left: 1px solid var(--meng-alias-border-l2);
+  background: var(--meng-alias-bg-overlay);
+  box-shadow: var(--meng-alias-shadow-md);
+  overflow-y: auto;
+}
+
+.modelInfoHead {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.modelInfoProvider {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--meng-alias-accent);
+}
+
+.modelInfoName {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--meng-alias-fg-primary);
+}
+
+.modelInfoId {
+  font-family: var(--meng-specific-font-mono);
+  font-size: 10.5px;
+  color: var(--meng-alias-fg-muted);
+  overflow-wrap: anywhere;
+}
+
+.modelInfoFacts {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0 0;
+}
+
+.modelInfoFacts > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.modelInfoFacts dt {
+  flex: none;
+  color: var(--meng-alias-fg-muted);
+  font-size: 10.5px;
+}
+
+.modelInfoFacts dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--meng-alias-fg-secondary);
+  font-size: 10.5px;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: var(--meng-specific-text-sm);
+  text-align: left;
+  border: 0;
+  border-radius: var(--meng-specific-radius-md);
+  background: transparent;
+  color: var(--meng-alias-fg-primary);
+  cursor: pointer;
+}
+
+.menuItem:hover:not(:disabled) {
+  background: var(--meng-alias-bg-hover);
+}
+
+.menuItem:disabled {
+  cursor: default;
+  color: var(--meng-alias-fg-disabled);
+}
+
+/* 勾位固定宽度: 没有勾的项也要对齐, 否则整列文字会左右跳 */
+.check {
+  flex: none;
+  width: 14px;
+  text-align: center;
+  color: var(--meng-alias-accent);
+  font-size: 11px;
+}
+
+.menuItem:disabled .check {
+  color: var(--meng-alias-fg-disabled);
+}
+
+.wsName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modelId {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--meng-specific-font-mono);
+  font-size: 11.5px;
+}
+
+.menuSep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--meng-alias-border-l1);
+}
+
+.menuNote {
+  margin: 2px 8px 4px;
+  padding-right: 14px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--meng-alias-fg-muted);
+}
+
+/* "待接" 标签: 让"暂时没有"和"坏了"看起来不一样 */
+.pending {
+  flex: none;
+  margin-left: auto;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-muted);
+  font-size: 9.5px;
+  letter-spacing: 0.02em;
+}
+
+.menuArrow {
+  flex: none;
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  color: var(--meng-alias-fg-disabled);
+}
+
+.menuArrow svg {
+  width: 11px;
+  height: 11px;
+}
+
+.search {
+  margin: 2px 4px 4px;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: var(--meng-specific-text-sm);
+  border: 1px solid var(--meng-alias-border-l2);
+  border-radius: var(--meng-specific-radius-md);
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-primary);
+  outline: none;
+}
+
+.search:focus {
+  border-color: var(--meng-alias-accent);
+  background: var(--meng-alias-bg-surface);
+}

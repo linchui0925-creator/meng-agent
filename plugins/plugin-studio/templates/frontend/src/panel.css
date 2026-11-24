@@ -1,0 +1,10 @@
+.{{id}}-panel {
+  display: grid;
+  gap: 12px;
+  padding: 20px;
+}
+
+.{{id}}-panel h2,
+.{{id}}-panel p {
+  margin: 0;
+}

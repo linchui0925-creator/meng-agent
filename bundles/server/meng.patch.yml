@@ -15,8 +15,25 @@
         webRoot: !!js process.env.MENG_WEB_ROOT || ''
         pluginRoot: !!js process.env.MENG_PLUGIN_ROOT || ''
 
+    # dsh-purge: 后端工具 / 网页 op + 前端设置分区。需要 web 能力面，
+    # 所以属于 server 层，不能放进无 HTTP 的 kit。
+    - id: dsh-purge
+      name: '@meng/plugin-dsh-purge'
+
+    # 插件工坊: 创建/安装/市场/发布者/遥测。它是插件系统的控制面，
+    # 默认随 server 启动，否则用户没有入口管理外部插件。
+    - id: plugin-studio
+      name: '@meng/plugin-studio'
+
     # questions seam 的 HTTP 桥: question.answer / question.list 两个 op。
     # 下行不需要桥 —— question/* 走会话事件流, web 自动广播。
     # 桌面端不装这层, 换 ipc 桥即可, seam 不动
     - id: questions-web
       name: '@meng/plugin-questions-web'
+
+    # 定时任务：持久化任务定义、到点新建会话并运行。
+    - id: schedules-local
+      name: '@meng/plugin-schedules-local'
+      config:
+        dir: !!js process.env.MENG_DATA_DIR || '.meng'
+        tickMs: 5000

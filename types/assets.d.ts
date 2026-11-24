@@ -17,3 +17,23 @@ declare module '*.svg' {
   const src: string
   export default src
 }
+
+/**
+ * `import.meta.env` 的最小声明。
+ *
+ * 同上: 不引 `vite/client`（根目录解析不到）。只声明前端真正读过的那几个 ——
+ * 一个字段都没多写, 因为多写的每一个都会被当成"这里有这个能力"。
+ * 真要用别的（`BASE_URL` / `SSR`）时再加, 加的时候顺便想一下它在这个仓库里
+ * 是不是真的存在。
+ */
+interface ImportMetaEnv {
+  /** 构建期常量: dev server 下是 true */
+  readonly DEV: boolean
+  /** 构建期常量: 打包产物里是 true */
+  readonly PROD: boolean
+  readonly MODE: string
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv
+}

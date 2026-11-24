@@ -1,0 +1,100 @@
+/* 工具分区。只有三类东西: 一组开关、一句重话、一句注脚。
+ *
+ * 排版上的取舍: 工具名做成**小代码块**而不是逗号串起来的句子 ——
+ * 它们是字面量（要照着认的名字），混在句子里会被当成普通词读过去。
+ */
+
+.loading {
+  color: var(--meng-alias-fg-muted);
+  font-size: var(--meng-specific-text-sm);
+}
+
+.problem {
+  max-width: 560px;
+  padding: 14px 16px;
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: var(--meng-specific-radius-lg);
+  background: var(--meng-alias-bg-inset);
+}
+
+.problemTitle {
+  margin: 0 0 6px;
+  color: var(--meng-alias-fg-primary);
+  font-size: var(--meng-specific-text-sm);
+  font-weight: var(--meng-specific-weight-strong);
+}
+
+.problemText {
+  margin: 0;
+  color: var(--meng-alias-fg-secondary);
+  font-size: var(--meng-specific-text-sm);
+  line-height: 1.6;
+}
+
+.problemText + .problemText {
+  margin-top: 6px;
+}
+
+/* 组里那串工具名。换行而不是横向滚 —— 这一行是"让你认出这是哪一组"，
+ * 不需要读全，但不能被裁掉一半 */
+.toolList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 7px;
+}
+
+.tool {
+  padding: 1px 5px;
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: var(--meng-specific-radius-sm);
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-secondary);
+  font-family: var(--meng-specific-font-mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+/* 关掉的那一组: 工具名整排淡下去。开关在右边已经说了状态，
+ * 这里是给"扫一眼"用的第二重信号 */
+.tool[data-off] {
+  color: var(--meng-alias-fg-disabled);
+  text-decoration: line-through;
+}
+
+/* 用量。它是**依据**不是结论，所以小一号、弱一档 —— 但必须看得见，
+ * 否则用户只能靠猜"这一组我用过没有" */
+.usage {
+  display: block;
+  margin-top: 6px;
+  color: var(--meng-alias-fg-muted);
+  font-size: var(--meng-specific-text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage[data-idle] {
+  color: var(--meng-alias-fg-disabled);
+}
+
+/* core 关着时的重话。用 warning 而不是 danger:
+ * 它是"你现在这个配置会很难用"，不是"出错了" */
+.warn {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--meng-alias-warning);
+  border-radius: var(--meng-specific-radius-sm);
+  background: var(--meng-alias-warning-subtle);
+  color: var(--meng-alias-fg-primary);
+  font-size: var(--meng-specific-text-sm);
+  line-height: 1.6;
+}
+
+.msg {
+  margin: 10px 0 0;
+  font-size: var(--meng-specific-text-sm);
+  color: var(--meng-alias-fg-secondary);
+}
+
+.msg[data-tone='error'] {
+  color: var(--meng-alias-danger);
+}

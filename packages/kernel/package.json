@@ -1,0 +1,15 @@
+{
+  "name": "@meng/kernel",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "@meng/core": "workspace:*"
+  },
+  "meng": {
+    "bundle": {
+      "patch": "./meng.patch.yml"
+    }
+  }
+}

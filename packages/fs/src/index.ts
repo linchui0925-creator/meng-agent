@@ -65,6 +65,8 @@ export interface FsIntent {
   kind: 'write' | 'edit'
   /** 绝对路径, seam 与策略内部用 */
   path: string
+  /** 本次调用实际使用的根目录，权限记账必须按它隔离。 */
+  root: string
   /** 相对 root */
   rel: string
   /** 目标文件当前是否存在 (先读后写策略的判断依据) */
@@ -86,6 +88,8 @@ export interface FsIntent {
  * 的, 全局开关会让一次批准顺带放开同时跑着的别的调用。
  */
 export interface FsCallOptions {
+  /** 本次调用的会话工作区；缺省仍使用全局 sandbox.root。 */
+  root?: string
   /** 本次调用已获批准越过工作区 (读写工作区外) */
   outside?: boolean
   /** 本次调用已获批准写敏感路径 (由审批层写入) */
@@ -130,7 +134,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
    *
    * 唯一真需要"提前做"的是目录本身 (mkdir), 那也在写的时候按需做。
    */
-  const rootOf = (): string => resolve(config.root ?? sandboxRoot(ctx))
+  const rootOf = (opts?: FsCallOptions): string => resolve(opts?.root ?? config.root ?? sandboxRoot(ctx))
 
   /**
    * 这次调用能不能出工作区。
@@ -144,7 +148,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
   function safeResolve(input: unknown, opts?: FsCallOptions): string {
     const raw = String(input ?? '')
     if (!raw) throw new FsError('FS_EMPTY_PATH', '缺少路径参数')
-    const root = rootOf()
+    const root = rootOf(opts)
     const abs = resolve(root, raw)
     if (!outsideAllowed(opts) && !isWithin(root, raw)) {
       // 不回显绝对路径: 那等于把宿主机目录结构泄露给模型
@@ -157,8 +161,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
    * 给模型看的相对路径。**越界时给绝对路径** —— `../../../etc/hosts` 这种
    * 相对串既难读又容易被模型当成"工作区内的 etc/hosts"再拼一次。
    */
-  const relOf = (abs: string): string => {
-    const root = rootOf()
+  const relOf = (abs: string, root: string): string => {
     return isWithin(root, abs) ? relative(root, abs) || '.' : abs
   }
 
@@ -184,26 +187,29 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
 
     async readText(rel, opts) {
       const abs = safeResolve(rel, opts)
+      const root = rootOf(opts)
       const raw = await readFile(abs, 'utf8')
       const out: ReadResult = {
-        rel: relOf(abs),
+        rel: relOf(abs, root),
         totalLines: 0,
         lines: raw.split('\n'),
       }
       out.totalLines = out.lines.length
       // 观察策略靠这个事件记账 —— editText 内部的读取不发这条,
       // seam 自己读不算"模型读过"
-      ctx.emit('fs/read', { rel: out.rel, path: abs })
+      ctx.emit('fs/read', { root, rel: out.rel, path: abs })
       return out
     },
 
     async writeText(rel, content, opts) {
       const abs = safeResolve(rel, opts)
+      const root = rootOf(opts)
       const s = await statAbs(abs)
       const intent: FsIntent = {
         kind: 'write',
         path: abs,
-        rel: relOf(abs),
+        root,
+        rel: relOf(abs, root),
         exists: s.exists,
         ...(opts ? { granted: opts } : {}),
       }
@@ -213,19 +219,21 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
       await writeFile(abs, content, 'utf8')
       // 刚写过的文件视为"已观察": write → edit 的连续操作不该被
       // 先读后写策略再拦一次 (dsh 的 createIfAbsent 同款语义)
-      ctx.emit('fs/written', { rel: intent.rel, path: abs, kind: 'write' })
+      ctx.emit('fs/written', { root, rel: intent.rel, path: abs, kind: 'write' })
       return { rel: intent.rel, operation: s.exists ? 'update' : 'create', bytes: Buffer.byteLength(content) }
     },
 
     async editText(rel, oldString, newString, replaceAll, opts) {
       if (!oldString) throw new FsError('FS_EMPTY_OLD', 'old_string 不能为空')
       const abs = safeResolve(rel, opts)
+      const root = rootOf(opts)
       const s = await statAbs(abs)
       if (!s.exists) throw new FsError('FS_NOT_FOUND', `文件不存在: ${rel}`)
       const intent: FsIntent = {
         kind: 'edit',
         path: abs,
-        rel: relOf(abs),
+        root,
+        rel: relOf(abs, root),
         exists: true,
         ...(opts ? { granted: opts } : {}),
       }
@@ -238,7 +246,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
       }
       const next = replaceAll ? raw.split(oldString).join(newString) : raw.replace(oldString, newString)
       await writeFile(abs, next, 'utf8')
-      ctx.emit('fs/written', { rel: intent.rel, path: abs, kind: 'edit' })
+      ctx.emit('fs/written', { root, rel: intent.rel, path: abs, kind: 'edit' })
       return { rel: intent.rel, replaced: replaceAll ? count : 1 }
     },
 

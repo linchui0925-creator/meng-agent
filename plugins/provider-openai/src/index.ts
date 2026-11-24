@@ -18,7 +18,7 @@
 
 import * as z from 'zod'
 import type { Ctx, Disposer } from '@meng/core'
-import { getConfig, openScope } from '@meng/config'
+import { getCredentials, openScope, type CredentialService } from '@meng/config'
 import {
   PROTOCOLS as PI_PROTOCOLS,
   catalog as piCatalog,
@@ -30,6 +30,8 @@ import {
   primeCatalog,
   protocolIds,
   readListing,
+  responsesJsonApi,
+  responsesSseCloseApi,
   toChunks,
   toContext,
   type CatalogModel,
@@ -162,9 +164,21 @@ const ModelOverrideSchema = ModelSchema.omit({ id: true })
 const RouteSchema = z.object({
   /** 给人看的名字。留空回落成路由名 (路由名是英文 id, 不该直接上界面) */
   displayName: z.string().optional(),
+  /** 停用后保留配置，但不参与模型清单、默认路由和实际请求。 */
+  enabled: z.boolean().default(true),
+  /** 默认路由按它升序选择；相同则保持配置里的声明顺序。 */
+  order: z.number().int().default(0),
 
   /** wire 协议。表里没有的选不了 —— 选了就是当场发不出去的配置 */
   protocol: z.enum(PROTOCOL_IDS).default('openai-completions'),
+  /**
+   * 传输方式。`sse-close` 保留真正的 SSE 增量，但在 `response.completed`
+   * 后主动断开，适合“发完完成事件却不关连接”的网关；`json` 只适合不支持
+   * `stream:true` 的网关，会等完整响应后一次还原，首字不再流式。
+   */
+  responseTransport: z.enum(['sse', 'sse-close', 'json']).default('sse').meta({
+    description: 'Responses 网关传输方式：普通用 sse；完成事件后不关连接用 sse-close；只支持非流式才用 json',
+  }),
 
   /**
    * 接口地址。**允许为空**: azure / google-vertex 这类端点里带资源名，
@@ -175,8 +189,8 @@ const RouteSchema = z.object({
   baseURL: z.string().default(''),
 
   /**
-   * **环境变量名, 不是密钥。** 值只从 `process.env` 读, 永不落盘 ——
-   * 这条来自 dsh: a literal key is not a configuration value。
+   * **凭据引用名, 不是密钥。** 值优先读本机凭据库（0600），找不到时回退
+   * 同名环境变量；密钥不写进 settings/清单，也不随配置下发。
    */
   apiKeyEnv: z.string().min(1).default(DEFAULT_API_KEY_ENV),
 
@@ -200,6 +214,14 @@ const RouteSchema = z.object({
   /** 额外的请求头。有些网关要 `X-Tenant` / `HTTP-Referer` 这类东西 */
   headers: z.record(z.string(), z.string()).default({}),
 
+  /** wire 上的思考开关。enabled 未配档位时按 high，disabled 不下发推理档。 */
+  thinking: z.enum(['enabled', 'disabled']).optional().meta({
+    description: '思考开关。留空 = 跟随服务端默认；enabled 未选档位时按 high',
+  }),
+  /** 路由默认推理档；请求里显式给的档位优先。off = 明确关闭。 */
+  reasoningEffort: z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']).optional().meta({
+    description: '默认思考程度。off = 关闭；单次调用可覆盖这个默认值',
+  }),
   temperature: z.number().min(0).max(2).optional(),
   /** 多久没收到数据帧判流挂死。默认不设 = 不启用看门狗 */
   streamIdleTimeoutMs: z.number().int().positive().optional(),
@@ -216,7 +238,10 @@ export type RouteMap = Record<string, RouteProfile>
 const DEFAULT_ROUTES: RouteMap = {
   openai: {
     displayName: 'OpenAI',
+    enabled: true,
+    order: 0,
     protocol: 'openai-completions',
+    responseTransport: 'sse',
     baseURL: DEFAULT_BASE_URL,
     apiKeyEnv: DEFAULT_API_KEY_ENV,
     models: [],
@@ -260,6 +285,7 @@ export function apply(ctx: Ctx): Disposer {
   if (!llm) throw new Error('provider-openai 依赖 llm')
 
   const { scope, dispose } = openScope(ctx, CONFIG_SCOPE, CONFIG)
+  const credentials = getCredentials(ctx) as CredentialService | undefined
   ctx.effect(() => dispose)
 
   /**
@@ -274,13 +300,18 @@ export function apply(ctx: Ctx): Disposer {
     return raw !== null && typeof raw === 'object' ? raw : {}
   }
 
+  const enabledRoutes = (): Array<[string, RouteProfile]> =>
+    Object.entries(routes())
+      .filter(([, profile]) => profile.enabled)
+      .sort(([, a], [, b]) => a.order - b.order)
+
   const profileOf = (route: string): RouteProfile | undefined => routes()[route]
 
   /** 一条路由的凭据**值**。路由里存的是变量名, 值只从 env 读 */
   const apiKeyOf = (profile: RouteProfile | undefined): string => {
     if (!profile) return ''
     const envName = profile.apiKeyEnv || DEFAULT_API_KEY_ENV
-    const own = (process.env[envName] ?? '').trim()
+    const own = (credentials?.get(envName) || process.env[envName] || '').trim()
     if (own) return own
     // 历史名字。**只在绑的是默认名时**才看它: 用户显式绑了 MY_KEY 却去读
     // OPENAI_API_KEY, 会让"我明明绑了却没生效"变得毫无线索
@@ -299,6 +330,8 @@ export function apply(ctx: Ctx): Disposer {
    * 模型，不再落到 `FALLBACK_MODELS`（兜底还在，给用户自建的空网关用）。
    */
   const catalogModelsOf = (route: string): CatalogModel[] => piCatalogProvider(route)?.models ?? []
+  /** 只在内存保存最近一次端点结果；绝不写回配置形成新快照。 */
+  const liveModels = new Map<string, DiscoveredModel[]>()
 
   /**
    * 一条路由的模型清单 —— **pi 形状**，直接能喂给请求。
@@ -320,12 +353,14 @@ export function apply(ctx: Ctx): Disposer {
     const declared = profile.models
     const overrides = profile.modelOverrides ?? {}
     const directory = catalogModelsOf(route)
+    const discovered = liveModels.get(route)
 
     // 模型 id 集合: 声明的 > 目录的 > 只写了覆盖的键 > 兜底。
     // 最后那一档只在"没有目录、也没声明"时出现 —— 让一条刚加的空网关
     // 至少有一个能选的东西, 而不是从选择器里消失
-    const ids =
-      declared.length > 0
+    const ids = discovered
+      ? discovered.map((m) => m.id)
+      : declared.length > 0
         ? declared.map((m) => m.id)
         : directory.length > 0
           ? directory.map((m) => m.id)
@@ -335,6 +370,7 @@ export function apply(ctx: Ctx): Disposer {
 
     return ids.map((id) => {
       const entry = declared.find((m) => m.id === id)
+      const fresh = discovered?.find((m) => m.id === id)
       // 兜底条目也是"我们知道的条目", 所以要参与合并 —— 否则它的容量白写了
       const base =
         directory.find((m) => m.id === id) ??
@@ -349,7 +385,7 @@ export function apply(ctx: Ctx): Disposer {
       const thinkingLevelMap = (base as { thinkingLevelMap?: unknown } | undefined)?.thinkingLevelMap
       return {
         id,
-        name: override?.name || source?.name || id,
+        name: fresh?.name || override?.name || source?.name || id,
         // 声明里没写协议就跟路由的 —— 一条路由一个默认协议，个别模型可覆盖
         api: entry?.api ?? source?.api ?? profile.protocol,
         provider: route,
@@ -359,8 +395,8 @@ export function apply(ctx: Ctx): Disposer {
         cost:
           (base as { cost?: CatalogModel['cost'] } | undefined)?.cost ??
           ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } as CatalogModel['cost']),
-        contextWindow: override?.contextWindow ?? source?.contextWindow ?? profile.defaultContextWindow,
-        maxTokens: override?.maxTokens ?? source?.maxTokens ?? profile.defaultMaxTokens,
+        contextWindow: fresh?.contextWindow ?? override?.contextWindow ?? source?.contextWindow ?? profile.defaultContextWindow,
+        maxTokens: fresh?.maxTokens ?? override?.maxTokens ?? source?.maxTokens ?? profile.defaultMaxTokens,
         ...(compat === undefined ? {} : { compat }),
         ...(thinkingLevelMap === undefined ? {} : { thinkingLevelMap }),
       } as CatalogModel
@@ -404,6 +440,9 @@ export function apply(ctx: Ctx): Disposer {
     if (needs.length > 0) out.push(...needs)
     else if (!apiKeyOf(profile)) out.push(`环境变量 ${profile.apiKeyEnv} 里没有值`)
 
+    if (profile.responseTransport === 'json' && profile.protocol !== 'openai-responses') {
+      out.push('responseTransport=json 只支持 openai-responses 协议')
+    }
     if (profile.models.length > 0 && Object.keys(profile.modelOverrides).length > 0) {
       out.push('models 与 modelOverrides 只能二选一 (models 已经整体替换了模型目录)')
     }
@@ -431,6 +470,7 @@ export function apply(ctx: Ctx): Disposer {
         configScope: CONFIG_SCOPE,
         declared: isDeclared(route),
         available: missing.length === 0,
+        manualModels: profile?.models.length ? true : undefined,
         ...(missing.length > 0 ? { missing } : {}),
       }
     },
@@ -455,6 +495,7 @@ export function apply(ctx: Ctx): Disposer {
   async function* streamRoute(route: string, req: StreamRequest): AsyncIterable<StreamChunk> {
     const profile = profileOf(route)
     if (!profile) throw new LlmError(`路由 ${route} 已经从配置里删掉了`, LLM_CODE.NO_ADAPTER)
+    if (!profile.enabled) throw new LlmError(`路由 ${route} 已停用`, LLM_CODE.NO_ADAPTER)
 
     const apiKey = apiKeyOf(profile)
     if (!apiKey) {
@@ -486,6 +527,11 @@ export function apply(ctx: Ctx): Disposer {
       baseUrl: profile.baseURL,
       ...(Object.keys(profile.headers).length === 0 ? {} : { headers: profile.headers }),
       models,
+      ...(profile.responseTransport === 'json'
+        ? { apiOverrides: { 'openai-responses': responsesJsonApi() } }
+        : profile.responseTransport === 'sse-close'
+          ? { apiOverrides: { 'openai-responses': responsesSseCloseApi() } }
+          : {}),
       // 现读：设置里换了变量名/值，下一个请求就跟上
       key: () => apiKeyOf(profileOf(route)),
     })
@@ -507,9 +553,11 @@ export function apply(ctx: Ctx): Disposer {
       catalogModelsOf(route).find((m) => m.id === modelId)?.maxTokens
 
     const temperature = req.temperature ?? profile.temperature ?? DEFAULT_TEMPERATURE
+    const reasoning = req.reasoningEffort ?? routeReasoning(profile)
     const events = provider.streamSimple(model, context, {
       apiKey,
       temperature,
+      ...(reasoning ? { reasoning } : {}),
       ...(req.maxTokens ?? explicitMax ? { maxTokens: req.maxTokens ?? explicitMax } : {}),
       ...(req.signal === undefined ? {} : { signal: req.signal }),
     })
@@ -533,7 +581,7 @@ export function apply(ctx: Ctx): Disposer {
     a.length === b.length && a.every((x, i) => x === b[i])
 
   const sync = (): void => {
-    const want = Object.keys(routes())
+    const want = enabledRoutes().map(([id]) => id)
     if (sameSet(want, registered)) return
     try {
       if (!handle) handle = llm.registerAdapter(want, adapter)
@@ -549,10 +597,8 @@ export function apply(ctx: Ctx): Disposer {
   /**
    * 模型发现 —— 设置页那个「获取可用模型」按钮。
    *
-   * 两条路, 与 dsh 一致:
-   *   · 内置目录知道的供应商 → **直接答, 不打网络**。目录里的容量信息
-   *     比端点报的更全（多数 `/models` 只给一个 id）
-   *   · 目录不认识的（用户自加的网关）→ 才真去 `GET <base>/models`
+   * 已配置路由默认问端点；新建供应商的草稿可先看内置目录。`source` 可以
+   * 显式选择来源，但实时清单只用端点结果决定可选 ID，目录只补容量等资料。
    *
    * 密钥从**环境变量**读, 不接受请求里传来的明文值 —— 见
    * `ModelDiscoveryRequest.apiKeyEnv` 上的注释。
@@ -579,13 +625,10 @@ export function apply(ctx: Ctx): Disposer {
           : []
 
       /**
-       * `source: 'endpoint'` 时**不看目录**, 直接往下打网络。
-       *
-       * 这是"以端点为准"的落点: 目录是快照, 供应商下线一款、上线一款,
-       * 目录都不知道, 而用户账号下真实能用什么只有端点知道。默认仍走目录
-       * （省一次网络请求, 且容量更全), 但那条快路不该变成"永远问不到真话"。
+       * 已配置路由和 `source: 'endpoint'` 都直接问端点。目录是静态快照,
+       * 只能补资料；供应商下线或上线的 ID 都以账号实际拿到的清单为准。
        */
-      if (request.source !== 'endpoint' && directoryModels.length > 0) {
+      if ((request.source === 'catalog' || (!profile && request.source !== 'endpoint')) && directoryModels.length > 0) {
         return directoryModels.map((m) => ({
           id: m.id,
           ...(m.name ? { name: m.name } : {}),
@@ -616,7 +659,13 @@ export function apply(ctx: Ctx): Disposer {
       }
 
       const envName = request.apiKeyEnv || profile?.apiKeyEnv || ''
-      const apiKey = usableKey(envName ? (process.env[envName] ?? '').trim() : '')
+      const apiKey = usableKey(envName ? (credentials?.get(envName) || process.env[envName] || '').trim() : '')
+      if (envName && !apiKey) {
+        throw new LlmError(
+          `环境变量 ${envName} 里没有值，无法读取模型列表。请先设置该变量并重启梦；如果地址是 api.minimaxi.com，密钥也要属于该站，不能用本机网关的 key。`,
+          LLM_CODE.MISSING_CREDENTIAL,
+        )
+      }
 
       const listing: ListingRequest = {
         baseURL,
@@ -635,13 +684,30 @@ export function apply(ctx: Ctx): Disposer {
       let url = lister.url(listing)
       const maxPages = lister.maxPages ?? 1
       for (let page = 0; page < maxPages; page++) {
-        const body = await getJson(url, lister.headers(listing), request.signal, lister.label)
+        let body: unknown
+        try {
+          body = await getJson(url, lister.headers(listing), request.signal, lister.label)
+        } catch (error) {
+          if (error instanceof LlmError && /\b(401|403)\b/.test(error.message)) {
+            throw new LlmError(
+              `${error.message}\n本次使用的密钥变量：${envName || '(未指定)'}。请确认该变量里的 key 属于这个地址，而不是本机网关或另一家供应商的 key。`,
+              LLM_CODE.DISCOVERY_FAILED,
+              { cause: error },
+            )
+          }
+          throw error
+        }
         const got = await readListing(body, url, lister)
         found.push(...got.models)
         if (got.next === undefined) break
         url = got.next
       }
-    return withCapacity(found, directoryModels)
+    const result = withCapacity(found, directoryModels)
+    if (profile && request.provider && request.baseURL === undefined
+      && request.protocol === undefined && request.apiKeyEnv === undefined) {
+      liveModels.set(request.provider, result)
+    }
+    return result
   }
 
   ctx.effect(() => llm.registerModelDiscovery(CONFIG_SCOPE, discover))
@@ -758,78 +824,22 @@ export function apply(ctx: Ctx): Disposer {
       console.warn('[meng] provider-openai: 供应商环境变量名探测失败, 用默认名:', err)
     })
 
-  /**
-   * 保存路由后**自动拉一次模型**。
-   *
-   * 只对**目录不认识**的路由动手。目录认识的 (zai / groq / …) 模型由目录供 ——
-   * 把目录抄进配置反而把快照冻住: 目录更新了它也不会变, 而用户在配置文件里
-   * 多了一份自己不知道的旧清单。所以"自动拉"解决的是自建网关那一段:
-   * 它不写 models 就只剩一个兜底的 gpt-4o-mini。
-   *
-   * 写回用**子路径** (`routes.<id>.models`), 不动别的字段 —— 整表写回会和
-   * 设置页的读-改-写互相覆盖 (那条正是 config.set 加 path 的理由)。
-   *
-   * 失败不重试: 网关没配 key / 协议不支持列表都会失败, 而每次 onChange 都重试
-   * 等于把一个必然失败的请求绑在每一次保存上。记下"这组参数试过了", 换了
-   * 地址/协议/变量名才再试。
-   */
-  const autoTried = new Map<string, string>()
-  const signatureOf = (profile: RouteProfile): string =>
-    [profile.baseURL, profile.protocol, profile.apiKeyEnv].join('|')
-
-  const autoFillModels = async (): Promise<void> => {
-    const svc = getConfig(ctx)
-    if (!svc) return
-    for (const [id, profile] of Object.entries(routes())) {
-      if (piCatalogProvider(id)) continue // 目录认识 → 模型由目录供
-      if (profile.models.length > 0) continue // 用户自己写了模型, 别覆盖
-      if (!profile.baseURL.trim()) continue // 没地址, 拉不了
-      const sig = signatureOf(profile)
-      if (autoTried.get(id) === sig) continue
-      autoTried.set(id, sig)
-      try {
-        const found = await discover({ provider: id })
-        if (found.length === 0) continue
-        await svc.set(
-          CONFIG_SCOPE,
-          'routes',
-          // 只搬 DiscoveredModel 有的四个字段。缺容量就是"不知道",
-          // 不补 0 —— 补 0 会让界面显示"上下文 0", 那是假信息
-          found.map((m) => ({
-            id: m.id,
-            ...(m.name ? { name: m.name } : {}),
-            ...(m.contextWindow === undefined ? {} : { contextWindow: m.contextWindow }),
-            ...(m.maxTokens === undefined ? {} : { maxTokens: m.maxTokens }),
-          })),
-          [id, 'models'],
-        )
-        console.log(`[meng] provider ${id} · 自动拉到 ${found.length} 个模型`)
-      } catch (err) {
-        // 拉不到不是错误: 用户还能手填。但要说一句, 否则"配好了却只有
-        // 一个 gpt-4o-mini"会像 bug
-        const why = err instanceof Error ? err.message : String(err)
-        console.warn(`[meng] provider ${id} · 自动拉模型失败 (可手动添加): ${why}`)
-      }
-    }
-  }
-
-  // 配置一变就对一遍。**订阅而不是轮询**: 没有变化就没有开销,
-  // 也没有"两次轮询之间加了路由看不见"的窗口
+  // 配置变化只作废旧内存结果。下一次列表读取或真实请求会重新拉取；
+  // 不把端点清单写进 routes.<id>.models，避免把厂商更新重新冻成配置快照。
   ctx.effect(
     () =>
       scope.onChange(() => {
+        liveModels.clear()
+        llm.invalidateModels()
         sync()
         syncDirectory()
-        // 不 await: 拉模型是网络请求, 不能让保存动作等它。
-        // 拉回来之后自己会再触发一次 onChange (models 非空 → 不会重复拉)
-        void autoFillModels()
       }),
   )
 
   if (!process.env.MENG_QUIET) {
     for (const route of Object.keys(routes())) {
       const profile = profileOf(route)
-      if (!profile) continue
+      if (!profile?.enabled) continue
       const ids = modelsOf(route).map((m) => m.id)
       const key = apiKeyOf(profile) ? '' : ` · 未配置 (${profile.apiKeyEnv} 为空)`
       console.log(`[meng] provider ${route} · ${ids.join(', ')} · ${stripSlash(profile.baseURL)}${key}`)
@@ -839,6 +849,7 @@ export function apply(ctx: Ctx): Disposer {
   return () => {
     dirHandle?.()
     dirHandle = undefined
+    liveModels.clear()
     handle?.()
     handle = undefined
     dispose()
@@ -855,6 +866,11 @@ export function apply(ctx: Ctx): Disposer {
  * 吐 reasoning-delta; 真正的挂死是一个字节都不来。总时长超时会误杀长思考。
  * 触发后抛 TIMEOUT, assemble() 会把它变成一条带 code 的 error finish。
  */
+function routeReasoning(profile: RouteProfile): Exclude<RouteProfile['reasoningEffort'], 'off'> | undefined {
+  if (profile.thinking === 'disabled' || profile.reasoningEffort === 'off') return undefined
+  return profile.reasoningEffort ?? (profile.thinking === 'enabled' ? 'high' : undefined)
+}
+
 async function* withIdleTimeout<T>(source: AsyncIterable<T>, ms: number): AsyncIterable<T> {
   const it = source[Symbol.asyncIterator]()
   try {

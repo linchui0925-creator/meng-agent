@@ -47,7 +47,14 @@ interface PluginModule {
 
 /** 读一份 patch 文件并逐行装载。失败不抛出, 全部记进状态图 */
 export async function loadPatch(ctx: Ctx, graph: StatusGraph, file: string): Promise<MountedRow[]> {
-  const rows = await readRows(file)
+  return loadPatches(ctx, graph, [file])
+}
+
+/**
+ * 一次解析多份清单。**所有行进入同一个依赖队列**，所以后面的清单可以提供
+ * 前面清单等待的能力；每行仍用自己的清单路径解析包名，不改变裸包解析边界。
+ */
+export async function loadPatches(ctx: Ctx, graph: StatusGraph, files: string[]): Promise<MountedRow[]> {
   const mounted: MountedRow[] = []
 
   /** 已经 import 过、等着装的行。依赖要等别的行装完才有, 所以不能当场决定 */
@@ -60,51 +67,52 @@ export async function loadPatch(ctx: Ctx, graph: StatusGraph, file: string): Pro
   }
 
   // 第一遍: 登记 + import + 读前端面, **不装载**。
-  // 拆两遍的理由在下面那段 —— 依赖是跨行的, 一遍扫到底、遇到"依赖还没齐"就
-  // continue, 那一行就再也无人问津: 把 bundles/base 的行序倒过来,
-  // agent / persistence / tools 会永远停在 pending (scripts/probe-order.ts 复现过)
+  // 多份清单也先全部进队: 否则前一份的 pending 会在后一份加载前被提前判死。
   const queue: Ready[] = []
 
-  for (const row of rows) {
-    graph.discovered(row.id, row.name ?? row.id)
+  for (const file of files) {
+    const rows = await readRows(file)
+    for (const row of rows) {
+      graph.discovered(row.id, row.name ?? row.id)
 
-    const disabled = row.disabled === true || evalJs(row.disabled)
-    if (disabled) {
-      graph.disabled(row.id)
-      continue
-    }
-    if (!row.name) {
-      // 纯前端插件: 只有产物, 没有后端 apply。清单里写了 client 就登记,
-      // 否则是配置写漏了 —— 不能悄悄跳过, 那会让前端永远等一个不存在的插件
-      if (row.client) {
-        graph.active(row.id, [], row.client)
+      const disabled = row.disabled === true || evalJs(row.disabled)
+      if (disabled) {
+        graph.disabled(row.id)
         continue
       }
-      graph.failed(row.id, '行缺少 name')
-      continue
-    }
+      if (!row.name) {
+        // 纯前端插件: 只有产物, 没有后端 apply。清单里写了 client 就登记,
+        // 否则是配置写漏了 —— 不能悄悄跳过, 那会让前端永远等一个不存在的插件
+        if (row.client) {
+          graph.active(row.id, [], row.client)
+          continue
+        }
+        graph.failed(row.id, '行缺少 name')
+        continue
+      }
 
-    let mod: PluginModule
-    const specifier = toSpecifier(row.name, file)
-    try {
-      mod = (await import(specifier)) as PluginModule
-    } catch (err) {
-      graph.failed(row.id, `import 失败: ${errorText(err)}`)
-      continue
-    }
+      let mod: PluginModule
+      const specifier = toSpecifier(row.name, file)
+      try {
+        mod = (await import(specifier)) as PluginModule
+      } catch (err) {
+        graph.failed(row.id, `import 失败: ${errorText(err)}`)
+        continue
+      }
 
-    // 前端面: 包自己声明的那份 + 清单行的覆盖, 浅合并 (见 clientFaceOf)
-    const client = await clientFaceOf(specifier, row.client)
-    queue.push({
-      row,
-      mod,
-      specifier,
-      ...(client ? { client } : {}),
-      inject: mod.inject ?? [],
-    })
+      // 前端面: 包自己的那份 + 清单行的覆盖, 浅合并 (见 clientFaceOf)
+      const client = await clientFaceOf(specifier, row.client)
+      queue.push({
+        row,
+        mod,
+        specifier,
+        ...(client ? { client } : {}),
+        inject: mod.inject ?? [],
+      })
+    }
   }
 
-  // 第二遍: 反复扫描, 每轮装上"依赖这次齐了"的行, 直到某一轮毫无进展。
+  // 第二遍: 反复扫描全局队列, 每轮装上"依赖这次齐了"的行, 直到某一轮毫无进展。
   //
   // 不是先排拓扑序再装: 依赖不是清单里写死的边, 而是"ctx 上有没有这个能力面",
   // 插件可以在 apply 里注册任何名字 (甚至注册别人等着的名字)。所以只能边装边看。

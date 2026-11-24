@@ -9,6 +9,7 @@
     "@meng/core": "workspace:*",
     "@meng/exec": "workspace:*",
     "@meng/jobs": "workspace:*",
+    "@meng/session": "workspace:*",
     "@meng/tools": "workspace:*"
   }
 }

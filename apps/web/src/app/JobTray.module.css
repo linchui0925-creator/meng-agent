@@ -1,0 +1,212 @@
+.tray {
+  width: 100%;
+  max-width: var(--meng-specific-content-max);
+  margin: 0 auto var(--meng-specific-space-2);
+  border: 1px solid var(--meng-alias-border-glass);
+  border-radius: var(--meng-specific-radius-xl);
+  background: var(--meng-alias-bg-glass-strong);
+  box-shadow: var(--meng-alias-shadow-md);
+  backdrop-filter: blur(22px) saturate(1.08);
+  overflow: hidden;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--meng-specific-space-2);
+  width: 100%;
+  min-height: 34px;
+  padding: var(--meng-specific-space-2) var(--meng-specific-space-3);
+  border: 0;
+  background: transparent;
+  color: var(--meng-alias-fg-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.head strong {
+  color: var(--meng-alias-fg-primary);
+  font-size: var(--meng-specific-text-xs);
+  font-weight: var(--meng-specific-weight-normal);
+}
+
+.live {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--meng-specific-radius-full);
+  background: var(--meng-alias-fg-disabled);
+}
+
+.live[data-running] {
+  background: var(--meng-alias-live);
+  box-shadow: 0 0 0 4px var(--meng-alias-live-subtle);
+}
+
+.hint {
+  color: var(--meng-alias-fg-muted);
+  font-size: 10px;
+}
+
+.chevron {
+  margin-left: auto;
+  color: var(--meng-alias-fg-muted);
+  font-size: 11px;
+}
+
+.body {
+  border-top: 1px solid var(--meng-alias-border-l1);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--meng-specific-space-2);
+  padding: var(--meng-specific-space-2) var(--meng-specific-space-3);
+}
+
+.row + .row {
+  border-top: 1px solid var(--meng-alias-border-l1);
+}
+
+.dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--meng-specific-radius-full);
+  background: var(--meng-alias-live);
+}
+
+.row[data-status='failed'] .dot {
+  background: var(--meng-alias-danger);
+}
+
+.row[data-status='killed'] .dot {
+  background: var(--meng-alias-warning);
+}
+
+.main {
+  min-width: 0;
+  flex: 1;
+}
+
+.titleLine {
+  display: flex;
+  align-items: center;
+  gap: var(--meng-specific-space-2);
+  min-width: 0;
+}
+
+.titleLine strong {
+  overflow: hidden;
+  color: var(--meng-alias-fg-primary);
+  font-size: var(--meng-specific-text-xs);
+  font-weight: var(--meng-specific-weight-normal);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kind {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: var(--meng-specific-radius-sm);
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-muted);
+  font-size: 9px;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 9px;
+  margin-top: 2px;
+  color: var(--meng-alias-fg-muted);
+  font-size: 10px;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.actions button,
+.outputHead button {
+  padding: 3px 6px;
+  border: 0;
+  border-radius: var(--meng-specific-radius-sm);
+  background: transparent;
+  color: var(--meng-alias-accent);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.actions button:hover,
+.outputHead button:hover {
+  background: var(--meng-alias-bg-hover);
+}
+
+.actions .stop {
+  color: var(--meng-alias-danger);
+}
+
+.actions button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.error {
+  margin: 0;
+  padding: var(--meng-specific-space-2) var(--meng-specific-space-3);
+  border-top: 1px solid var(--meng-alias-border-l1);
+  color: var(--meng-alias-danger);
+  font-size: var(--meng-specific-text-xs);
+}
+
+.output {
+  border-top: 1px solid var(--meng-alias-border-l1);
+  background: var(--meng-alias-bg-inset);
+}
+
+.outputHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--meng-specific-space-1) var(--meng-specific-space-3);
+  color: var(--meng-alias-fg-muted);
+  font-size: 10px;
+}
+
+.outputHead strong {
+  font-weight: var(--meng-specific-weight-normal);
+}
+
+.output pre {
+  max-height: 180px;
+  margin: 0;
+  padding: var(--meng-specific-space-2) var(--meng-specific-space-3) var(--meng-specific-space-3);
+  overflow: auto;
+  color: var(--meng-alias-fg-code);
+  font-family: var(--meng-specific-font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 720px) {
+  .hint {
+    display: none;
+  }
+
+  .row {
+    align-items: flex-start;
+  }
+
+  .actions {
+    flex-direction: column;
+    align-items: flex-end;
+  }
+}

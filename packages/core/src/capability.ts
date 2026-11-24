@@ -16,6 +16,7 @@ export const CAPABILITIES = [
   'loop', // 对话循环 (策略层: 由 plugins/loop-* 填, 不在内核)
   'web', // HTTP / SSE 对外面
   'skill', // 技能发现与注入
+  'memory', // 上下文压缩 / 会话检索
   'sandbox', // 文件系统 / 子进程边界
   'approval', // 用户审批
 ] as const

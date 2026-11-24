@@ -142,7 +142,7 @@
  * 300 能放下 40 字还不折。**不收满整行** —— 撑满 710px 时这一行会读成
  * "一张表单", 用户不知道眼睛该落在哪儿; 右边留白反而给了落点 */
 .input {
-  flex: 0 1 300px;
+  flex: 0 1 420px;
   min-width: 140px;
   height: 30px;
   padding: 0 9px;
@@ -259,3 +259,19 @@
   color: var(--meng-alias-fg-muted);
   line-height: 1.65;
 }
+
+.clear {
+  flex: none;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--meng-alias-danger);
+  border-radius: var(--meng-specific-radius-md);
+  background: transparent;
+  color: var(--meng-alias-danger);
+  font-family: inherit;
+  font-size: var(--meng-specific-text-xs);
+  cursor: pointer;
+}
+
+.clear:hover:not(:disabled) { background: var(--meng-alias-danger-subtle); }
+.clear:disabled { opacity: .4; cursor: default; }

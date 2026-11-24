@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@meng/core": "workspace:*",
+    "@meng/llm": "workspace:*",
     "@meng/tools": "workspace:*"
   }
 }

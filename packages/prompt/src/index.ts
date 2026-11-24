@@ -13,16 +13,25 @@ import { defineInvariant, type Ctx, type Disposer } from '@meng/core'
 export const name = 'meng-prompt'
 export const inject: string[] = []
 
+export interface PromptRenderInput {
+  /** 当前会话号。插件可据此做“本会话不注入”等按会话判断 */
+  sessionId?: string
+}
+
 export interface Section {
   id: string
   /** 越小越靠前。0-99 保留给内核, 插件请用 100+ */
   order: number
-  render(ctx: Ctx): string | Promise<string>
+  /**
+   * 第一个参数仍是宿主能力面 Ctx（保持旧插件兼容），
+   * 第二个参数是本次请求上下文（目前只有 sessionId）。
+   */
+  render(ctx: Ctx, input?: PromptRenderInput): string | Promise<string>
 }
 
 export interface PromptService {
   section(section: Section): Disposer
-  render(): Promise<string>
+  render(input?: PromptRenderInput): Promise<string>
 }
 
 export function apply(ctx: Ctx, config: { persona?: string }): Disposer {
@@ -41,10 +50,10 @@ export function apply(ctx: Ctx, config: { persona?: string }): Disposer {
       }
     },
 
-    async render() {
+    async render(input = {}) {
       const ordered = [...sections.values()].sort((a, b) => a.order - b.order)
       const parts: string[] = []
-      for (const section of ordered) parts.push((await section.render(ctx)).trim())
+      for (const section of ordered) parts.push((await section.render(ctx, input)).trim())
       return parts.filter(Boolean).join('\n\n')
     },
   }

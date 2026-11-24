@@ -23,30 +23,13 @@
     - id: llm
       name: '@meng/llm'
       config:
-        defaultModel: ''
+        defaultModel:
+          provider: ''
+          model: ''
 
-    # 会话事件流: 唯一真相源
+    # 会话完整模块：SQLite 真相源、旧 JSONL 一次性导入、分页与管理都在内部。
     - id: session
       name: '@meng/session'
-
-    # 会话落盘 (append-only JSONL)。紧跟 session: 回放必须在任何 run 之前完成,
-    # 否则新事件的 seq 会和历史的撞车
-    - id: persistence
-      name: '@meng/persistence'
-      config:
-        dir: !!js process.env.MENG_DATA_DIR || '.meng'
-
-    # 记住"用户加过哪些目录"。会话自己带 workspace（写在事件里），这里存的是
-    # **还没有会话的那部分** —— 选择器要用它（"在这个目录里开一个"）
-    - id: workspaces
-      name: '@meng/workspaces'
-      config:
-        dir: !!js process.env.MENG_DATA_DIR || '.meng'
-
-    # 工具调用的完整记录 (本地 SQLite)。**可丢的附属数据**, 不是真相源:
-    # 事件流里只留 2000 字回显 + 一个 recordId, 全文在这里 —— 回放不该读几 MB 的 stdout
-    - id: records
-      name: '@meng/records'
       config:
         dir: !!js process.env.MENG_DATA_DIR || '.meng'
 
@@ -81,6 +64,15 @@
       name: '@meng/plugin-loop-basic'
       config:
         maxTurns: 24
+
+    # 记忆与上下文压缩。外部是一个插件，内部拆成压缩、搜索库和技能说明。
+    - id: memory
+      name: '@meng/plugin-memory'
+      config:
+        dir: !!js process.env.MENG_DATA_DIR || '.meng'
+        thresholdRatio: 0.8
+        retainRatio: 0.16
+        summaryMaxTokens: 8192
 
     # ── 以下是 P1 建包后启用的策略行, 现在注释掉 ──────────────────
     # 打开前记得先建对应包, 否则装载器会把它们记成 failed (这是对的:

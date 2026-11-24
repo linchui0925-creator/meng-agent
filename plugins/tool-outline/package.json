@@ -9,6 +9,7 @@
     "@meng/fs": "workspace:*",
     "@meng/llm": "workspace:*",
     "@meng/net": "workspace:*",
+    "@meng/session": "workspace:*",
     "@meng/tools": "workspace:*"
   }
 }

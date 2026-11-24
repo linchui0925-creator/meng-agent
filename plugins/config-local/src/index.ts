@@ -10,16 +10,16 @@
  * 已存的界面值盖住; 所以 `sourceOf()` 必须能回答"这值从哪来的", 那是排查
  * 这类问题的唯一入口。
  *
- * ## 密钥: settings 里存的是**环境变量名**, 不是值
+ * ## 密钥: settings 里存的是**凭据引用名**, 值在本机凭据库
  *
- * settings.json 里写的是:
- *     "llm.deepseek.key": "DEEPSEEK_API_KEY"
- * 值是运行时从 `process.env[DEEPSEEK_API_KEY]` 读的, 从不落盘。
+ * settings.json 里写的是引用名, 例如:
+ *     "llm.deepseek.apiKey": "DEEPSEEK_API_KEY"
+ * 值单独保存在同目录的 `credentials.json`（权限 0600），读取顺序是
+ * 本机凭据库 > 同名环境变量。页面永远不回显明文。
  *
- * 好处: settings.json 可以进备份、进 git、进截图都不出事 ——
- * 而"用户能在界面上管密钥"这件事又真的做到了。
- * 代价: **换密钥要重启进程**。env 是进程启动时读入的, 运行中的进程看不到
- * 新的 env。这是安全换来的代价, 写在文档里, 不藏着。
+ * 好处: settings.json 可以进备份、截图而不暴露密钥；用户又能在界面直接
+ * 粘贴 API Key，保存后下一次请求立即生效。
+ * 兼容: 没有本机值时继续读同名环境变量；清除本机值后也会回退到 env。
  *
  * ## 两种声明写法, 一条处理路径
  *
@@ -35,9 +35,9 @@
  * 现在接就是死代码。
  */
 
-import { existsSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import * as z from 'zod'
 import {
   CONFIG_CODE,
@@ -45,6 +45,7 @@ import {
   KERNEL_CONFIG,
   envNameOf,
   provideConfig,
+  provideCredentials,
   type ConfigDecl,
   type ConfigEntry,
   type ConfigScope,
@@ -52,6 +53,7 @@ import {
   type ConfigSource,
   type ConfigType,
   type ConfigWriteResult,
+  type CredentialService,
 } from '@meng/config'
 import type { Ctx, Disposer } from '@meng/core'
 import { defineInvariant } from '@meng/core'
@@ -233,8 +235,73 @@ export async function apply(
 ): Promise<Disposer> {
   // 引导值: settings 文件自己的位置**不能**从 settings 读, 只能从 env 或默认来。
   // 这是整个配置系统里唯一的鸡生蛋, 所以要写在这里, 让它是明面上的例外
-  const dir = resolve(config.dir ?? process.env['MENG_DATA_DIR'] ?? '.meng')
-  const file = config.file ?? join(dir, 'settings.json')
+  const file = config.file ?? join(resolve(config.dir ?? process.env['MENG_DATA_DIR'] ?? '.meng'), 'settings.json')
+  const dir = resolve(config.dir ?? (config.file ? dirname(file) : process.env['MENG_DATA_DIR'] ?? '.meng'))
+  const credentialsFile = join(dir, 'credentials.json')
+
+  /**
+   * 本机 API Key 库。settings.json 仍不存明文；值单独落 `credentials.json`，
+   * 文件权限固定 0600。引用名沿用原来的 apiKeyEnv，因此 provider 和环境变量
+   * 回退可以共用同一套键，不需要改路由格式。
+   */
+  let credentialValues: Record<string, string> = {}
+  try {
+    const parsed = JSON.parse(readFileSync(credentialsFile, 'utf8')) as {
+      version?: unknown
+      values?: unknown
+    }
+    if (parsed.version === 1 && parsed.values && typeof parsed.values === 'object' && !Array.isArray(parsed.values)) {
+      credentialValues = Object.fromEntries(
+        Object.entries(parsed.values).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+      )
+    }
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code
+    if (code !== 'ENOENT') console.warn(`[meng] credentials.json 读不出来，按空密钥库启动: ${(err as Error).message}`)
+  }
+
+  const credentialRef = (ref: string): string => {
+    const clean = ref.trim()
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(clean)) throw new Error(`凭据引用名不合法: ${ref}`)
+    return clean
+  }
+
+  const persistCredentials = async (): Promise<void> => {
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+    const tmp = `${credentialsFile}.tmp-${process.pid}-${Date.now()}`
+    writeFileSync(tmp, `${JSON.stringify({ version: 1, values: credentialValues }, null, 2)}
+`, { mode: 0o600 })
+    chmodSync(tmp, 0o600)
+    renameSync(tmp, credentialsFile)
+    chmodSync(credentialsFile, 0o600)
+  }
+
+  const credentials: CredentialService = {
+    get(ref) {
+      try { return credentialValues[credentialRef(ref)] } catch { return undefined }
+    },
+    has(ref) {
+      return Boolean(credentials.get(ref))
+    },
+    async set(ref, value) {
+      const key = credentialRef(ref)
+      const clean = String(value ?? '').trim()
+      if (!clean) throw new Error('API Key 不能为空')
+      credentialValues = { ...credentialValues, [key]: clean }
+      await persistCredentials()
+    },
+    async unset(ref) {
+      const key = credentialRef(ref)
+      const next = { ...credentialValues }
+      delete next[key]
+      credentialValues = next
+      await persistCredentials()
+    },
+    list() {
+      return Object.keys(credentialValues).sort()
+    },
+  }
+  ctx.effect(() => provideCredentials(ctx, credentials))
 
   /** 界面上改过的值。键是 `<scope>.<key>`, 密钥存的是 env 名 */
   let settings: Record<string, unknown> = {}
@@ -291,17 +358,18 @@ export async function apply(
     const full = `${scope}.${key}`
 
     if (slot.meta.secret) {
-      // 密钥: settings 里存的是**名字**, 值只从环境读
+      // 密钥: settings 里存引用名；值先读本机凭据库，再回退 env
       const bound = settings[full]
       const envName =
         typeof bound === 'string' && bound.trim() !== ''
           ? bound.trim()
           : (slot.meta.env ?? envNameOf(scope, key))
-      const value = process.env[envName]
+      const stored = credentials.get(envName)
+      const value = stored || process.env[envName]
       return {
         // 空串也是空 —— 密钥是空串等于没配
         value: value === undefined || value === '' ? undefined : value,
-        source: value === undefined || value === '' ? undefined : 'env',
+        source: value === undefined || value === '' ? undefined : (stored ? 'settings' : 'env'),
         secretRef: envName,
       }
     }

@@ -85,6 +85,12 @@ importers:
       '@meng/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@meng/kernel':
+        specifier: workspace:*
+        version: link:../../packages/kernel
+      '@meng/plugin-schedules-local':
+        specifier: workspace:*
+        version: link:../../plugins/schedules-local
       '@meng/provider-deepseek':
         specifier: workspace:*
         version: link:../../plugins/provider-deepseek
@@ -167,6 +173,9 @@ importers:
       '@meng/plugin-loop-basic':
         specifier: workspace:*
         version: link:../../plugins/loop-basic
+      '@meng/plugin-memory':
+        specifier: workspace:*
+        version: link:../../plugins/memory
       '@meng/prompt':
         specifier: workspace:*
         version: link:../../packages/prompt
@@ -257,12 +266,30 @@ importers:
       '@meng/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@meng/plugin-dsh-purge':
+        specifier: workspace:*
+        version: link:../../plugins/dsh-purge
       '@meng/plugin-questions-web':
         specifier: workspace:*
         version: link:../../plugins/questions-web
+      '@meng/plugin-schedules-local':
+        specifier: workspace:*
+        version: link:../../plugins/schedules-local
+      '@meng/plugin-studio':
+        specifier: workspace:*
+        version: link:../../plugins/plugin-studio
       '@meng/web':
         specifier: workspace:*
         version: link:../../packages/web
+
+  packages/adapters:
+    dependencies:
+      '@meng/core':
+        specifier: workspace:*
+        version: link:../core
+      '@meng/tools':
+        specifier: workspace:*
+        version: link:../tools
 
   packages/config:
     dependencies:
@@ -300,6 +327,12 @@ importers:
         specifier: workspace:*
         version: link:../core
 
+  packages/kernel:
+    dependencies:
+      '@meng/core':
+        specifier: workspace:*
+        version: link:../core
+
   packages/llm:
     dependencies:
       '@meng/core':
@@ -311,6 +344,9 @@ importers:
       '@meng/core':
         specifier: workspace:*
         version: link:../core
+      '@meng/llm':
+        specifier: workspace:*
+        version: link:../llm
       '@meng/tools':
         specifier: workspace:*
         version: link:../tools
@@ -349,6 +385,12 @@ importers:
       '@meng/slots':
         specifier: workspace:*
         version: link:../slots
+
+  packages/plugin-manifest:
+    dependencies:
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
 
   packages/prompt:
     dependencies:
@@ -453,6 +495,12 @@ importers:
       '@meng/core':
         specifier: workspace:*
         version: link:../core
+      '@meng/fs':
+        specifier: workspace:*
+        version: link:../fs
+      '@meng/jobs':
+        specifier: workspace:*
+        version: link:../jobs
       '@meng/llm':
         specifier: workspace:*
         version: link:../llm
@@ -519,6 +567,33 @@ importers:
 
   plugins/demo-ui: {}
 
+  plugins/dsh-purge:
+    devDependencies:
+      '@meng/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@meng/modules':
+        specifier: workspace:*
+        version: link:../../packages/modules
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.5
+      '@types/react':
+        specifier: ^19.3.0
+        version: 19.3.0
+      '@vitejs/plugin-react':
+        specifier: ^6.1.2
+        version: 6.1.2(vite@8.3.5(@types/node@22.20.5)(jiti@2.7.0)(yaml@2.9.1))
+      react:
+        specifier: ^19.3.1
+        version: 19.3.1
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vite:
+        specifier: ^8.0.0
+        version: 8.3.5(@types/node@22.20.5)(jiti@2.7.0)(yaml@2.9.1)
+
   plugins/hello:
     dependencies:
       '@meng/core':
@@ -555,6 +630,27 @@ importers:
         specifier: workspace:*
         version: link:../../packages/tools
 
+  plugins/memory:
+    dependencies:
+      '@meng/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@meng/llm':
+        specifier: workspace:*
+        version: link:../../packages/llm
+      '@meng/loop':
+        specifier: workspace:*
+        version: link:../../packages/loop
+      '@meng/prompt':
+        specifier: workspace:*
+        version: link:../../packages/prompt
+      '@meng/session':
+        specifier: workspace:*
+        version: link:../../packages/session
+      '@meng/tools':
+        specifier: workspace:*
+        version: link:../../packages/tools
+
   plugins/net-local:
     dependencies:
       '@meng/config':
@@ -567,6 +663,40 @@ importers:
         specifier: workspace:*
         version: link:../../packages/net
 
+  plugins/plugin-studio:
+    dependencies:
+      '@meng/modules':
+        specifier: workspace:*
+        version: link:../../packages/modules
+      '@meng/plugin-manifest':
+        specifier: workspace:*
+        version: link:../../packages/plugin-manifest
+      '@vitejs/plugin-react':
+        specifier: ^6.1.2
+        version: 6.1.2(vite@8.3.5(@types/node@22.20.5)(jiti@2.7.0)(yaml@2.9.1))
+      react:
+        specifier: ^19.3.1
+        version: 19.3.1
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vite:
+        specifier: ^8.0.0
+        version: 8.3.5(@types/node@22.20.5)(jiti@2.7.0)(yaml@2.9.1)
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
+    devDependencies:
+      '@meng/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.5
+      '@types/react':
+        specifier: ^19.3.0
+        version: 19.3.0
+
   plugins/policy-approval:
     dependencies:
       '@meng/config':
@@ -578,6 +708,9 @@ importers:
       '@meng/fs':
         specifier: workspace:*
         version: link:../../packages/fs
+      '@meng/session':
+        specifier: workspace:*
+        version: link:../../packages/session
       '@meng/tools':
         specifier: workspace:*
         version: link:../../packages/tools
@@ -675,6 +808,21 @@ importers:
         specifier: workspace:*
         version: link:../../packages/web
 
+  plugins/schedules-local:
+    dependencies:
+      '@meng/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@meng/loop':
+        specifier: workspace:*
+        version: link:../../packages/loop
+      '@meng/session':
+        specifier: workspace:*
+        version: link:../../packages/session
+      '@meng/web':
+        specifier: workspace:*
+        version: link:../../packages/web
+
   plugins/tool-ask:
     dependencies:
       '@meng/core':
@@ -701,6 +849,9 @@ importers:
       '@meng/jobs':
         specifier: workspace:*
         version: link:../../packages/jobs
+      '@meng/session':
+        specifier: workspace:*
+        version: link:../../packages/session
       '@meng/tools':
         specifier: workspace:*
         version: link:../../packages/tools
@@ -725,6 +876,9 @@ importers:
       '@meng/fs':
         specifier: workspace:*
         version: link:../../packages/fs
+      '@meng/session':
+        specifier: workspace:*
+        version: link:../../packages/session
       '@meng/tools':
         specifier: workspace:*
         version: link:../../packages/tools
@@ -761,6 +915,9 @@ importers:
       '@meng/net':
         specifier: workspace:*
         version: link:../../packages/net
+      '@meng/session':
+        specifier: workspace:*
+        version: link:../../packages/session
       '@meng/tools':
         specifier: workspace:*
         version: link:../../packages/tools
@@ -773,6 +930,9 @@ importers:
       '@meng/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@meng/session':
+        specifier: workspace:*
+        version: link:../../packages/session
       '@meng/tools':
         specifier: workspace:*
         version: link:../../packages/tools
@@ -938,11 +1098,6 @@ packages:
   '@earendil-works/pi-ai@0.82.1':
     resolution: {integrity: sha512-3WFYRhEp3lQB3444EhPMBcM7zSaEUE3eJgHOR7s4081NLqbw/FsWilIKWXSua0Gv3sRr7m9xMidR3pPDE7jI/A==}
     engines: {node: '>=22.19.0'}
-    hasBin: true
-
-  '@electron/asar@3.2.1':
-    resolution: {integrity: sha512-hE2cQMZ5+4o7+6T2lUaVbxIzrOjZZfX7dB02xuapyYFJZEAiWTelq6J3mMoxzd0iONDvYLPVKecB5tyjIoVDVA==}
-    engines: {node: '>=10.12.0'}
     hasBin: true
 
   '@electron/asar@3.4.1':
@@ -1608,18 +1763,11 @@ packages:
   '@types/fs-extra@9.0.13':
     resolution: {integrity: sha512-nEnwB++1u5lVDM2UI4c1+5R+FYaKfaAzS4OococimjVm3nQw3TuzH5UNsocrcTBbhnerblyHj4A49qXbIiZdpA==}
 
-  '@types/glob@7.2.0':
-    resolution: {integrity: sha512-ZUxbzKl0IfJILTS6t7ip5fQQM/J3TJYubDm3nMbgubNNYS62eXeUpoLUC8/7fJNiFYHTrGPQn7hspDUzIHX3UA==}
-
   '@types/http-cache-semantics@4.2.0':
     resolution: {integrity: sha512-L3LgimLHXtGkWikKnsPg0/VFx9OGZaC+eN1u4r+OB1XRqH3meBIAVC2zr1WdMH+RHmnRkqliQAOHNJ/E0j/e0Q==}
 
   '@types/keyv@3.1.4':
     resolution: {integrity: sha512-BQ5aZNSCpj7D6K2ksrRCTmKRLEpnPvWDiLPfoGyhZ++8YtiK9d/3DBKPJgry359X/P1PfruyYwvnvwFjuEiEIg==}
-
-  '@types/minimatch@6.0.0':
-    resolution: {integrity: sha512-zmPitbQ8+6zNutpwgcQuLcsEpn/Cj54Kbn7L5pX0Os5kdWplB7xPgEh/g+SWOB/qmows2gpuCaPyduq8ZZRnxA==}
-    deprecated: This is a stub types definition. minimatch provides its own type definitions, so you do not need this installed.
 
   '@types/ms@2.1.0':
     resolution: {integrity: sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA==}
@@ -3460,15 +3608,6 @@ snapshots:
       - ws
       - zod
 
-  '@electron/asar@3.2.1':
-    dependencies:
-      chromium-pickle-js: 0.2.0
-      commander: 5.0.0
-      glob: 7.2.0
-      minimatch: 3.1.5
-    optionalDependencies:
-      '@types/glob': 7.2.0
-
   '@electron/asar@3.4.1':
     dependencies:
       commander: 5.0.0
@@ -4204,22 +4343,11 @@ snapshots:
     dependencies:
       '@types/node': 22.20.5
 
-  '@types/glob@7.2.0':
-    dependencies:
-      '@types/minimatch': 6.0.0
-      '@types/node': 22.20.5
-    optional: true
-
   '@types/http-cache-semantics@4.2.0': {}
 
   '@types/keyv@3.1.4':
     dependencies:
       '@types/node': 22.20.5
-
-  '@types/minimatch@6.0.0':
-    dependencies:
-      minimatch: 10.2.6
-    optional: true
 
   '@types/ms@2.1.0': {}
 
@@ -4641,7 +4769,7 @@ snapshots:
 
   electron-winstaller@5.4.0:
     dependencies:
-      '@electron/asar': 3.2.1
+      '@electron/asar': 3.4.1
       debug: 4.4.3
       fs-extra: 7.0.1
       lodash: 4.18.1

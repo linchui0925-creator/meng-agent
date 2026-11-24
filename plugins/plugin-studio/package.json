@@ -1,0 +1,66 @@
+{
+  "name": "@meng/plugin-studio",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "梦插件工坊：创建、适配、校验、构建、打包和验证插件",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json",
+    "./client": "./client/client.js"
+  },
+  "files": [
+    "dist",
+    "client",
+    "templates",
+    "meng.patch.yml",
+    "PLUGIN_SPEC.md",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && vite build",
+    "test": "node --experimental-strip-types test/studio.ts && node --experimental-strip-types test/manifest.ts && node --experimental-strip-types test/install.ts && node --experimental-strip-types test/ops.ts && node --experimental-strip-types test/market-web.ts"
+  },
+  "peerDependencies": {
+    "@meng/core": ">=0.0.0"
+  },
+  "dependencies": {
+    "@meng/modules": "workspace:*",
+    "@meng/plugin-manifest": "workspace:*",
+    "@vitejs/plugin-react": "^6.1.2",
+    "react": "^19.3.1",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.0",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@meng/core": "workspace:*",
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.3.0"
+  },
+  "meng": {
+    "plugin": {
+      "apiVersion": 1,
+      "id": "plugin-studio",
+      "patch": "./meng.patch.yml"
+    },
+    "client": {
+      "platforms": [
+        "web",
+        "desktop",
+        "mobile"
+      ],
+      "immediately": false,
+      "slots": [
+        "settings.section"
+      ]
+    }
+  }
+}

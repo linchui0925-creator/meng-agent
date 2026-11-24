@@ -14,15 +14,18 @@ import { useEffect, useMemo, useState } from 'react'
 import { Badge, Button, IconButton, ScrollArea, Separator, Spinner, Tooltip } from '@meng/ui'
 
 import { MoonIcon, PlusIcon, SunIcon, LayersIcon, GearIcon } from './icons.tsx'
-import type { LayoutApi } from './layout.ts'
+import type { LayoutApi, MessageRowApi, ToolCardApi } from './layout.ts'
 import { waitingState, windowMessages, type Message, type WaitState } from './conversation.ts'
 import { WHISPER_DELAY_BY_PREF, WHISPER_HOLD_MS } from './whisper.ts'
 import { WaitBubble } from './WaitBubble.tsx'
 import { ToolCard } from './ToolCard.tsx'
 import { BuiltinComposer } from './BuiltinComposer.tsx'
 import { CopyButton } from './CopyButton.tsx'
-import { JobBar } from './JobBar.tsx'
+import { AutolinkText, Markdown } from './Markdown.tsx'
+import { JobTray } from './JobTray.tsx'
+import { QuestionCard } from './QuestionCard.tsx'
 import { PluginPanel } from './PluginPanel.tsx'
+import { SidebarNav } from './SidebarNav.tsx'
 import { SidebarSessions } from './SidebarSessions.tsx'
 import styles from './App.module.css'
 
@@ -37,11 +40,20 @@ const MESSAGE_WINDOW = 60
 
 export function BuiltinLayout(api: LayoutApi) {
   const {
+    view,
+    onViewChange,
+    taskCenter,
+    jobActions,
     messages,
     jobs,
     sessionId,
     sessions,
+    workspaces,
     onSelectSession,
+    archivedSessionIds,
+    onArchiveSession,
+    onDeleteSession,
+    onRenameSession,
     theme,
     prefs,
     fixture,
@@ -49,13 +61,21 @@ export function BuiltinLayout(api: LayoutApi) {
     status,
     connection,
     onNewSession,
+    onNewWorkspaceSession,
     onToggleTheme,
     onOpenSettings,
+    onNewWorkspace,
     composer,
+    question,
+    pluginNavCount,
+    questionNotice,
+    dismissQuestionNotice,
     Slot,
     scrollRef,
     stickToBottom,
     plugins,
+    readToolRecord,
+    readAttachment,
   } = api
 
   // 窗口大小归会话所有: 换会话时翻过的页数没有意义, 回到 60
@@ -117,47 +137,97 @@ export function BuiltinLayout(api: LayoutApi) {
           密度是继承的 CSS 变量, 写在这里就等于「只让侧栏紧凑」, 不需要全局开关。 */}
       <aside className={styles.sidebar} data-density="compact">
         <div className={styles.sidebarHead}>
-          <div className={styles.brand}>梦</div>
-          <div className={styles.badgeRow}>
-            <Badge tone="accent">M3 界面骨架</Badge>
-            {fixture && <Badge tone="warning">fixture · {fixture}</Badge>}
+          <div className={styles.brandRow}>
+            <div className={styles.brandMark} aria-hidden="true">梦</div>
+            <div className={styles.brandCopy}>
+              <div className={styles.brand}>MENG</div>
+              <div className={styles.brandSub}>PERSONAL AGENT</div>
+            </div>
           </div>
-          {/* 侧栏头部的增强位: 插件可以加「搜索」「收藏」这类入口。
-              与「新会话」同排 —— column 布局里独占一行太空, 而它们语义上都是"动作"。
-              宿主自己的「新会话」按钮不进 slot —— 它是布局契约的一部分, 换掉就没有入口了 */}
+          {fixture && (
+            <div className={styles.badgeRow}>
+              <Badge tone="warning">fixture · {fixture}</Badge>
+            </div>
+          )}
+          {/* 插件动作独占自己的一行，主按钮不再和插件入口争抢宽度。 */}
           <div className={styles.headerActions}>
             <Slot name="sidebar.header" props={{ sessionId, onNewSession }} />
-            <Button variant="secondary" size="sm" onClick={onNewSession}>
-              <PlusIcon />
-              新会话
-            </Button>
           </div>
+          {/* 和下面导航共用同一套行高、图标块与毛玻璃表面。 */}
+          <Button
+            className={styles.newSession}
+            variant="ghost"
+            size="md"
+            onClick={onNewSession}
+            data-new-session=""
+          >
+            <span className={styles.newSessionIcon} aria-hidden="true">
+              <PlusIcon />
+            </span>
+            <span>新会话</span>
+          </Button>
         </div>
 
         <Separator />
 
+        <SidebarNav
+          pluginCount={pluginNavCount}
+          plugins={plugins}
+          Slot={Slot}
+          activeView={view}
+          onViewChange={onViewChange}
+        />
+
         <ScrollArea className={styles.sessions}>
           <SidebarSessions
             sessions={sessions}
-            activeId={sessionId}
+            workspaces={workspaces}
+            activeId={view === 'chat' ? sessionId : undefined}
             now={Date.now()}
             onSelect={onSelectSession}
+            archivedIds={archivedSessionIds}
+            onArchive={onArchiveSession}
+            onDelete={onDeleteSession}
+            onRename={onRenameSession}
+            onNewWorkspace={onNewWorkspace}
+            onNewWorkspaceSession={onNewWorkspaceSession}
             Slot={Slot}
           />
         </ScrollArea>
 
+        {/*
+          侧栏脚: 插件位 + **设置入口**。
+          设置原来只在标题栏右上角那颗齿轮里 —— 那是"全局动作"的位置, 但用户找它
+          时会先看左下角（这一屏唯一常驻的导航区）。两个入口指向同一个整窗层,
+          不会出现两套设置。
+          插件位留在上面: 它还在契约里（docs/08）, 只是 demo-ui 不再往这儿挂东西了。
+        */}
         <div className={styles.sidebarFoot}>
-          <Slot name="sidebar.footer" props={{ messageCount: messages.length, toolCount }} />
+          <Slot name="sidebar.footer" props={{ messageCount: messages.length, toolCount, plugins, onOpenSettings }} />
+          <button
+            type="button"
+            className={styles.footSettings}
+            onClick={onOpenSettings}
+            data-sidebar-settings=""
+            title="模型 / 工作区 / 接口密钥 / 外观"
+          >
+            <span className={styles.footIcon} aria-hidden="true">
+              <GearIcon />
+            </span>
+            设置
+          </button>
         </div>
       </aside>
 
       <main className={styles.main}>
         <header className={styles.topbar}>
-          <div className={styles.topbarTitle}>
-            <span className={styles.title}>会话</span>
-            {sessionId && <span className={styles.sessionId}>{sessionId}</span>}
-          </div>
-          <div className={styles.topbarRight}>
+          {/* 内层单独居中: 标题与正文第一条消息左边缘对齐 (App.module.css .topbarInner) */}
+          <div className={styles.topbarInner}>
+            <div className={styles.topbarTitle}>
+              <span className={styles.title}>{view === 'tasks' ? '定时任务' : '会话'}</span>
+              {view === 'chat' && sessionId && <span className={styles.sessionId}>{sessionId}</span>}
+            </div>
+            <div className={styles.topbarRight}>
             {/* 标题栏动作位: 分享 / 导出 / 设置这类全局动作。
                 放在状态点**之前** —— 状态是宿主的, 动作是插件的, 插件不该被挤到最右边 */}
             <Slot name="topbar.actions" props={{ sessionId, theme }} />
@@ -180,14 +250,19 @@ export function BuiltinLayout(api: LayoutApi) {
               <i className={`${styles.dot} ${styles[connection]}`} aria-hidden="true" />
               {status}
             </span>
-            <Tooltip label={theme === 'dark' ? '切到浅色' : '切到深色'}>
-              <IconButton aria-label="切换主题" size="sm" onClick={onToggleTheme}>
-                {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
-              </IconButton>
-            </Tooltip>
+              <Tooltip label={theme === 'dark' ? '切到浅色' : '切到深色'}>
+                <IconButton aria-label="切换主题" size="sm" onClick={onToggleTheme}>
+                  {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
+                </IconButton>
+              </Tooltip>
+            </div>
           </div>
         </header>
 
+        {view === 'tasks' ? (
+          <div className={styles.taskCenterHost} data-task-view="">{taskCenter}</div>
+        ) : (
+          <>
         <ScrollArea
           className={styles.messages}
           ref={scrollRef}
@@ -209,6 +284,8 @@ export function BuiltinLayout(api: LayoutApi) {
               </div>
             ) : (
               <div className={styles.empty}>
+                {/* 空屏也要有重心: 一句「开始一段对话」孤零零飘在大片空白里, 不像界面 */}
+                <div className={styles.emptyMark} aria-hidden="true">梦</div>
                 <div className={styles.emptyTitle}>开始一段对话</div>
                 <div className={styles.emptyHint}>
                   {fixture ? '当前是 fixture 内核, 回复是脚本化的' : '输入一句话, 或者试试下面这些'}
@@ -225,6 +302,10 @@ export function BuiltinLayout(api: LayoutApi) {
                     </button>
                   ))}
                 </div>
+                <Slot
+                  name="home.actions"
+                  props={{ sessionId, onOpenSettings, plugins }}
+                />
               </div>
             )
           ) : (
@@ -242,17 +323,27 @@ export function BuiltinLayout(api: LayoutApi) {
                   显示更早的消息 (还有 {hidden} 条)
                 </button>
               )}
-              {visible.map((message) => (
-                <MessageRow
-                  key={message.id}
-                  message={message}
-                  Slot={Slot}
-                  whisper={prefs.whisper && message.id === whisperAnchorId ? waiting : null}
-                  whisperDelay={whisperDelay}
-                  whisperHold={whisperHold}
-                  autoFold={prefs.foldTools}
-                />
-              ))}
+              {visible.map((message) => {
+                // 同一份公开 props 给插件与内置兜底，避免两边字段慢慢长歪。
+                const row: MessageRowApi = {
+                  message,
+                  Slot,
+                  whisper: prefs.whisper && message.id === whisperAnchorId ? waiting : null,
+                  whisperDelay,
+                  whisperHold,
+                  autoFold: prefs.foldTools,
+                  readRecord: readToolRecord,
+                  readAttachment,
+                }
+                return (
+                  <Slot
+                    key={message.id}
+                    name="conversation.message"
+                    props={row}
+                    fallback={<MessageRow {...row} />}
+                  />
+                )
+              })}
             </div>
           )}
         </ScrollArea>
@@ -276,7 +367,23 @@ export function BuiltinLayout(api: LayoutApi) {
           气泡 absolute 在它上方, 不占布局、不挡点击 (样式注释有取舍)。
         */}
         <div className={styles.composerArea}>
-          {jobs.length > 0 && <JobBar jobs={jobs} />}
+          {jobs.length > 0 && <JobTray jobs={jobs} readOutput={jobActions.read} stop={jobActions.stop} />}
+
+          {questionNotice !== undefined && (
+            <div className={styles.questionNotice} role="status">
+              <span>{questionNotice}</span>
+              <button type="button" aria-label="关闭提示" onClick={dismissQuestionNotice}>
+                ×
+              </button>
+            </div>
+          )}
+
+          {/*
+            提问卡片: 位置在输入框**正上方** —— 它挡着输入框, 注意力本来就在那儿。
+            状态归宿主 (事件流), 卡片只管画。**不要按 questionId 重挂**: 卡片自己
+            按 questionId 保存每道题的草稿, 在右侧队列里切题时输入不能丢。
+          */}
+          {question ? <QuestionCard {...question} /> : null}
 
           {/*
             输入框是 **chain**, 不是 single。
@@ -326,6 +433,8 @@ export function BuiltinLayout(api: LayoutApi) {
             props={{ messageCount: messages.length, toolCount, sessionId }}
           />
         </footer>
+          </>
+        )}
       </main>
 
       {/*
@@ -334,9 +443,15 @@ export function BuiltinLayout(api: LayoutApi) {
         **同一份 DOM, 只切定位方式**, 不是两套组件 (docs/07 F7「布局用 container query, 不做三套」)。
         这跟 composer chain 的处理是同一个原则: 布局变化不该让组件卸载重挂。
       */}
-      <div className={styles.panelSlot} data-open={plugins.open ? 'true' : 'false'}>
-        {plugins.open && (
-          <PluginPanel graph={plugins.graph} onRefresh={plugins.refresh} onClose={plugins.close} />
+      <div className={styles.panelSlot} data-open={view === 'chat' && plugins.open ? 'true' : 'false'}>
+        {view === 'chat' && plugins.open && (
+          <div className={styles.rightPanelStack}>
+            <Slot
+              name="right.panel"
+              props={{ sessionId, onOpenSettings, plugins }}
+            />
+            <PluginPanel graph={plugins.graph} onRefresh={plugins.refresh} onClose={plugins.close} />
+          </div>
         )}
       </div>
     </div>
@@ -346,17 +461,8 @@ export function BuiltinLayout(api: LayoutApi) {
 /**
  * 一条消息。
  *
- * **没有气泡**。角色行 + 通栏正文, 用户与助手走同一套骨架, 只在两处不同:
- *   1. 角色标记 (你 / 助手 + 不同底色)
- *   2. 用户正文左侧有一条 2px 竖线 —— 那是「引用原文」的排版惯例, 不是容器边界
- *
- * 为什么砍气泡 (F2b 定稿, docs/07 §6):
- *   - `max-width: 78%` 在长文本和代码下把可读宽度白白吃掉两成, 而工具卡是通栏的,
- *     两者并排会出现「半宽正文 + 全宽工具」的断裂感;
- *   - 气泡一旦有 border/radius/背景, 它就会想要 padding, 想要 padding 就会想在
- *     里面放工具卡、放操作条 —— 于是每个新块都得为「气泡内边距」做一次适配;
- *   - 移动端两侧留白纯属浪费, 而通栏在窄屏是唯一正确解。
- * 区分角色不需要画框: 一段文字 + 一个名字, 读者扫一眼就知道谁说的。
+ * 对话方向明确分层：用户靠右成气泡，梦靠左以正文和结果为主。
+ * 执行过程默认折叠成一行“执行过程 · N 步”，最终回复不再被工具日志淹没。
  */
 function MessageRow({
   message,
@@ -365,45 +471,94 @@ function MessageRow({
   whisperDelay,
   whisperHold,
   autoFold,
-}: {
-  message: Message
-  Slot: LayoutApi['Slot']
-  /** 等太久时挂在头像上的那一句; 只有最后一条助手消息拿得到 */
-  whisper?: WaitState | null
-  whisperDelay: number
-  whisperHold: number
-  /** 工具跑完后默认折叠。来自偏好, 所以它读的是设置而不是状态 */
-  autoFold: boolean
-}) {
+  readRecord,
+  readAttachment,
+}: MessageRowApi) {
+  if (message.role === 'system' && message.modelSwitch !== undefined) {
+    const change = message.modelSwitch
+    return (
+      <div className={styles.modelSwitchDivider} data-model-switch={message.id} role="separator">
+        <span className={styles.modelSwitchLine} aria-hidden="true" />
+        <div className={styles.modelSwitchCopy}>
+          <div className={styles.modelSwitchTitle}>
+            <span>模型已切换 · 新上下文</span>
+            {change.estimatedInputTokens !== undefined && (
+              <span className={styles.modelSwitchCost}>额外约 {formatTokens(change.estimatedInputTokens)} input tokens</span>
+            )}
+          </div>
+          <div className={styles.modelSwitchModels}>
+            <code>{change.from ?? '默认模型'}</code>
+            <span aria-hidden="true">→</span>
+            <code>{change.to}</code>
+          </div>
+          <p>切换前的对话将作为文字参考再次发送，不包含工具日志。</p>
+        </div>
+        <span className={styles.modelSwitchLine} aria-hidden="true" />
+      </div>
+    )
+  }
+
   const isUser = message.role === 'user'
 
   return (
-    <div className={styles.msg}>
+    <div className={`${styles.msg} ${isUser ? styles.msgUser : ''}`} data-message-role={message.role}>
       <div className={styles.role}>
         <span className={isUser ? styles.avatarUser : styles.avatar}>{isUser ? '你' : '梦'}</span>
-        <span className={styles.roleName}>{isUser ? '你' : '助手'}</span>
+        {/* 用户的名字不再重复一遍: 头像那个「你」就是名字, 再写一次就成了「你 你」 */}
+        {!isUser && <span className={styles.roleName}>助手</span>}
         <span className={styles.meta}>{formatTime(message.at)}</span>
         {whisper && (
           <WaitBubble state={whisper} anchor="avatar" delayMs={whisperDelay} holdMs={whisperHold} />
         )}
       </div>
 
-      {(message.text || message.status === 'streaming') && (
-        <div className={isUser ? styles.bodyUser : styles.body}>
-          {message.text}
-          {message.status === 'streaming' && <span className={styles.caret} aria-hidden="true" />}
-        </div>
-      )}
-
       {/*
         工具区接 compact 密度: 工具输出天生是"机器产物", 一行一条、越紧越好读;
         而正文需要呼吸感。密度是继承的 CSS 变量, 写在这一层只影响工具卡。
       */}
       {message.tools.length > 0 && (
-        <div className={styles.tools} data-density="compact">
-          {message.tools.map((tool) => (
-            <ToolCard key={tool.callId} tool={tool} autoFold={autoFold} />
+        <details className={styles.toolsDetails} data-density="compact" open={message.tools.some((tool) => tool.status === 'running')}>
+          <summary className={styles.chainHead}>
+            <span>执行过程</span>
+            <span>· {message.tools.length} 步</span>
+            <span className={styles.chainStatus}>
+              {message.tools.some((tool) => tool.status === 'running') ? '进行中' : '已完成'}
+            </span>
+          </summary>
+          <div className={styles.tools}>
+            {message.tools.map((tool) => {
+              const card: ToolCardApi = { tool, autoFold, readRecord }
+              return (
+                <Slot
+                  key={tool.callId}
+                  name="conversation.tool"
+                  props={card}
+                  fallback={<ToolCard {...card} />}
+                />
+              )
+            })}
+          </div>
+        </details>
+      )}
+
+      {message.attachments !== undefined && message.attachments.length > 0 && (
+        <div className={styles.messageAttachments} aria-label="消息附件">
+          {message.attachments.map((attachment) => (
+            <MessageAttachmentCard key={attachment.id} attachment={attachment} readAttachment={readAttachment} />
           ))}
+        </div>
+      )}
+
+      {(message.text || message.status === 'streaming') && (
+        <div className={isUser ? styles.bodyUser : styles.body}>
+          {/*
+            助手的话过完整 Markdown, 用户的话只做裸链接识别 —— 不擅自解释用户输入里的 * / #。
+            不是双标: 模型输出里 `**`、`-`、``` 是它表达结构的正常方式; 而用户
+            手打的一句话里出现星号, 多半就是想打一个星号。
+            光标由 Markdown 内部挂到最后一个块里 —— 挂在外面会掉到下一行。
+          */}
+          {isUser ? <AutolinkText text={message.text} /> : <Markdown text={message.text} caret={message.status === 'streaming'} />}
+          {isUser && message.status === 'streaming' && <span className={styles.caret} aria-hidden="true" />}
         </div>
       )}
 
@@ -428,6 +583,50 @@ function MessageRow({
       )}
     </div>
   )
+}
+
+function MessageAttachmentCard({
+  attachment,
+  readAttachment,
+}: {
+  attachment: NonNullable<Message['attachments']>[number]
+  readAttachment?: (attachmentId: string) => Promise<{ id: string; mime: string; dataBase64: string }>
+}) {
+  const [loaded, setLoaded] = useState<{ mime: string; dataBase64: string } | undefined>(
+    attachment.dataBase64 === undefined ? undefined : { mime: attachment.mime, dataBase64: attachment.dataBase64 },
+  )
+
+  useEffect(() => {
+    if (loaded !== undefined || readAttachment === undefined) return
+    let alive = true
+    void readAttachment(attachment.id)
+      .then((content) => {
+        if (alive) setLoaded(() => ({ mime: content.mime, dataBase64: content.dataBase64 }))
+      })
+      .catch(() => {
+        // 附件被清理 / 老后端没有 op：保留文件名卡，不把一条历史消息炸掉。
+      })
+    return () => {
+      alive = false
+    }
+  }, [attachment.id, loaded, readAttachment])
+
+  return (
+    <div className={styles.messageAttachment} data-message-attachment={attachment.id}>
+      {loaded !== undefined ? (
+        <img src={`data:${loaded.mime};base64,${loaded.dataBase64}`} alt="" />
+      ) : (
+        <span aria-hidden="true">图</span>
+      )}
+      <b>{attachment.name}</b>
+    </div>
+  )
+}
+
+function formatTokens(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
+  if (value >= 1000) return `${(value / 1000).toFixed(1)}K`
+  return String(value)
 }
 
 function formatTime(at: number): string {

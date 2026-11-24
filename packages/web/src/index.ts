@@ -16,7 +16,7 @@ import { defineInvariant, type Ctx, type Disposer, type NodeRecord } from '@meng
 import type { SessionService, SessionEvent, SessionEventType } from '@meng/session'
 import type { StatusGraph } from '@meng/core'
 import { attachWebSocket, type WSServer } from './ws.ts'
-import { createHttpApp, HttpError, json, type HttpApp, type RouteCtx } from './http.ts'
+import { createHttpApp, HttpError, json, type HttpApp, type RouteCtx, type RouteHandler } from './http.ts'
 import { registerBuiltinOps } from './ops.ts'
 
 export const name = 'meng-web'
@@ -30,6 +30,10 @@ export interface WebService {
   /** 注册一个上行 op → POST /api/{name}。返回 disposer, 卸载即摘路由 */
   op(name: string, handler: OpHandler): Disposer
   ops(): string[]
+  /** 项目适配器专用：注册精确 HTTP 路由。 */
+  route(method: string, path: string, handler: RouteHandler): Disposer
+  /** 项目适配器专用：注册 HTTP 前缀路由；method 可为 '*'。 */
+  prefix(method: string, prefix: string, handler: RouteHandler): Disposer
   /** 下行广播。seq 由内核统一分配, 前端靠它排序和断线重放 */
   broadcast(type: string, payload?: unknown, meta?: { sessionId?: string; runId?: string }): void
   /** 在线连接数, 给调试面板 */
@@ -115,6 +119,14 @@ export async function apply(ctx: Ctx, config: WebConfig = {}): Promise<Disposer>
 
     ops() {
       return [...ops.keys()].sort()
+    },
+
+    route(method, path, handler) {
+      return app.route(method, path, handler)
+    },
+
+    prefix(method, path, handler) {
+      return app.prefix(method, path, handler)
     },
 
     broadcast(type, payload, meta) {
@@ -207,7 +219,7 @@ function buildManifest(ctx: Ctx, web: WebService): BootManifest {
     protocol: PROTOCOL_VERSION,
     serverId: SERVER_ID,
     startedAt: STARTED_AT,
-    capabilities: ['llm', 'session', 'tools', 'prompt', 'loop', 'questions', 'web'].filter((n) => ctx.get(n)),
+    capabilities: ['llm', 'session', 'tools', 'prompt', 'loop', 'memory', 'questions', 'web'].filter((n) => ctx.get(n)),
     ops: web.ops(),
     events: [...EVENT_TYPES],
     models: (ctx.get<{ models(): string[] }>('llm')?.models() ?? []),
@@ -237,5 +249,5 @@ export type { HttpApp, RouteCtx, SessionEventType }
 export const EVENT_TYPES = [
   'hello', 'session/created', 'turn/started', 'llm/chunk', 'llm/completed',
   'tool/called', 'tool/completed', 'tool/blocked', 'question/asked', 'question/answered',
-  'job/started', 'job/completed', 'turn/ended', 'plugin/graph', 'error',
+  'model/switched', 'context/compacted', 'job/started', 'job/completed', 'turn/ended', 'plugin/graph', 'error',
 ] as const

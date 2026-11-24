@@ -82,6 +82,14 @@ export function apply(ctx: Ctx): Disposer {
       if (resolution.outcome === 'aborted') {
         return { ok: false, text: '', error: '轮次已被用户中止' }
       }
+      if (resolution.outcome === 'failed') {
+        // 失败不是用户答案。用 JSON 把原因直接交给模型，方便它重问或降级处理。
+        return {
+          ok: false,
+          text: '',
+          error: JSON.stringify({ ok: false, error: resolution.error ?? '用户回答提交失败' }),
+        }
+      }
       if (resolution.answer === undefined) {
         return { ok: false, text: '', error: `用户未给出回答 (${resolution.outcome})` }
       }

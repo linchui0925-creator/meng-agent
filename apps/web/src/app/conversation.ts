@@ -11,7 +11,7 @@
 
 import type { StreamEvent } from '@meng/transport'
 
-export type MessageRole = 'user' | 'assistant'
+export type MessageRole = 'user' | 'assistant' | 'system'
 
 export type ToolStatus = 'running' | 'blocked' | 'done'
 
@@ -30,6 +30,18 @@ export interface ToolCall {
    * 断线重放时会从"重放那一刻"开始算, 一个跑了 40 秒的命令会显示 1 秒。
    */
   startedAt?: number
+  /**
+   * 完整输出在本地记录里的 id（B-27 三层分离）。
+   *
+   * 事件里的 `output` 只带前 2000 字 —— 事件流要能被完整回放，而回放不该读几 MB 的
+   * stdout。想看全的得拿这个 id 去 `tool.record` 取。
+   * 缺 = 这条没落记录（没有 sessionId 的调用不落），不是"记录丢了"。
+   */
+  recordId?: string
+  /** 截断**之前**的字节数。界面上写"13.6 KB"用 */
+  bytes?: number
+  /** 事件里的文本被截过。为 true 且 recordId 在，才给"查看完整输出"那个入口 */
+  truncated?: boolean
 }
 
 /**
@@ -44,14 +56,38 @@ export interface ToolSummary {
   warn: boolean
 }
 
+export interface MessageAttachment {
+  id: string
+  name: string
+  mime: string
+  size?: number
+  createdAt?: number
+  /** 老事件/未来事件若直接带了内容，消息层可以显示真缩略图。 */
+  dataBase64?: string
+}
+
+export interface ModelSwitchInfo {
+  from?: string
+  to: string
+  estimatedInputTokens?: number
+  at: number
+}
+
 export interface Message {
   id: string
   role: MessageRole
   text: string
+  modelSwitch?: ModelSwitchInfo
+  attachments?: MessageAttachment[]
   /** 首条事件的时间, 用于时间线 */
   at: number
   status: 'streaming' | 'done' | 'error'
   tools: ToolCall[]
+  /**
+   * 这一轮的 token 用量（`llm/completed` 的 `usage`）。
+   * 缺 = 内核没报（不是 0）。输入框那格上下文用量用它, 缺就不画那一格。
+   */
+  usage?: { in: number; out?: number }
   /** status=error 时给人看的说明 */
   error?: string
   /** 机器可读的错误码。界面显示 error, 日志与排查看这个 */
@@ -69,10 +105,53 @@ function textOf(payload: unknown, key: string): string {
   return typeof v === 'string' ? v : ''
 }
 
+/**
+ * 切换模型时的参考稿：只取用户与助手的最终文字，不带工具调用、系统分割线或附件本体。
+ * 这与后端 `session.switchModel` 的统计口径保持一致。
+ */
+export function modelReferenceText(messages: readonly Message[]): string {
+  return messages
+    .filter((message) => message.role === 'user' || message.role === 'assistant')
+    .map((message) => message.text.trim())
+    .filter((text) => text !== '')
+    .join('\n\n')
+}
+
+/** 粗估 token：中文 1 字约 1 token，其他字符约 4 字 1 token。 */
+export function estimateTokenCount(text: string): number {
+  let cjk = 0
+  for (const ch of text) {
+    if (/[\u3400-\u9fff]/.test(ch)) cjk++
+  }
+  return Math.ceil(cjk + Math.max(0, text.length - cjk) / 4)
+}
+
 /** 时间戳容错: 缺失/非数字一律回落到 fallback, 不产生 NaN (NaN 会一路传染到排序) */
 function numberOr(payload: unknown, key: string, fallback: number): number {
   const v = field<unknown>(payload, key)
   return typeof v === 'number' && Number.isFinite(v) ? v : fallback
+}
+
+function attachmentsOf(payload: unknown): MessageAttachment[] {
+  const raw = field<unknown>(payload, 'attachments')
+  if (!Array.isArray(raw)) return []
+  const out: MessageAttachment[] = []
+  for (const item of raw) {
+    const id = textOf(item, 'id')
+    const name = textOf(item, 'name')
+    const mime = textOf(item, 'mime')
+    if (!id || !name || !mime) continue
+    const size = numberOr(item, 'size', 0)
+    const createdAt = numberOr(item, 'createdAt', 0)
+    const dataBase64 = textOf(item, 'dataBase64')
+    out.push({
+      id, name, mime,
+      ...(size > 0 ? { size } : {}),
+      ...(createdAt > 0 ? { createdAt } : {}),
+      ...(dataBase64 ? { dataBase64 } : {}),
+    })
+  }
+  return out
 }
 
 /**
@@ -103,6 +182,7 @@ export function project(events: readonly StreamEvent[]): Message[] {
           id: `${runId}:user`,
           role: 'user',
           text: textOf(payload, 'text'),
+          attachments: attachmentsOf(payload),
           at: event.at,
           status: 'done',
           tools: [],
@@ -111,11 +191,34 @@ export function project(events: readonly StreamEvent[]): Message[] {
           id: `${runId}:assistant`,
           role: 'assistant',
           text: '',
+          attachments: [],
           at: event.at,
           status: 'streaming',
           tools: [],
         })
         byRun.set(runId, first + 1)
+        break
+      }
+
+      case 'model/switched': {
+        const from = textOf(payload, 'from')
+        const to = textOf(payload, 'to')
+        if (!to) break
+        const estimatedInputTokens = numberOr(payload, 'estimatedInputTokens', 0)
+        messages.push({
+          id: `model-switch:${event.seq}`,
+          role: 'system',
+          text: '',
+          modelSwitch: {
+            ...(from ? { from } : {}),
+            to,
+            ...(estimatedInputTokens > 0 ? { estimatedInputTokens } : {}),
+            at: numberOr(payload, 'at', event.at),
+          },
+          at: event.at,
+          status: 'done',
+          tools: [],
+        })
         break
       }
 
@@ -137,6 +240,14 @@ export function project(events: readonly StreamEvent[]): Message[] {
         // 收尾文本以 completed 为准: 分片可能因为网络丢了几片, completed 是完整版
         const full = textOf(payload, 'text')
         if (full) target.text = full
+        /*
+         * 用量。**只有内核真的报了才记** —— 输入框那格"用了多少 token"就靠它,
+         * 编一个默认值会让用户拿它判断"还能不能再塞一段长代码"。
+         */
+        const usage = field<{ in?: unknown; out?: unknown }>(payload, 'usage')
+        if (usage !== undefined && typeof usage.in === 'number' && Number.isFinite(usage.in)) {
+          target.usage = { in: usage.in, ...(typeof usage.out === 'number' ? { out: usage.out } : {}) }
+        }
         break
       }
 
@@ -167,7 +278,18 @@ export function project(events: readonly StreamEvent[]): Message[] {
         const call = target.tools.find((t) => t.callId === callId) ?? target.tools[target.tools.length - 1]
         if (call) {
           call.status = 'done'
-          call.output = field(payload, 'output')
+          // 真后端契约使用 result；output 只作为旧事件和早期 fixture 的兼容回退。
+          call.output = field(payload, 'result') ?? field(payload, 'output')
+          /*
+           * 三层分离之后，`output` 是**给模型看的那一版**（截到 2000 字），
+           * 全文在本地记录里。三个字段一起读：缺 recordId 就是没记录（老内核 /
+           * 无会话的调用），那时候不给入口 —— 点开必然 404。
+           */
+          const recordId = textOf(payload, 'recordId')
+          if (recordId !== '') call.recordId = recordId
+          const bytes = field<unknown>(payload, 'bytes')
+          if (typeof bytes === 'number' && Number.isFinite(bytes)) call.bytes = bytes
+          if (field<unknown>(payload, 'truncated') === true) call.truncated = true
         }
         break
       }
@@ -202,8 +324,14 @@ export function project(events: readonly StreamEvent[]): Message[] {
         const at = byRun.get(runId)
         const target = at === undefined ? undefined : messages[at]
         if (!target) break
-        // error 优先: 出错的那一轮也可能收到 turn/ended(reason=error), 不能因此被标成完成
-        if (target.status !== 'error') target.status = 'done'
+        // 真实后端失败时只写 turn/ended，不一定另有 error 事件；不能留下一个空白成功气泡。
+        if (textOf(payload, 'reason') === 'error') {
+          target.status = 'error'
+          target.error = target.error || textOf(payload, 'error') || textOf(payload, 'message') || '本轮未能完成'
+          target.errorCode = target.errorCode ?? (textOf(payload, 'code') || undefined)
+        } else if (target.status !== 'error') {
+          target.status = 'done'
+        }
         break
       }
 
@@ -497,6 +625,16 @@ export function elapsedLabel(startedAt: number | undefined, now: number): string
  * 就是纯粹多一次点击。多行一律折: 工具输出的价值在"想看时能看",
  * 不在"每次都摊在会话里把助手说的话顶走"。
  */
+/** 执行态保留现场；完成后是否展开由偏好和用户手动选择决定。 */
+export function toolCardExpanded(
+  status: ToolStatus,
+  toggled: boolean | null,
+  autoFold: boolean,
+): boolean {
+  if (status !== 'done') return true
+  return toggled ?? !autoFold
+}
+
 export function shouldFold(text: string): boolean {
   return text.includes('\n')
 }
@@ -564,4 +702,131 @@ export function windowMessages<T>(list: readonly T[], size: number): { visible: 
   if (!Number.isFinite(size) || size <= 0) return { visible: [], hidden: list.length }
   const hidden = Math.max(0, list.length - size)
   return { visible: hidden > 0 ? list.slice(hidden) : list, hidden }
+}
+
+/* ─────────────────────────── 提问（question/*） ─────────────────────────── */
+
+/**
+ * 一个可选项。形状抄 packages/questions 的 QuestionChoice ——
+ * 内核与前端是两次独立部署, 这里按「缺就少画」处理, 不假设字段一定在。
+ */
+export interface QuestionChoice {
+  key: string
+  label: string
+  description?: string
+}
+
+/**
+ * 挂起中的问题。
+ *
+ * **它不是消息**: 消息进时间线, 问题进输入框上方。
+ * 两者混在一起会出现「问题沉到历史里, 用户翻聊天记录才找到该回哪」。
+ *
+ * `kind` 只有两种: approval (策略拦截, 要你批准) 与 info (模型提问)。
+ * 两种走同一套卡片, 只是标题和选项措辞不同 —— docs/06 §1.4 说的就是这件事。
+ */
+export interface PendingQuestion {
+  questionId: string
+  kind: 'approval' | 'info'
+  title: string
+  body?: string
+  choices?: QuestionChoice[]
+  toolName?: string
+  callId?: string
+  sessionId?: string
+  runId?: string
+  at: number
+}
+
+/**
+ * 解析 question/asked 的 payload。
+ *
+ * 字段缺了就少画, 不猜: 问 Id 缺了这条问题就无从回答, 直接丢掉;
+ * 标题缺了给一句兜底, 但选项与正文缺了就是缺了 (画一个空选项比不画更糟)。
+ */
+export function parseQuestion(payload: unknown, fallbackAt: number): PendingQuestion | undefined {
+  const questionId = textOf(payload, 'questionId')
+  if (!questionId) return undefined
+  const kind: PendingQuestion['kind'] = textOf(payload, 'kind') === 'approval' ? 'approval' : 'info'
+  const title = textOf(payload, 'title')
+  const body = textOf(payload, 'body')
+  const toolName = textOf(payload, 'toolName')
+  const callId = textOf(payload, 'callId')
+  const sessionId = textOf(payload, 'sessionId')
+  const runId = textOf(payload, 'runId')
+  const rawChoices = field<unknown>(payload, 'choices')
+  const choices: QuestionChoice[] = []
+  if (Array.isArray(rawChoices)) {
+    for (const raw of rawChoices) {
+      const key = textOf(raw, 'key')
+      const label = textOf(raw, 'label')
+      if (!key || !label) continue
+      const description = textOf(raw, 'description')
+      choices.push({ key, label, ...(description ? { description } : {}) })
+    }
+  }
+  return {
+    questionId,
+    kind,
+    title: title || (kind === 'approval' ? '需要你批准' : '模型需要你回答'),
+    ...(body ? { body } : {}),
+    ...(choices.length ? { choices } : {}),
+    ...(toolName ? { toolName } : {}),
+    ...(callId ? { callId } : {}),
+    ...(sessionId ? { sessionId } : {}),
+    ...(runId ? { runId } : {}),
+    at: numberOr(payload, 'at', fallbackAt),
+  }
+}
+
+/**
+ * 当前挂起的问题 —— **从事件流现算**, 不另存一份状态。
+ *
+ * 事件流是主通道: question/asked 来了就挂起, question/answered 来了就收起。
+ * 用 map 存而不是单个变量: 迟到的 answered 可能对应一个早已回答过的 id,
+ * 单变量会把新挂起的问题误收掉。
+ *
+ * 多个同时挂起时取**最近**的那个 —— 用户一次只可能回答一个。
+ */
+export function projectQuestions(events: readonly StreamEvent[]): PendingQuestion[] {
+  const pending = new Map<string, PendingQuestion>()
+  const ordered = [...events].sort((a, b) => a.seq - b.seq)
+  for (const event of ordered) {
+    if (event.type === 'question/asked') {
+      const question = parseQuestion(event.payload, event.at)
+      if (question) pending.set(question.questionId, question)
+    } else if (event.type === 'question/answered') {
+      const questionId = textOf(event.payload, 'questionId')
+      if (questionId) pending.delete(questionId)
+    }
+  }
+  return [...pending.values()].sort((a, b) => a.at - b.at)
+}
+
+/**
+ * 合并两批挂起问题。
+ *
+ * 事件流与 `question.list` 会重叠：同一条 asked 既可能来自实时事件, 也可能来自
+ * 刷新自愈。按 questionId upsert; 新快照覆盖旧快照, 但顺序仍按最早到达时间,
+ * 这样队列不会因为一次刷新突然倒序。
+ */
+export function mergeQuestions(
+  current: readonly PendingQuestion[],
+  incoming: readonly PendingQuestion[],
+): PendingQuestion[] {
+  const merged = new Map<string, PendingQuestion>()
+  for (const question of current) merged.set(question.questionId, question)
+  for (const question of incoming) merged.set(question.questionId, question)
+  return [...merged.values()].sort((a, b) => a.at - b.at)
+}
+
+/** 兼容旧调用：只取队列里最近到达的一条。 */
+export function projectQuestion(events: readonly StreamEvent[]): PendingQuestion | undefined {
+  const pending = projectQuestions(events)
+  return pending[pending.length - 1]
+}
+
+/** 从 question/answered 的 payload 里取 questionId。缺了就返回空串。 */
+export function questionIdOf(payload: unknown): string {
+  return textOf(payload, 'questionId')
 }

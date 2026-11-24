@@ -1,0 +1,112 @@
+/*
+  输入框最左侧那颗 ＋。
+  尺寸刻意和正文首行等高（26px）：它是"这一行的一部分"，不是一颗工具栏按钮。
+*/
+
+.wrap {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  /* 和文字首行的光学中心对齐: textarea 的行高比按钮矮，抬 1px 才不显低 */
+  padding-bottom: 1px;
+}
+
+.btn {
+  display: grid;
+  place-items: center;
+  width: var(--meng-specific-control-h-sm);
+  height: var(--meng-specific-control-h-sm);
+  padding: 0;
+  border: 0;
+  border-radius: var(--meng-specific-radius-md);
+  background: transparent;
+  color: var(--meng-alias-fg-muted);
+  cursor: pointer;
+  transition:
+    background var(--meng-specific-dur-fast) var(--meng-specific-ease),
+    color var(--meng-specific-dur-fast) var(--meng-specific-ease);
+}
+
+.btn:hover,
+.btn[data-active] {
+  background: var(--meng-alias-bg-hover);
+  color: var(--meng-alias-fg-primary);
+}
+
+.btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* 弹层长在按钮上方: 输入框贴着窗口底边，往下弹会被裁掉 */
+.pop {
+  position: absolute;
+  bottom: calc(100% + var(--meng-specific-space-2));
+  left: 0;
+  z-index: var(--meng-specific-z-overlay);
+  min-width: 232px;
+  padding: 4px;
+  border: 1px solid var(--meng-alias-border-l2);
+  border-radius: var(--meng-specific-radius-lg);
+  background: var(--meng-alias-bg-overlay);
+  box-shadow: var(--meng-alias-shadow-lg);
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--meng-specific-space-2);
+  width: 100%;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: var(--meng-specific-text-sm);
+  text-align: left;
+  border: 0;
+  border-radius: var(--meng-specific-radius-md);
+  background: transparent;
+  color: var(--meng-alias-fg-primary);
+  cursor: pointer;
+}
+
+.item:hover:not(:disabled) {
+  background: var(--meng-alias-bg-hover);
+}
+
+.item:focus-visible {
+  outline: 2px solid var(--meng-alias-focus-ring);
+  outline-offset: -2px;
+}
+
+.item:disabled {
+  cursor: default;
+  color: var(--meng-alias-fg-disabled);
+}
+
+.itemIcon {
+  flex: none;
+  width: 16px;
+  text-align: center;
+  font-size: 12px;
+}
+
+/* "待接" 标签: 让"暂时没有"和"坏了"看起来不一样 */
+.pending {
+  flex: none;
+  margin-left: auto;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-muted);
+  font-size: 9.5px;
+  letter-spacing: 0.02em;
+}
+
+.note {
+  margin: 4px 8px 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--meng-alias-border-l1);
+  color: var(--meng-alias-fg-muted);
+  font-size: 10.5px;
+  line-height: 1.5;
+}

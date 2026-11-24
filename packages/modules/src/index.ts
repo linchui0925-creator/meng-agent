@@ -122,9 +122,9 @@ export function toPluginRows(nodes: readonly GraphNodeLike[]): PluginRow[] {
       id: node.id,
       url: clientUrlOf(node.id),
       platforms: platforms.length > 0 ? platforms : [...ALL_PLATFORMS],
-      inject: Array.isArray(node.inject)
-        ? (node.inject as unknown[]).filter((s): s is string => typeof s === 'string')
-        : [],
+      // 后端 inject 描述的是 node 侧能力面（tools / prompt / fs…），
+      // 和浏览器 service 同名不同义。前端依赖只认 bundle 自己的 inject。
+      inject: [],
       immediately: node.client.immediately === true,
       // 后端可以声明"这个是发版自带的"(client.builtin) —— 它比前端更清楚哪些插件
       // 是发行版的一部分、哪些是后天装的。**没声明就算外置**: 原始模式宁可少留一个,

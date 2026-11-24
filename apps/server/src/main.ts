@@ -27,7 +27,12 @@ async function main(): Promise<void> {
 
 async function serve(): Promise<void> {
   const kernel = await bootKernel({ web: true, patches: [providersPatch(), mockPatch()] })
-  if (!kernel.ok) process.exitCode = 1
+  if (!kernel.ok) {
+    process.exitCode = 1
+    console.error('[meng] 启动不健康, 已关闭。请先处理上面的 failed / pending 节点。')
+    await kernel.dispose()
+    return
+  }
 
   const stop = async () => {
     console.log('\n[meng] 关闭中...')

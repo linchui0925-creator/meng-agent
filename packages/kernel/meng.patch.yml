@@ -1,0 +1,4 @@
+# 梦 · kernel 系统插件。最小启动器只装载这一行，其余清单由 kernel 接管。
+- insert:
+    - id: kernel
+      name: '@meng/kernel'

@@ -1,0 +1,12 @@
+{
+  "name": "@meng/plugin-schedules-local",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "@meng/core": "workspace:*",
+    "@meng/loop": "workspace:*",
+    "@meng/session": "workspace:*",
+    "@meng/web": "workspace:*"
+  }
+}

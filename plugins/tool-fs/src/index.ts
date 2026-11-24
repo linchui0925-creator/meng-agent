@@ -16,6 +16,7 @@
 
 import { defineInvariant, type Ctx, type Disposer } from '@meng/core'
 import { FsError, type FsCallOptions, type FsService } from '@meng/fs'
+import type { SessionService } from '@meng/session'
 import type { ToolCall, ToolDef, ToolResult, ToolService } from '@meng/tools'
 
 export const name = 'meng-plugin-tool-fs'
@@ -37,12 +38,13 @@ const fail = (error: string): ToolResult => ({ ok: false, text: '', error })
  * 凭据挂在 call 上; 围栏在 seam 里, 它只看得到 opts。少了这一行,
  * 界面会说"已允许", 而工具照样报越界。
  */
-const grantOf = (call?: ToolCall): FsCallOptions | undefined => {
+const optionsOf = (call: ToolCall | undefined, session: SessionService | undefined): FsCallOptions | undefined => {
+  const workspace = call?.sessionId ? session?.workspaceOf(call.sessionId) : undefined
   const g = call?.grants
-  if (!g) return undefined
   const out: FsCallOptions = {
-    ...(g.outside === true ? { outside: true } : {}),
-    ...(g.sensitive === true ? { sensitive: true } : {}),
+    ...(workspace ? { root: workspace } : {}),
+    ...(g?.outside === true ? { outside: true } : {}),
+    ...(g?.sensitive === true ? { sensitive: true } : {}),
   }
   return Object.keys(out).length > 0 ? out : undefined
 }
@@ -63,6 +65,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
   if (!tools) throw new Error('能力面 tools 未装载')
   const fs = ctx.get<FsService>('fs')
   if (!fs) throw new Error('能力面 fs 未装载')
+  const session = ctx.get<SessionService>('session')
 
   const readLimit = config.readLimit ?? 2000
   const readMaxLineLength = config.readMaxLineLength ?? 2000
@@ -85,7 +88,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
       },
       async handler(args, _ctx, call) {
         try {
-          const r = await fs.readText(String(args.file_path ?? ''), grantOf(call))
+          const r = await fs.readText(String(args.file_path ?? ''), optionsOf(call, session))
           const offset = Math.max(1, toInt(args.offset) ?? 1)
           const limit = Math.min(toInt(args.limit) ?? readLimit, readLimit)
           const slice = r.lines.slice(offset - 1, offset - 1 + limit)
@@ -138,7 +141,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
       async handler(args, _ctx, call) {
         try {
           const content = String(args.content ?? '')
-          const r = await fs.writeText(String(args.file_path ?? ''), content, grantOf(call))
+          const r = await fs.writeText(String(args.file_path ?? ''), content, optionsOf(call, session))
           return ok(`已${r.operation === 'create' ? '创建' : '更新'} ${r.rel} (${r.bytes} 字节)`)
         } catch (err) {
           return fail(`write 失败: ${errText(err)}`)
@@ -169,7 +172,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
             String(args.old_string ?? ''),
             String(args.new_string ?? ''),
             args.replace_all === true,
-            grantOf(call),
+            optionsOf(call, session),
           )
           return ok(`已替换 ${r.replaced} 处 (${r.rel})`)
         } catch (err) {

@@ -5,6 +5,15 @@
     "jsx": "react-jsx",
     "types": ["node"]
   },
+  /*
+    **必须显式清空 `exclude`。** 根 tsconfig 的 exclude 里有 `apps/web` /
+    `packages/ui` / `packages/web-react` / `packages/slots` / `packages/modules`
+    —— 那是给内核侧那份配置用的（那边没有 DOM、没有 jsx）。子配置 `extends` 之后
+    **include 会被覆盖, exclude 不会** —— 于是这份前端配置把上面那几个目录全排除掉了,
+    `typecheck:web` 实际上一个前端文件都没检查（2026-11-16 才发现: 一个不存在的
+    标识符也能"0 错"通过）。这里显式清空, 边界才真的落在 include 上。
+  */
+  "exclude": [],
   "include": [
     "types/**/*.d.ts",
     "apps/web/src/**/*.ts",

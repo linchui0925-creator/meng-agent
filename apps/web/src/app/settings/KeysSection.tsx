@@ -1,23 +1,8 @@
 /**
- * 「接口密钥」分区 —— 第三个内核腿分区。
+ * 「接口密钥」分区 —— 直接填写 API Key。
  *
- * 一页回答一个问题: **哪家有钥匙, 用的是哪个环境变量**。
- *
- * ── 为什么是单页两段列表, 不是三栏 ──
- * 模型分区做三栏是因为一家有十几个字段（地址/协议/变量名/模型/温度…）,
- * 列表放不下才分左右。这里每家只有**一个可编辑字段**, 点进去看详情
- * 只多一次点击、不多一条信息。所以两段列表, 行内直接改。
- *
- * ── 为什么按「内置 / 自定义」分段, 不按「有 key / 没 key」 ──
- * 没有 key 是同一家的**一种处境**, 不是一种来路。升级成一级结构, 用户
- * 第一眼就看不出"这家是我加的, 还是内置的"—— 而那正是他来这一页要判断的。
- *
- * ── 三句必须说准的话 ──
- *   ① **存的是变量名, 不是密钥**。用户改变量名会以为自己换了 key。
- *   ② **改名立刻生效, 换值要重启**。两者不同步, 这是配置层刻意的不对称
- *      （值只能从 `process.env` 读）。说成"都要重启"会让人白重启一次。
- *   ③ **改了名等于换了一个变量**。原来那个变量里的值不会跟着搬过来 ——
- *      这是最常见的"我明明改好了却没生效"。
+ * 密钥只保存在本机 `.meng/credentials.json`（0600），页面永远不回显已保存的
+ * 明文。环境变量仍作为兼容回退：本机密钥优先，其次才是进程环境。
  */
 
 import { useCallback, useEffect, useState } from 'react'
@@ -26,11 +11,9 @@ import type { SectionApi } from './api.ts'
 import { Group, Note } from './controls.tsx'
 import {
   PRESENCE_TEXT,
-  envNameError,
   keyRowsOf,
   splitRows,
   stampOf,
-  writeOf,
   type KeyProvider,
   type KeyRow,
 } from './keys.ts'
@@ -40,21 +23,18 @@ function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
-/** 每行下面那半句小字。**按状态换, 不写同一句** —— 三种处境要做的动作不同 */
 function hintOf(row: KeyRow): string {
-  if (row.present === 'no') return '这个变量里还没有值 —— 设好之后重启梦才会读进去。'
+  if (row.present === 'no') return `还没有保存 API Key。内部引用名：${row.envName}；也兼容同名环境变量。`
   if (row.present === 'unknown') {
     return row.notes.length > 0 ? row.notes.join('；') : '后端没有报告这一家的密钥状态。'
   }
-  return '值已经读到了，这家可以直接发请求。'
+  return `API Key 已保存在本机。内部引用名：${row.envName}。重新填写可替换。`
 }
 
 export function KeysSection({ invoke }: SectionApi) {
   const [rows, setRows] = useState<KeyRow[]>([])
   const [loaded, setLoaded] = useState(false)
   const [loadError, setLoadError] = useState<string>()
-
-  /** 每行一个草稿。**保存一行不清其它行的草稿** —— 用户改到一半不该被冲掉 */
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState<string>()
   const [messages, setMessages] = useState<Record<string, { tone: 'ok' | 'error'; text: string } | undefined>>({})
@@ -64,10 +44,9 @@ export function KeysSection({ invoke }: SectionApi) {
       const providers = await invoke<KeyProvider[]>('llm.catalog')
       const next = Array.isArray(providers) ? keyRowsOf(providers) : []
       setRows(next)
-      // 只补没有草稿的行: 已经改过、还没保存的那几行保持原样
       setDrafts((prev) => {
         const out: Record<string, string> = {}
-        for (const r of next) out[r.id] = prev[r.id] ?? r.envName
+        for (const row of next) out[row.id] = prev[row.id] ?? ''
         return out
       })
       setLoadError(undefined)
@@ -83,21 +62,17 @@ export function KeysSection({ invoke }: SectionApi) {
   }, [load])
 
   async function save(row: KeyRow) {
-    const next = (drafts[row.id] ?? '').trim()
-    const bad = envNameError(next)
-    if (bad) {
-      setMessages((m) => ({ ...m, [row.id]: { tone: 'error', text: bad } }))
+    const value = (drafts[row.id] ?? '').trim()
+    if (!value) {
+      setMessages((m) => ({ ...m, [row.id]: { tone: 'error', text: '请先填写 API Key' } }))
       return
     }
-
     setBusy(row.id)
     setMessages((m) => ({ ...m, [row.id]: undefined }))
     try {
-      // 路由型在这里摊开整张字典再合回去（见 keys.ts writeOf）。
-      // 算错一次就是"保存成功, 但顺手删掉了别的供应商"
-      const step = writeOf(row, next)
-      await invoke('config.set', { key: step.key, value: step.value })
-      setMessages((m) => ({ ...m, [row.id]: { tone: 'ok', text: '已写入设置文件，下一次请求就用这个变量了。' } }))
+      await invoke('credential.set', { ref: row.envName, value })
+      setDrafts((d) => ({ ...d, [row.id]: '' }))
+      setMessages((m) => ({ ...m, [row.id]: { tone: 'ok', text: 'API Key 已保存到本机，下一次请求立即生效。' } }))
       await load()
     } catch (err) {
       setMessages((m) => ({ ...m, [row.id]: { tone: 'error', text: errText(err) } }))
@@ -106,7 +81,22 @@ export function KeysSection({ invoke }: SectionApi) {
     }
   }
 
-  if (!loaded) return <div className={styles.loading}>正在读内核里的密钥绑定…</div>
+  async function clear(row: KeyRow) {
+    if (!window.confirm(`清除 ${row.name} 的本机 API Key？环境变量如果仍存在，会继续作为回退。`)) return
+    setBusy(row.id)
+    setMessages((m) => ({ ...m, [row.id]: undefined }))
+    try {
+      await invoke('credential.unset', { ref: row.envName })
+      setMessages((m) => ({ ...m, [row.id]: { tone: 'ok', text: '本机 API Key 已清除。' } }))
+      await load()
+    } catch (err) {
+      setMessages((m) => ({ ...m, [row.id]: { tone: 'error', text: errText(err) } }))
+    } finally {
+      setBusy(undefined)
+    }
+  }
+
+  if (!loaded) return <div className={styles.loading}>正在读本机 API Key 状态…</div>
 
   if (loadError) {
     return (
@@ -121,17 +111,13 @@ export function KeysSection({ invoke }: SectionApi) {
   const { vendors, customs } = splitRows(rows)
 
   const renderRow = (row: KeyRow) => {
-    const draft = drafts[row.id] ?? row.envName
-    const dirty = draft !== row.envName
-    const bad = dirty ? envNameError(draft) : undefined
+    const draft = drafts[row.id] ?? ''
+    const dirty = draft.trim() !== ''
     const msg = messages[row.id]
 
     return (
       <div key={row.id} className={styles.row} data-key-row={row.id} data-presence={row.present}>
-        <span className={styles.stamp} aria-hidden="true">
-          {stampOf(row.name)}
-        </span>
-
+        <span className={styles.stamp} aria-hidden="true">{stampOf(row.name)}</span>
         <div className={styles.main}>
           <div className={styles.head}>
             <span className={styles.name}>{row.name}</span>
@@ -145,11 +131,12 @@ export function KeysSection({ invoke }: SectionApi) {
           <div className={styles.line}>
             <input
               className={styles.input}
+              type="password"
               value={draft}
-              data-mono=""
-              aria-label={`${row.name} 的密钥环境变量名`}
+              aria-label={`${row.name} 的 API Key`}
               spellCheck={false}
-              autoComplete="off"
+              autoComplete="new-password"
+              placeholder={row.present === 'yes' ? '已保存，重新填写可替换' : '粘贴 API Key'}
               onChange={(e) => {
                 setDrafts((d) => ({ ...d, [row.id]: e.target.value }))
                 setMessages((m) => ({ ...m, [row.id]: undefined }))
@@ -158,27 +145,29 @@ export function KeysSection({ invoke }: SectionApi) {
                 if (e.key === 'Enter' && dirty && !busy) void save(row)
               }}
             />
-            {/* 没改脏时**占位但不显示**: 一直摆一个永远可点的保存按钮会让整页
-                看着像"处处需要确认"; 而直接移除又会让行在改字时抖一下 */}
             <button
               type="button"
               className={styles.save}
               data-visible={dirty ? '' : undefined}
-              disabled={!dirty || bad !== undefined || busy === row.id}
+              disabled={!dirty || busy === row.id}
               onClick={() => void save(row)}
             >
               {busy === row.id ? '保存中' : '保存'}
             </button>
+            {row.present === 'yes' && !dirty ? (
+              <button
+                type="button"
+                className={styles.clear}
+                disabled={busy === row.id}
+                onClick={() => void clear(row)}
+              >
+                清除
+              </button>
+            ) : null}
           </div>
 
           {msg ? (
-            <p className={styles.msg} data-tone={msg.tone} role="status">
-              {msg.text}
-            </p>
-          ) : bad ? (
-            <p className={styles.msg} data-tone="error">
-              {bad}
-            </p>
+            <p className={styles.msg} data-tone={msg.tone} role="status">{msg.text}</p>
           ) : (
             <p className={styles.hint}>{hintOf(row)}</p>
           )}
@@ -190,32 +179,23 @@ export function KeysSection({ invoke }: SectionApi) {
   return (
     <div>
       <section className={styles.hero} data-keys-hero="">
-        <div className={styles.heroTitle}>这里存的是变量名，不是密钥</div>
+        <div className={styles.heroTitle}>API Key 只保存在本机</div>
         <p className={styles.heroText}>
-          每家填一个环境变量名，值是梦启动时从环境里读的 —— 所以<b>改名字立刻生效</b>，
-          <b>换 key 的值要重启</b>。改名等于换一个变量：原来那个变量里的值不会跟过来。
+          直接粘贴 Key 即可。梦会写入 <b>.meng/credentials.json</b>，文件权限固定为 <b>0600</b>，
+          页面不会回显明文；环境变量仍作为兼容回退。
         </p>
       </section>
 
       <Group title="内置供应商">
-        {vendors.length > 0 ? (
-          vendors.map(renderRow)
-        ) : (
-          <div className={styles.empty}>没有正在使用的内置供应商。去「模型」分区添加一家。</div>
-        )}
+        {vendors.length > 0 ? vendors.map(renderRow) : <div className={styles.empty}>没有正在使用的内置供应商。去「模型」分区添加一家。</div>}
       </Group>
 
       <Group title="自定义 API">
-        {customs.length > 0 ? (
-          customs.map(renderRow)
-        ) : (
-          <div className={styles.empty}>还没有自己加的接口。在「模型」分区加一家，它会出现在这里。</div>
-        )}
+        {customs.length > 0 ? customs.map(renderRow) : <div className={styles.empty}>还没有自己加的接口。在「模型」分区加一家，它会出现在这里。</div>}
       </Group>
 
       <Note>
-        「变量是空的」只是说这个环境变量没设值，和密钥写错长得一样 —— 梦分不出这两种。
-        设好之后重启一次，状态就会变。
+        如果同一个引用名同时存在本机 Key 和环境变量，本机 Key 优先。清除本机 Key 后会回退到环境变量。
       </Note>
     </div>
   )

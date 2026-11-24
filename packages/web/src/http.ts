@@ -5,7 +5,7 @@
  * 而且我们只需要「op 路由 + 静态文件」两件事。
  *
  * 刻意缺失的能力 (加进来都属于猜需求): cookie / 表单 / 模板 /
- * multipart / range。上传要等 v2 有真实用例再说。
+ * multipart / range。图片上传走 JSON Base64，由 attachment.put 校验。
  */
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
@@ -38,6 +38,8 @@ export class HttpError extends Error {
 export interface HttpApp {
   server: Server
   route(method: string, path: string, fn: RouteHandler): () => void
+  /** 前缀路由。method 可为 '*'；最长前缀优先。 */
+  prefix(method: string, prefix: string, fn: RouteHandler): () => void
   /** 静态目录。命中返回 true */
   static(prefix: string, dir: string): void
   listen(port: number, host: string): Promise<{ port: number }>
@@ -59,6 +61,7 @@ const MIME: Record<string, string> = {
 export function createHttpApp(): HttpApp {
   const server = createServer()
   const routes = new Map<string, RouteHandler>()
+  const prefixes: Array<{ method: string; prefix: string; fn: RouteHandler }> = []
   const statics: Array<{ prefix: string; dir: string }> = []
 
   server.on('request', (req, res) => {
@@ -79,6 +82,17 @@ export function createHttpApp(): HttpApp {
     if (exact) {
       const body = await readBody(req)
       const out = await exact({ req, res, body, query: url.searchParams, url })
+      if (!res.headersSent) json(res, 200, out ?? { ok: true })
+      return
+    }
+
+    const prefixed = prefixes
+      .filter((item) => item.method === '*' || item.method === method)
+      .filter((item) => path === item.prefix || path.startsWith(item.prefix + '/'))
+      .sort((a, b) => b.prefix.length - a.prefix.length)[0]
+    if (prefixed) {
+      const body = await readBody(req)
+      const out = await prefixed.fn({ req, res, body, query: url.searchParams, url })
       if (!res.headersSent) json(res, 200, out ?? { ok: true })
       return
     }
@@ -122,6 +136,18 @@ export function createHttpApp(): HttpApp {
       routes.set(key, fn)
       return () => routes.delete(key)
     },
+    prefix(method, prefix, fn) {
+      const normalized = normalize(prefix).replace(/\/$/, '') || '/'
+      const item = { method: method.toUpperCase(), prefix: normalized, fn }
+      if (prefixes.some((row) => row.method === item.method && row.prefix === item.prefix)) {
+        throw new Error(`前缀路由重复: ${item.method} ${item.prefix}`)
+      }
+      prefixes.push(item)
+      return () => {
+        const index = prefixes.indexOf(item)
+        if (index >= 0) prefixes.splice(index, 1)
+      }
+    },
     static(prefix, dir) {
       statics.push({ prefix: prefix === '/' ? '' : prefix, dir })
     },
@@ -153,14 +179,14 @@ export function json(res: ServerResponse, status: number, value: unknown): void 
   res.end(text)
 }
 
-const MAX_BODY = 2 * 1024 * 1024
+const MAX_BODY = 15 * 1024 * 1024
 
 async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = []
   let size = 0
   for await (const chunk of req) {
     size += (chunk as Buffer).length
-    if (size > MAX_BODY) throw new HttpError('bad-request', '请求体过大', 413)
+    if (size > MAX_BODY) throw new HttpError('bad-request', '请求体超过 15MB（单张图片最大 10MB）', 413)
     chunks.push(chunk as Buffer)
   }
   if (!chunks.length) return {}

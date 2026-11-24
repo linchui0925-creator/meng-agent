@@ -11,7 +11,8 @@
  *      而不是无限重连 (那会把"版本不匹配"伪装成"网络不好")。
  *   2. **重连带 `since=lastSeq`**, 且 `lastSeq` 必须跳过 hello 的 -1。
  *      判断依据是"参数有没有传", 不是"值大不大于 0"(后端也是这么写的), 所以首次连接不带。
- *   3. **重连后不清屏**: 重放的是增量, 前端把新事件追加进已有序列再重投影, 不清空。
+ *   3. **同一服务端重连后不清屏**: 增量重放并追加；若 serverId 已换代，旧 seq 失效，
+ *      必须清零并全量重放，否则新输入和回复会一起被当成旧事件过滤。
  *
  * WebSocket / fetch / 存储全部是注入的 —— 于是这个文件在 node 下能直接跑断言
  * (test/ws.ts 里塞一个假 socket), 不需要真起服务器。
@@ -40,6 +41,9 @@ export interface SocketLike {
 export interface SeqStore {
   read(): number | undefined
   write(seq: number): void
+  /** seq 必须和服务端代际一起保存，否则重启后会把新事件当成旧重放。 */
+  readServerId?(): string | undefined
+  writeServerId?(serverId: string): void
 }
 
 export interface WsTransportOptions {
@@ -69,6 +73,12 @@ export interface WsTransport extends Transport {
 }
 
 const DEFAULT_PROTOCOL = 1
+
+function serverIdOf(manifest: unknown): string | undefined {
+  if (typeof manifest !== 'object' || manifest === null) return undefined
+  const value = (manifest as { serverId?: unknown }).serverId
+  return typeof value === 'string' && value !== '' ? value : undefined
+}
 
 export function createWsTransport(options: WsTransportOptions): WsTransport {
   const {
@@ -105,6 +115,7 @@ export function createWsTransport(options: WsTransportOptions): WsTransport {
 
   const eventListeners = new Set<(event: StreamEvent) => void>()
   const stateListeners = new Set<(state: ConnectionState) => void>()
+  const resetListeners = new Set<() => void>()
 
   let state: ConnectionState = 'connecting'
   let socket: SocketLike | undefined
@@ -114,6 +125,7 @@ export function createWsTransport(options: WsTransportOptions): WsTransport {
   let disposed = false
   let fatal: Error | undefined
   let handshakeInfo: HandshakeInfo | undefined
+  let serverId = store?.readServerId?.()
 
   /** 已收到的最大 seq。重连时作为 since 发出去 */
   let lastSeq = store?.read()
@@ -191,6 +203,38 @@ export function createWsTransport(options: WsTransportOptions): WsTransport {
           setState('offline')
           onFatal?.(fatal)
           return
+        }
+        const nextServerId = serverIdOf(payload.manifest)
+        if (nextServerId !== undefined && nextServerId !== serverId) {
+          const mustReplay = serverId !== undefined || lastSeq !== undefined
+          serverId = nextServerId
+          store?.writeServerId?.(nextServerId)
+          if (mustReplay) {
+            /*
+             * 后端重启后 seq 会从较小值重新增长。旧 since 既会让服务端漏掉重放，
+             * 也会让本机把新帧当成重复帧。先归零，再不带旧进度重新接一次。
+             */
+            if (flushTimer !== undefined) clearTimeout(flushTimer)
+            flushTimer = undefined
+            lastSeq = 0
+            pendingSeq = 0
+            store?.write(0)
+            handshakeInfo = undefined
+            for (const fn of [...resetListeners]) {
+              try {
+                fn()
+              } catch (err) {
+                console.error('[ws] onReset 订阅者抛错:', err)
+              }
+            }
+            sock.onclose = null
+            sock.onmessage = null
+            sock.onerror = null
+            sock.close()
+            attempt = 0
+            scheduleRetry(undefined)
+            return
+          }
         }
         handshakeInfo = { protocol, manifest: payload.manifest, at: frame.at }
         attempt = 0
@@ -292,6 +336,13 @@ export function createWsTransport(options: WsTransportOptions): WsTransport {
       }
     },
 
+    onReset(fn: () => void): () => void {
+      resetListeners.add(fn)
+      return () => {
+        resetListeners.delete(fn)
+      }
+    },
+
     dispose(): void {
       if (disposed) return
       disposed = true
@@ -303,6 +354,7 @@ export function createWsTransport(options: WsTransportOptions): WsTransport {
       setState('offline')
       eventListeners.clear()
       stateListeners.clear()
+      resetListeners.clear()
     },
   }
 }
@@ -332,18 +384,39 @@ export function localStorageSeqStore(key = 'meng.lastSeq'): SeqStore {
         // 隐私模式下写不进去 —— lastSeq 只是优化, 丢了下一次重头开始, 不影响正确性
       }
     },
+    readServerId() {
+      try {
+        return localStorage.getItem(`${key}.serverId`) ?? undefined
+      } catch {
+        return undefined
+      }
+    },
+    writeServerId(serverId) {
+      try {
+        localStorage.setItem(`${key}.serverId`, serverId)
+      } catch {
+        // 与 seq 一样：存不下就退化为下次全量重放，不影响正确性。
+      }
+    },
   }
 }
 
 /** 内存版。测试用, 也用于"不希望跨刷新保留"的场景 */
 export function memorySeqStore(initial?: number): SeqStore {
   let value = initial
+  let serverId: string | undefined
   return {
     read() {
       return value
     },
     write(seq) {
       value = seq
+    },
+    readServerId() {
+      return serverId
+    },
+    writeServerId(next) {
+      serverId = next
     },
   }
 }

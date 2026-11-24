@@ -48,3 +48,27 @@
 .demo-ui-card__button:hover {
   background: var(--meng-alias-bg-hover);
 }
+
+/* ── 设置分区外壳（2026-11-17 起它是个 settings.section）── */
+
+.demo-ui-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--meng-specific-space-3);
+  max-width: 640px;
+}
+
+.demo-ui-section__lead {
+  margin: 0;
+  color: var(--meng-alias-fg-secondary);
+  font-size: var(--meng-specific-text-sm);
+  line-height: 1.6;
+}
+
+.demo-ui-section__lead code {
+  padding: 1px 4px;
+  border-radius: var(--meng-specific-radius-sm);
+  background: var(--meng-alias-bg-inset);
+  font-family: var(--meng-specific-font-mono);
+  font-size: 11.5px;
+}

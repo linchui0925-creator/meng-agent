@@ -49,6 +49,7 @@ import { relative, resolve, sep } from 'node:path'
 import { sandboxMode, sandboxRoot } from '@meng/config'
 import { defineInvariant, type Ctx, type Disposer } from '@meng/core'
 import { isWithin } from '@meng/fs'
+import type { SessionService } from '@meng/session'
 import type { PreDecision, ToolCall, ToolDef } from '@meng/tools'
 
 export const name = 'meng-plugin-policy-approval'
@@ -67,15 +68,21 @@ const PATH_KEYS = ['file_path', 'path', 'workdir'] as const
 
 export function apply(ctx: Ctx, config: Config = {}): Disposer {
   const sensitive = config.sensitive ?? DEFAULT_SENSITIVE
+  const session = ctx.get<SessionService>('session')
 
   const off = ctx.on(
     'tools/pre-execute',
     (call: ToolCall, def: ToolDef, next: () => Promise<PreDecision>): Promise<PreDecision> | PreDecision => {
       // **每次现读**: 模式可以在设置页里改, 改完下一次工具调用就按新的判
-      const mode = sandboxMode(ctx)
-      if (mode === 'full') return next()
+      const mode = (call.sessionId ? session?.permissionOf(call.sessionId) : undefined) ?? sandboxMode(ctx)
+      if (mode === 'full') {
+        // 会话级 full 也要越过 seam 里的全局围栏；凭据仍只挂在本次调用上。
+        call.grants = { outside: true, sensitive: true }
+        return next()
+      }
 
-      const root = sandboxRoot(ctx)
+      const workspace = call.sessionId ? session?.workspaceOf(call.sessionId) : undefined
+      const root = workspace ? resolve(workspace) : sandboxRoot(ctx)
       const targets = targetsOf(call)
       const outside = targets.filter((t) => !isWithin(root, t))
       const hitSensitive = targets.filter((t) => isSensitive(root, t, sensitive))

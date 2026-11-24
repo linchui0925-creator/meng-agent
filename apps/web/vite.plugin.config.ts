@@ -24,6 +24,18 @@ const OUT = 'public/plugins/demo-ui'
 
 export default defineConfig({
   plugins: [react()],
+  /*
+   * **必须关掉 publicDir。**
+   *
+   * outDir（`public/plugins/demo-ui`）就在 publicDir（`public`）里面 ——
+   * vite 默认会把 publicDir 整个复制进 outDir，于是它复制自己进自己：
+   * `public/plugins/demo-ui/plugins/demo-ui/plugins/demo-ui/…` 无限递归，
+   * 最后 ENAMETOOLONG 崩掉。而且崩之前 `emptyOutDir` 已经先把旧的 client.js
+   * 删了 —— 表现是「构建失败 + 产物凭空消失」，看起来像插件坏了。
+   *
+   * 插件构建只需要 rollup 的输出，没有要复制的静态文件。
+   */
+  publicDir: false,
   build: {
     outDir: OUT,
     emptyOutDir: true,

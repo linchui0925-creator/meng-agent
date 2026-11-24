@@ -11,6 +11,7 @@
     "@meng/loop": "workspace:*",
     "@meng/plugin-config-local": "workspace:*",
     "@meng/plugin-loop-basic": "workspace:*",
+    "@meng/plugin-memory": "workspace:*",
     "@meng/prompt": "workspace:*",
     "@meng/records": "workspace:*",
     "@meng/session": "workspace:*",

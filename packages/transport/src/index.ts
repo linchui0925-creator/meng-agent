@@ -46,6 +46,8 @@ export interface Transport {
   subscribe(fn: (event: StreamEvent) => void): () => void
   state(): ConnectionState
   onStateChange(fn: (state: ConnectionState) => void): () => void
+  /** 服务端进程换代，旧事件序号已失效；界面应清空后接收全量重放。 */
+  onReset?(fn: () => void): () => void
   dispose(): void
 }
 

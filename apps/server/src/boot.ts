@@ -7,15 +7,9 @@
  */
 
 import { fileURLToPath } from 'node:url'
-import {
-  createContext,
-  runInvariants,
-  StatusGraph,
-  type Ctx,
-  type Invariant,
-  type MountedRow,
-} from '@meng/core'
+import { createContext, StatusGraph, type Ctx, type MountedRow } from '@meng/core'
 import { loadPatch } from '@meng/core/loader'
+import { patch as kernelPatch, type KernelService } from '@meng/kernel'
 import { patch as basePatch } from '@meng/bundle-base'
 import { patch as kitPatch } from '@meng/bundle-kit'
 import { patch as serverPatch } from '@meng/bundle-server'
@@ -34,7 +28,7 @@ export interface BootOptions {
   patches?: string[]
   /** 装 HTTP/WS 层。CLI 一次性对话不需要 */
   web?: boolean
-  /** 数据目录, 传给 persistence */
+  /** 数据目录, 传给 session 等本机存储模块 */
   dataDir?: string
   quiet?: boolean
 }
@@ -50,19 +44,21 @@ export async function bootKernel(options: BootOptions = {}): Promise<Kernel> {
   // 状态图也是能力面: web 的 /api/boot-manifest 和调试面板都读它
   ctx.set('graph', graph)
 
-  // base(内核) → kit(能干什么活) → server(怎么接世界) → 额外插件。
-  // 顺序在这里是"人读的顺序", 不是加载语义 —— 真正的先后由 inject 决定
+  // 最小启动器只拉起 kernel；从这一行之后，装载与健康检查都交给 kernel。
+  const mounted = await loadPatch(ctx, graph, kernelPatch)
+  const kernel = ctx.get<KernelService>('kernel')
+  if (!kernel) {
+    await ctx.rollback(0)
+    throw new Error(`kernel 未就绪:
+${graph.table()}`)
+  }
+
+  // base(基础能力) → kit(能干什么活) → server(怎么接世界) → 额外插件。
   const files = [basePatch, kitPatch]
   if (options.web) files.push(serverPatch)
   files.push(...(options.patches ?? []))
-
-  const mounted: MountedRow[] = []
-  for (const file of files) {
-    mounted.push(...(await loadPatch(ctx, graph, file)))
-  }
-
-  const invariants = await collectInvariants(mounted)
-  const check = await runInvariants(ctx, invariants)
+  mounted.push(...await kernel.mount(files))
+  const health = await kernel.check(mounted)
 
   if (!options.quiet) {
     console.log('梦 · base\n')
@@ -72,9 +68,9 @@ export async function bootKernel(options: BootOptions = {}): Promise<Kernel> {
     // 没有 apply) 不进 mounted —— 它没有副作用要回收, 但确实"起来了"
     const up = graph.snapshot().filter((n) => n.status === 'active').length
     console.log(`已装载 ${up} 行 · 能力面 ${describeCapabilities(ctx)}`)
-    console.log(`不变量 ${check.ok ? '全部通过' : '有失败'} (${check.results.length} 项, ${sumMs(check.results)}ms)`)
-    if (!check.ok) {
-      for (const r of check.results.filter((r) => !r.ok)) {
+    console.log(`不变量 ${health.checksOk ? '全部通过' : '有失败'} (${health.invariants.length} 项, ${sumMs(health.invariants)}ms)`)
+    if (!health.checksOk) {
+      for (const r of health.invariants.filter((r) => !r.ok)) {
         console.error(`  ✗ ${r.pkg} · ${r.id}: ${r.message}`)
       }
     }
@@ -85,35 +81,16 @@ export async function bootKernel(options: BootOptions = {}): Promise<Kernel> {
     ctx,
     graph,
     mounted,
-    invariants: check.results,
-    ok: check.ok,
-    async dispose() {
-      // 逆序: 后装的先卸。web 先关端口, 再清服务
-      for (const row of [...mounted].reverse()) {
-        await ctx.rollback(row.mark)
-        graph.disposed(row.id)
-      }
-      await ctx.rollback(0)
+    invariants: health.invariants,
+    ok: health.ok,
+    dispose() {
+      return kernel.dispose(mounted)
     },
   }
 }
 
-/** 只把"真的装上了"的包的 invariant 拉进来 —— 失败的包不该参与自检 */
-async function collectInvariants(mounted: MountedRow[]): Promise<Invariant[]> {
-  const out: Invariant[] = []
-  for (const row of mounted) {
-    try {
-      const mod = (await import(row.specifier)) as { invariant?: Invariant }
-      if (mod.invariant?.checks?.length) out.push(mod.invariant)
-    } catch {
-      // 包没导出 invariant 是允许的 (第三方插件不必写), 静默跳过
-    }
-  }
-  return out
-}
-
 function describeCapabilities(ctx: Ctx): string {
-  return ['llm', 'session', 'persistence', 'tools', 'prompt', 'loop', 'fs', 'spill', 'questions', 'exec', 'jobs', 'web']
+  return ['llm', 'session', 'tools', 'prompt', 'loop', 'memory', 'fs', 'spill', 'questions', 'exec', 'jobs', 'web']
     .filter((n) => ctx.get(n))
     .join(', ') || '无'
 }

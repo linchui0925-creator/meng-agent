@@ -24,13 +24,13 @@
  *    于是重试同一个调用，白烧一轮。
  */
 
-import type { ContentBlock, Message, StreamRequest } from '@meng/llm'
+import type { ContentBlock, Message, ReasoningEffort as LlmReasoningEffort, StreamRequest } from '@meng/llm'
 
 /** wire 上的 thinking 档位。注意没有 `off` —— 那个只能活在配置层 */
 export type ThinkingMode = 'enabled' | 'disabled'
 
 /** 我们的推理档位。`off` 是"关掉思考"的意图，不直接上线 */
-export type ReasoningEffort = 'off' | 'high' | 'max'
+export type ReasoningEffort = LlmReasoningEffort | 'off'
 
 export interface ThinkingDefaults {
   /** 部署侧默认档位。留空 = 不往 wire 上写 thinking 字段，让服务端默认生效 */
@@ -54,7 +54,7 @@ export function resolveThinking(
   }
 
   if (effort === 'off') return { thinking: 'disabled' }
-  if (effort === 'high' || effort === 'max') return { thinking: 'enabled', reasoningEffort: effort }
+  if (effort !== undefined) return { thinking: 'enabled', reasoningEffort: effort }
   return defaults.thinking === undefined ? {} : { thinking: defaults.thinking }
 }
 
@@ -66,11 +66,41 @@ export class ReasoningEffortError extends Error {
   }
 }
 
+export class UnsupportedImageError extends Error {
+  readonly code = 'UNSUPPORTED_IMAGE_INPUT'
+  constructor() {
+    super('DeepSeek 只支持用户消息中的图片输入，当前位置暂不支持')
+    this.name = 'UnsupportedImageError'
+  }
+}
+
+function assertNoImages(blocks: ContentBlock[]): void {
+  for (const block of blocks) {
+    if (block.type === 'image') throw new UnsupportedImageError()
+    if (block.type === 'tool-result') assertNoImages(block.content)
+  }
+}
+
 function flattenText(blocks: ContentBlock[]): string {
   return blocks
     .filter((b): b is Extract<ContentBlock, { type: 'text' }> => b.type === 'text')
     .map((b) => b.text)
     .join('')
+}
+
+/** 用户图文消息使用多模态 content 数组，顺序必须与输入块一致。 */
+function serializeUserContent(blocks: ContentBlock[]): Array<Record<string, unknown>> {
+  const content: Array<Record<string, unknown>> = []
+  for (const block of blocks) {
+    if (block.type === 'text' && block.text.length > 0) content.push({ type: 'text', text: block.text })
+    if (block.type === 'image') {
+      content.push({
+        type: 'image_url',
+        image_url: { url: `data:${block.mime};base64,${block.dataBase64}` },
+      })
+    }
+  }
+  return content
 }
 
 /** 一条 assistant 消息: 正文 + 工具调用 + (仅当有工具调用时) 上轮思考 */
@@ -102,6 +132,8 @@ export function serializeMessages(messages: Message[]): unknown[] {
   const wire: unknown[] = []
 
   for (const message of messages) {
+    // DeepSeek 的图片只能出现在 user.content；其他位置继续明确拒绝。
+    if (message.role !== 'user') assertNoImages(message.content)
     if (message.role === 'system') {
       wire.push({ role: 'system', content: flattenText(message.content) })
       continue
@@ -115,12 +147,15 @@ export function serializeMessages(messages: Message[]): unknown[] {
       (b): b is Extract<ContentBlock, { type: 'tool-result' }> => b.type === 'tool-result',
     )
     const text = flattenText(message.content)
+    const hasImages = message.content.some((block) => block.type === 'image')
 
-    // 既是"有正文"也是"没有工具结果"时才发 user —— 只有工具结果的消息
-    // 发成一条空 user 消息, 会让模型看见一个它无法响应的空轮
-    if (text.length > 0 || toolResults.length === 0) wire.push({ role: 'user', content: text })
+    // 有正文或图片就发 user；只有工具结果时不额外造一条空 user 消息。
+    if (text.length > 0 || hasImages || toolResults.length === 0) {
+      wire.push({ role: 'user', content: hasImages ? serializeUserContent(message.content) : text })
+    }
 
     for (const result of toolResults) {
+      assertNoImages(result.content)
       wire.push({
         role: 'tool',
         tool_call_id: result.toolCallId,
@@ -142,9 +177,9 @@ export interface SerializeInput extends ThinkingDefaults {
 /** 完整请求体。可选字段一律"有才写"，不写 null —— 让服务端默认值生效 */
 export function serializeRequest(input: SerializeInput): Record<string, unknown> {
   const { request } = input
-  // 调用方目前不指定 effort（StreamRequest 还没有这个字段），
-  // 所以档位只来自插件配置。将来 loop 要按轮调档，从这里把值传进来即可
-  const thinking = resolveThinking(undefined, input)
+  // 每次请求的档位优先；没指定时才使用部署默认值。
+  // 是否支持由 llm 按厂商实时模型能力校验，这里只负责正确配对与透传。
+  const thinking = resolveThinking(request.reasoningEffort, input)
   const temperature = request.temperature ?? input.temperature
   const maxTokens = request.maxTokens ?? input.maxTokens
 

@@ -1,0 +1,15 @@
+{
+  "name": "@meng/plugin-memory",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "@meng/core": "workspace:*",
+    "@meng/llm": "workspace:*",
+    "@meng/loop": "workspace:*",
+    "@meng/prompt": "workspace:*",
+    "@meng/session": "workspace:*",
+    "@meng/tools": "workspace:*"
+  }
+}

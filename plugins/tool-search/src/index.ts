@@ -21,6 +21,7 @@ import { readdir, readFile, stat } from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
 import { sandboxRoot } from '@meng/config'
 import { defineInvariant, type Ctx, type Disposer } from '@meng/core'
+import type { SessionService } from '@meng/session'
 import type { ToolDef, ToolResult, ToolService } from '@meng/tools'
 
 export const name = 'meng-plugin-tool-search'
@@ -48,12 +49,16 @@ const IGNORE = new Set([
 export function apply(ctx: Ctx, config: Config = {}): Disposer {
   const tools = ctx.get<ToolService>('tools')
   if (!tools) throw new Error('能力面 tools 未装载')
+  const session = ctx.get<SessionService>('session')
 
   /**
    * 工作区根 —— **每次调用现读**。设置页改了工作区, 下一次 glob/grep 就按新根搜。
    * 抓成常量的话, 改完工作区搜的还是旧目录, 而界面上看不出为什么。
    */
-  const rootOf = (): string => sandboxRoot(ctx)
+  const rootOf = (sessionId?: string): string => {
+    const workspace = sessionId ? session?.workspaceOf(sessionId) : undefined
+    return workspace ? resolve(workspace) : sandboxRoot(ctx)
+  }
   const globMaxResults = config.globMaxResults ?? 100
   const grepMaxMatches = config.grepMaxMatches ?? 250
   const grepMaxLineBytes = config.grepMaxLineBytes ?? 2000
@@ -127,7 +132,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
           if (!pattern) return fail('缺参数 pattern')
           // 一个 handler 只取一次: walk 报的相对路径与后面 join 回绝对路径
           // 必须基于**同一个**根, 否则中途换根会把文件指到别处
-          const root = rootOf()
+          const root = rootOf(call?.sessionId)
           const start = fence(args.path, root, call?.grants?.outside === true)
           const base = baseOf(root, start)
           const re = globToRegExp(pattern)
@@ -180,7 +185,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
           } catch {
             return fail(`非法正则: ${pattern}`)
           }
-          const root = rootOf()
+          const root = rootOf(call?.sessionId)
           const start = fence(args.path, root, call?.grants?.outside === true)
           const base = baseOf(root, start)
           const include = args.include ? globToRegExp(String(args.include)) : null

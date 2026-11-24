@@ -23,14 +23,114 @@
 
 import type { Ctx, Disposer } from '@meng/core'
 import type { ToolCall } from '@meng/tools'
+import type { Message, ReasoningEffort, ToolSpec } from '@meng/llm'
+
+export type { ReasoningEffort } from '@meng/llm'
 
 /** 能力面名。与包名 @meng/loop 一致 */
 export const LOOP_CAPABILITY = 'loop'
 
+/**
+ * 可选的上下文/记忆能力面。
+ *
+ * 没装 memory 插件时 loop-basic 仍按原来的 `session.project()` 工作；装了它，
+ * loop 在每次请求模型前把当前消息交给它做工具结果裁剪和超长摘要。
+ */
+export const MEMORY_CAPABILITY = 'memory'
+
+export interface MemoryPrepareInput {
+  sessionId: string
+  model: string
+  provider?: string
+  system: string
+  tools: ToolSpec[]
+  messages: Message[]
+  runId?: string
+  signal?: AbortSignal
+}
+
+export interface MemoryPrepareResult {
+  messages: Message[]
+  compacted: boolean
+  estimatedInputTokens?: number
+  /** 压缩前/后的保守 token 估算；未压缩时缺省。 */
+  beforeTokens?: number
+  afterTokens?: number
+  summarySeq?: number
+  reason?: string
+}
+
+export interface MemoryStatus {
+  sessionId: string
+  model?: string
+  contextWindow?: number
+  usedTokens: number
+  usedSource: 'estimate'
+  thresholdRatio: number
+  retainRatio: number
+  thresholdTokens?: number
+  compacted: boolean
+  compactionCount: number
+  lastCompactedAt?: number
+  lastSummarySeq?: number
+  canCompact: boolean
+  reason?: string
+}
+
+export interface MemoryCompactInput {
+  sessionId: string
+  model?: string
+  signal?: AbortSignal
+}
+
+export interface MemoryService {
+  prepare(input: MemoryPrepareInput): Promise<MemoryPrepareResult>
+  status(input: { sessionId: string; model?: string }): Promise<MemoryStatus>
+  compactNow(input: MemoryCompactInput): Promise<MemoryPrepareResult>
+}
+
+export function provideMemory(ctx: Ctx, impl: MemoryService): Disposer {
+  return ctx.set<MemoryService>(MEMORY_CAPABILITY, impl)
+}
+
+export function getMemory(ctx: Ctx): MemoryService | undefined {
+  return ctx.get<MemoryService>(MEMORY_CAPABILITY)
+}
+
+export interface LoopAttachment {
+  id: string
+  name: string
+  mime: string
+  size: number
+  createdAt: number
+}
+
+export interface ContextReset {
+  /** 切换事件本身的 seq；事件流只投影它之后的新上下文。 */
+  afterSeq: number
+  /** 切换前只保留用户/助手文字的参考稿，不包含工具日志。 */
+  reference: string
+  estimatedInputTokens?: number
+}
+
+export interface RunInterruption {
+  /** 被用户中断的上一轮。旧事件不删除，只给模型一条明确的修正说明。 */
+  sourceRunId?: string
+  mode: 'insert'
+}
+
 export interface RunInput {
   sessionId: string
   text: string
+  /** 只传元数据；图片本体由 session.project 从本地附件库恢复。 */
+  attachments?: LoopAttachment[]
   model?: string
+  /** 仅覆盖本轮；缺省时由 llm 继承默认模型配置。 */
+  reasoningEffort?: ReasoningEffort
+  /** 模型切换后的新上下文边界。 */
+  contextReset?: ContextReset
+  /** 用户中断上一轮后立即补充指令。 */
+  interruption?: RunInterruption
   /** 由调用方分配, 会写进每条事件的 data.runId —— 前端靠它给并发 run 分组 */
   runId?: string
   signal?: AbortSignal

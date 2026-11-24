@@ -15,10 +15,18 @@ export interface RootEntry {
   /** 值从哪一层来。env 表示环境变量盖过了设置文件 */
   source?: 'settings' | 'env' | 'manifest' | 'default'
   desc?: string
+  /** 干净的 JSON Schema。枚举项的选项从 `schema.enum` 读, 不在这里再抄一份 */
+  schema?: unknown
 }
 
 /** 后端配置项的全名。写在插件 `CONFIG` 里, 前端只当字符串用 */
 export const WORKSPACE_KEY = 'sandbox.root'
+
+/**
+ * 权限模式那一项。**和 root 在同一个 scope** —— 目录是范围, 模式是这个范围
+ * 内外的宽严, 两件事本来就是一件事（B-25）。
+ */
+export const MODE_KEY = 'sandbox.mode'
 
 /**
  * 当前该显示的那串字。
@@ -70,4 +78,31 @@ export function canSave(draft: string, saved: string): boolean {
  */
 export function isAbsolutePath(p: string): boolean {
   return p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('\\\\')
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 权限模式（三档）
+//
+// 三档的**名字与说明**已经搬到 `../permissions.ts` —— 输入框那条环境栏也要摆它们,
+// 两处各写一份标签迟早会分叉。这里保留"读这一项"的部分（它依赖 `RootEntry`）,
+// 并把词汇 re-export 出去, 免得这一页的调用方和单测跟着改 import。
+// ─────────────────────────────────────────────────────────────────────────────
+
+export { MODE_HINTS, MODE_IDS, MODE_LABELS, MODE_FALLBACK, modeAsks } from '../permissions.ts'
+
+import { MODE_FALLBACK, MODE_IDS, enumOf, permissionOptionsOf } from '../permissions.ts'
+
+export function modeOf(entry: RootEntry | undefined): string {
+  if (!entry) return MODE_FALLBACK
+  if (typeof entry.value === 'string' && entry.value !== '') return entry.value
+  if (typeof entry.default === 'string' && entry.default !== '') return entry.default
+  return MODE_FALLBACK
+}
+
+/**
+ * 下拉里的选项。**顺序照 `schema.enum`** —— 后端按宽严排的，前端重排会让
+ * "从左到右越来越松"这个直觉失效。
+ */
+export function modeOptionsOf(entry: RootEntry | undefined): Array<{ value: string; label: string }> {
+  return permissionOptionsOf(enumOf(entry?.schema) ?? [...MODE_IDS])
 }

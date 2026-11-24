@@ -30,7 +30,7 @@ __MENG_LOADER__.load({
           | {
               register(
                 pluginId: string,
-                reg: { name: string; component: unknown; order?: number },
+                reg: { name: string; component: unknown; order?: number; meta?: unknown },
               ): () => void
             }
           | undefined
@@ -45,10 +45,18 @@ __MENG_LOADER__.load({
         document.head.appendChild(style)
 
         // ── 副作用 2 · 占位 ───────────────────────────────────────────
+        /*
+         * 注册成**设置分区**而不是侧栏脚注。
+         *
+         * `meta` 是给设置页壳看的: 左导航要靠 label/group 才能列出这一项
+         * （壳在分区渲染之前就要知道所有项叫什么）。order 900 = 排在所有
+         * 内置分区之后 —— 它是诊断页, 不该挡在「外观」前面。
+         */
         const off = slots.register(ID, {
-          name: 'sidebar.footer',
+          name: 'settings.section',
           component: Panel,
-          order: -10, // 排在内置页脚之前
+          order: 900,
+          meta: { label: '外部 bundle', group: '插件', origin: 'local' },
         })
 
         return () => {

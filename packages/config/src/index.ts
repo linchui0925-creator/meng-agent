@@ -350,6 +350,28 @@ export interface ConfigService {
   unset(scope: string, key: string): Promise<ConfigWriteResult>
 }
 
+/**
+ * 本机凭据库。引用名沿用环境变量名/路由名，但值不再依赖进程启动环境。
+ * 读取必须是同步的，因为 provider 在发请求前要即时取值。
+ */
+export interface CredentialService {
+  get(ref: string): string | undefined
+  has(ref: string): boolean
+  set(ref: string, value: string): Promise<void>
+  unset(ref: string): Promise<void>
+  list(): string[]
+}
+
+export const CREDENTIAL_CAPABILITY = 'credentials'
+
+export function provideCredentials(ctx: Ctx, impl: CredentialService): Disposer {
+  return ctx.set<CredentialService>(CREDENTIAL_CAPABILITY, impl)
+}
+
+export function getCredentials(ctx: Ctx): CredentialService | undefined {
+  return ctx.get<CredentialService>(CREDENTIAL_CAPABILITY)
+}
+
 export function provideConfig(ctx: Ctx, impl: ConfigService): Disposer {
   return ctx.set<ConfigService>(CONFIG_CAPABILITY, impl)
 }

@@ -56,6 +56,10 @@ export interface CatalogProvider {
   modelCount?: number
   /** 现在能不能真的发请求 */
   available: boolean
+  /** 模型清单来源与本次拉取状态，前端无需猜它是不是实时数据 */
+  modelSource?: ProviderInfo['modelSource']
+  modelsError?: string
+  modelsFetchedAt?: number
   /**
    * `true` = **还没激活**: 内置目录里有这一家, 但配置里还没加。
    * 界面上应该画成"可添加"（一个添加按钮 + 它会带来哪些模型），
@@ -102,6 +106,9 @@ export function catalogOf(
       name: p.name,
       models: [...p.models],
       available: p.available,
+      ...(p.modelSource ? { modelSource: p.modelSource } : {}),
+      ...(p.modelsError ? { modelsError: p.modelsError } : {}),
+      ...(p.modelsFetchedAt === undefined ? {} : { modelsFetchedAt: p.modelsFetchedAt }),
       ...(p.protocol ? { protocol: p.protocol } : {}),
       ...(p.declared ? { declared: true } : {}),
       ...(p.configScope ? { configScope: p.configScope } : {}),

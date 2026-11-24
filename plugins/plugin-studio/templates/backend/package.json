@@ -1,0 +1,27 @@
+{
+  "name": "{{packageName}}",
+  "version": "0.1.0",
+  "type": "module",
+  "description": {{descriptionJson}},
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "meng.patch.yml", "README.md"],
+  "engines": { "node": ">=22" },
+  "scripts": { "build": "tsc -p tsconfig.json" },
+  "peerDependencies": { "@meng/core": ">=0.0.0" },
+  "devDependencies": {
+    "@meng/core": "0.0.0",
+    "@types/node": "^22.10.2",
+    "typescript": "^5.9.3"
+  },
+  "meng": {
+    "plugin": { "apiVersion": 1, "id": "{{id}}", "patch": "./meng.patch.yml" }
+  }
+}

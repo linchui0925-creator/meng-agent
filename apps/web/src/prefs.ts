@@ -49,6 +49,25 @@ export interface Prefs {
   whisperWhen: WhisperWhen
   /** 工具卡跑完后自动折叠 (false = 默认展开, 输出直接摊着) */
   foldTools: boolean
+  /**
+   * 前端停用的供应商 id。缺省 = 全部启用；这里只影响模型选择器，
+   * 不删除后端配置，也不影响设置页里的连接测试。
+   */
+  disabledProviders: string[]
+  /**
+   * 前端手动维护的供应商模型清单。有键 = 这家使用手动清单（空数组也有效）；
+   * 没键 = 使用后端目录/端点返回的清单。
+   */
+  manualModels: Record<string, string[]>
+  /**
+   * 上次用的模型 id（`llm.models()` 里的一个）。缺 = 让内核按默认路由挑。
+   *
+   * 为什么存在本机而不是内核配置: 它是"我上一轮用了哪个"这个**界面记忆**,
+   * 不是内核需要知道的事实 —— 真正用哪个模型是**每一轮随请求发过去**的
+   * (`session.send` 的 `model`)。内核那边没有"用户偏好的模型"这个概念,
+   * 硬造一个出来会让"换机器就换了模型"变得无法解释。
+   */
+  model?: string
 }
 
 const KEY = 'meng.prefs'
@@ -67,6 +86,8 @@ export const DEFAULT_PREFS: Prefs = {
   whisper: true,
   whisperWhen: 'normal',
   foldTools: true,
+  disabledProviders: [],
+  manualModels: {},
 }
 
 const THEME_MODES: readonly ThemeMode[] = ['light', 'dark', 'system']
@@ -93,6 +114,32 @@ function pickBool(v: unknown, fallback: boolean): boolean {
   return typeof v === 'boolean' ? v : fallback
 }
 
+/** 只留非空字符串并去重，顺序保持第一次出现的位置。 */
+function cleanIds(v: unknown): string[] {
+  if (!Array.isArray(v)) return []
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const item of v) {
+    if (typeof item !== 'string') continue
+    const id = item.trim()
+    if (id === '' || seen.has(id)) continue
+    seen.add(id)
+    out.push(id)
+  }
+  return out
+}
+
+/** 手动模型清单只收“供应商 id → 非空模型 id 数组”，坏值丢掉那一项。 */
+function cleanManualModels(v: unknown): Record<string, string[]> {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return {}
+  const out: Record<string, string[]> = {}
+  for (const [provider, models] of Object.entries(v as Record<string, unknown>)) {
+    if (provider.trim() === '' || !Array.isArray(models)) continue
+    out[provider] = cleanIds(models)
+  }
+  return out
+}
+
 /**
  * 解析成一份完整合法的偏好。
  *
@@ -101,7 +148,7 @@ function pickBool(v: unknown, fallback: boolean): boolean {
  * 手工改坏一个字段就整份重置, 是最容易让人骂"设置自己变回去了"的做法。
  */
 export function parsePrefs(raw: string | null, legacyTheme: string | null = null): Prefs {
-  const out: Prefs = { ...DEFAULT_PREFS }
+  const out: Prefs = { ...DEFAULT_PREFS, disabledProviders: [], manualModels: {} }
 
   let parsed: unknown
   if (raw !== null && raw !== '') {
@@ -124,6 +171,12 @@ export function parsePrefs(raw: string | null, legacyTheme: string | null = null
     out.whisper = pickBool(obj.whisper, DEFAULT_PREFS.whisper)
     out.whisperWhen = pick(obj.whisperWhen, WHISPER_WHENS, DEFAULT_PREFS.whisperWhen)
     out.foldTools = pickBool(obj.foldTools, DEFAULT_PREFS.foldTools)
+    out.disabledProviders = cleanIds(obj.disabledProviders)
+    out.manualModels = cleanManualModels(obj.manualModels)
+    // 模型 id 是自由字符串（由 `llm.models()` 决定有哪些），只拦非字符串/空串。
+    // **不校验它是否还存在**: 那个模型可能是被临时下线了，而"回落成默认"会让用户
+    // 下一轮静默换模型 —— 保留它，界面上显示原值，用户自己看得见。
+    if (typeof obj.model === 'string' && obj.model !== '') out.model = obj.model
   }
 
   /*

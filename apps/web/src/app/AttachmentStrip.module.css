@@ -1,0 +1,96 @@
+.strip {
+  display: flex;
+  gap: var(--meng-specific-space-2);
+  overflow-x: auto;
+  padding: var(--meng-specific-space-2) var(--meng-specific-space-3) 0;
+}
+
+.item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 38px minmax(90px, 1fr) 22px;
+  gap: var(--meng-specific-space-2);
+  align-items: center;
+  flex: 0 0 220px;
+  min-width: 0;
+  padding: var(--meng-specific-space-1);
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: var(--meng-specific-radius-md);
+  background: var(--meng-alias-bg-inset);
+}
+
+.item[data-status='error'] {
+  border-color: var(--meng-alias-danger);
+  background: var(--meng-alias-danger-subtle);
+}
+
+.thumb,
+.fileIcon {
+  width: 38px;
+  height: 38px;
+  border-radius: var(--meng-specific-radius-sm);
+  object-fit: cover;
+  background: var(--meng-alias-bg-surface);
+}
+
+.fileIcon {
+  display: grid;
+  place-items: center;
+  color: var(--meng-alias-fg-muted);
+  font-size: var(--meng-specific-text-xs);
+}
+
+.copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.copy b {
+  overflow: hidden;
+  color: var(--meng-alias-fg-primary);
+  font-size: var(--meng-specific-text-xs);
+  font-weight: var(--meng-specific-weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.copy span {
+  overflow: hidden;
+  color: var(--meng-alias-fg-muted);
+  font-size: 10px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.item[data-status='uploading'] .copy span {
+  color: var(--meng-alias-live);
+}
+
+.item[data-status='error'] .copy span {
+  color: var(--meng-alias-danger);
+}
+
+.remove {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--meng-specific-radius-sm);
+  background: transparent;
+  color: var(--meng-alias-fg-muted);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.remove:hover {
+  background: var(--meng-alias-bg-hover);
+  color: var(--meng-alias-fg-primary);
+}
+
+.remove:focus-visible {
+  outline: 2px solid var(--meng-alias-focus-ring);
+  outline-offset: 1px;
+}

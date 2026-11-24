@@ -32,6 +32,9 @@ export default defineConfig({
       // 表现为前端一直 connecting(连的是前端的 4722, 那个端口上没有 /ws)
       '/api': { target: 'http://127.0.0.1:4721', changeOrigin: true, ws: true },
       '/ws': { target: 'http://127.0.0.1:4721', changeOrigin: true, ws: true },
+      // 项目适配器可以使用自己的兼容路由；dsh-purge 原版面板就依赖这两组路径。
+      '/dsh-purge': { target: 'http://127.0.0.1:4721', changeOrigin: true },
+      '/redteam': { target: 'http://127.0.0.1:4721', changeOrigin: true },
       '/plugins': {
         target: 'http://127.0.0.1:4721',
         changeOrigin: true,

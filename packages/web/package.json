@@ -7,6 +7,8 @@
   "dependencies": {
     "@meng/config": "workspace:*",
     "@meng/core": "workspace:*",
+    "@meng/fs": "workspace:*",
+    "@meng/jobs": "workspace:*",
     "@meng/llm": "workspace:*",
     "@meng/pi": "workspace:*",
     "@meng/records": "workspace:*",

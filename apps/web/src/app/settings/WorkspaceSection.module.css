@@ -91,6 +91,51 @@
   font-weight: 600;
 }
 
+/* ── 权限档 ──
+ * 三档的名字本身不解释"严到什么程度", 所以分段控件下面紧跟一句"这一档会发生什么"。
+ * 那句话随档位变 —— 写死一句会在 `full` 档变成假话。
+ */
+.modeRow {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 12px 16px 14px;
+}
+
+.modeHint {
+  margin: 0;
+  font-size: var(--meng-specific-text-xs);
+  color: var(--meng-alias-fg-muted);
+  line-height: 1.6;
+}
+
+.modeMsg {
+  margin: 0;
+  font-size: var(--meng-specific-text-xs);
+  line-height: 1.5;
+}
+
+.modeMsg[data-tone='ok'] {
+  color: var(--meng-alias-positive);
+}
+
+.modeMsg[data-tone='error'] {
+  color: var(--meng-alias-danger);
+}
+
+/* 标题区那个权限点: 和来源点分开配色, 免得被读成"来源"的第四种 */
+.heroDot[data-mode='ask'] {
+  background: var(--meng-alias-warning);
+}
+
+.heroDot[data-mode='auto'] {
+  background: var(--meng-alias-accent);
+}
+
+.heroDot[data-mode='full'] {
+  background: var(--meng-alias-danger);
+}
+
 /* ── 只读事实 ──
  * 名词列固定 96px: 三条的名词都短, 固定宽度让右边的解释左对齐成一列,
  * 比每条各按内容对齐更好扫。

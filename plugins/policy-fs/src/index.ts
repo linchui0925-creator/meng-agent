@@ -41,12 +41,13 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
   const requireRead = config.requireRead ?? true
 
   const observed = new Set<string>()
+  const observedKey = (root: string, rel: string): string => `${resolve(root)}\0${rel.split('\\').join('/')}`
 
-  const offRead = ctx.on('fs/read', (info: { rel: string }) => {
-    observed.add(info.rel)
+  const offRead = ctx.on('fs/read', (info: { root: string; rel: string }) => {
+    observed.add(observedKey(info.root, info.rel))
   })
-  const offWritten = ctx.on('fs/written', (info: { rel: string }) => {
-    observed.add(info.rel)
+  const offWritten = ctx.on('fs/written', (info: { root: string; rel: string }) => {
+    observed.add(observedKey(info.root, info.rel))
   })
 
   /** intent 槽的检查。抛错即否决; 调 next() 即放行 */
@@ -67,7 +68,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
         throw new FsError('FS_SENSITIVE', `敏感路径禁止写入: ${rel}`)
       }
     }
-    if (requireRead && intent.exists && !observed.has(rel)) {
+    if (requireRead && intent.exists && !observed.has(observedKey(intent.root, rel))) {
       throw new FsError(
         'FS_NOT_OBSERVED',
         `先读后写: ${rel} 还没有被 read 过。先 read 它, 确认原内容再改`,
@@ -95,11 +96,11 @@ export const invariant = defineInvariant('@meng/plugin-policy-fs', [
       const rel = (p: string) => relative(root, p) || '.'
 
       // 1) 敏感路径: 未读、也不存在, 单独验证 noWrite 命中
-      const sensitive: FsIntent = { kind: 'write', path: resolve(root, '.env'), rel: rel('.env'), exists: false }
+      const sensitive: FsIntent = { kind: 'write', path: resolve(root, '.env'), root, rel: rel('.env'), exists: false }
       await expectVeto(ctx, 'fs/write-intent', sensitive, 'FS_SENSITIVE')
 
       // 2) 先读后写: 存在但没读过 (README 在 boot 阶段不会经 seam 被读)
-      const unread: FsIntent = { kind: 'edit', path: resolve(root, 'README.md'), rel: 'README.md', exists: true }
+      const unread: FsIntent = { kind: 'edit', path: resolve(root, 'README.md'), root, rel: 'README.md', exists: true }
       await expectVeto(ctx, 'fs/edit-intent', unread, 'FS_NOT_OBSERVED')
     },
   },

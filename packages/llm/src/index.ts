@@ -12,8 +12,7 @@
  *   那是中立层的活, 每个厂商各写一遍必然长出不一致的行为。
  *
  * 词汇表对齐 dsh (docs/09 §2/§3): ContentBlock 联合、7 种 StreamChunk 带 block index。
- * 一处刻意的简化: 没有 image 块 —— 我们没有 attachment seam, 加了就是死代码。
- * 等 attachment 落地再往 ContentBlockMap 里 declare 一块。
+ * 图片是输入块：session 事件只存附件元数据，发给 provider 前才恢复 Base64。
  */
 
 import { MengError, defineInvariant, type Ctx, type Disposer } from '@meng/core'
@@ -34,6 +33,15 @@ export interface TextBlock {
 export interface ReasoningBlock {
   type: 'reasoning'
   text: string
+}
+
+/** 图片输入。dataBase64 只在内存与 provider 请求里出现，不写会话事件。 */
+export interface ImageBlock {
+  type: 'image'
+  mime: string
+  dataBase64: string
+  /** 原始文件名，仅供界面与诊断展示。 */
+  name?: string
 }
 
 export interface ToolCallBlock {
@@ -61,6 +69,7 @@ export interface ToolResultBlock {
 export interface ContentBlockMap {
   text: TextBlock
   reasoning: ReasoningBlock
+  image: ImageBlock
   'tool-call': ToolCallBlock
   'tool-result': ToolResultBlock
 }
@@ -253,6 +262,15 @@ export type StreamChunk =
   /** 必须是最后一个 chunk */
   | { type: 'finish'; reason: FinishReason }
 
+export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
+/** 默认调用的完整身份：路由、模型、推理档位缺一不可再靠猜。 */
+export interface DefaultModel {
+  provider: string
+  model: string
+  reasoningEffort?: ReasoningEffort
+}
+
 export interface StreamRequest {
   model: string
   /**
@@ -263,6 +281,8 @@ export interface StreamRequest {
    * "只有一个 provider"的部署不该被迫背这个字段。
    */
   provider?: string
+  /** 本次调用的推理档位；缺省时才可能继承默认模型三件套里的值。 */
+  reasoningEffort?: ReasoningEffort
   messages: Message[]
   tools?: ToolSpec[]
   signal?: AbortSignal
@@ -438,8 +458,14 @@ export interface ModelInfo {
   maxTokens?: number
   /** 接受的输入模态。缺省 = 未知 */
   input?: ModelModality[]
+  /** 能产出的输出模态。缺省 = 未知 */
+  output?: ModelModality[]
   /** 是否支持推理档位 (effort / thinking)。缺省 = 未知 */
   reasoning?: boolean
+  /** 厂商实时申报的推理档位。缺省 = 未知；空数组 = 明确没有 */
+  reasoningEfforts?: ReasoningEffort[]
+  /** 厂商实时申报的默认推理档位。缺省 = 跟随服务端 */
+  defaultReasoningEffort?: ReasoningEffort
   /**
    * 这个模型走哪种 wire 协议（`openai-completions` / `anthropic-messages` …）。
    *
@@ -494,6 +520,11 @@ export interface RouteFacts {
   available?: boolean
   /** 还差什么。人话, 直接显示。只在不可用时有意义 */
   missing?: string[]
+  /**
+   * 模型 ID 是否由用户手填（而不是从过期内置目录推断）。
+   * 手填清单在厂商 /models 拉不到时仍可用，但来源必须标成 manual。
+   */
+  manualModels?: boolean
 }
 
 /**
@@ -545,14 +576,22 @@ export interface Provider {
 }
 
 /** 路由的对外描述。`llm.catalog` 与设置页读它, 不碰 adapter 本体 */
+export type ModelSource = 'catalog' | 'endpoint' | 'manual' | 'error'
+
 export interface ProviderInfo {
   id: string
   name: string
   protocol?: string
-  /** 已归一成对象。**顺序 = adapter 给的顺序** */
+  /** 已归一成对象。实时成功时，顺序与厂商端点一致。 */
   models: ModelInfo[]
-  /** 见 `RouteFacts.available`。没实现的恒为 true */
+  /** 见 `RouteFacts.available`。实时清单失败或为空时也为 false */
   available: boolean
+  /** 清单来源：静态目录 / 厂商端点 / 手动配置 / 拉取失败 */
+  modelSource?: ModelSource
+  /** 本次实时拉取失败的人话原因；不能拿旧目录伪装成功 */
+  modelsError?: string
+  /** 最近一次端点结果（含失败）的本地时间戳 */
+  modelsFetchedAt?: number
   /** 见 `RouteFacts.missing`。不可用时才有内容 */
   missing?: string[]
   configScope?: string
@@ -615,11 +654,11 @@ export interface ModelDiscoveryRequest {
   /** wire 协议。缺省由 adapter 决定 */
   protocol?: string
   /**
-   * **密钥绑定的环境变量名**, 不是密钥值。
+   * **密钥的凭据引用名**, 不是密钥值。
    *
-   * dsh 的对应字段是 `apiKey`（一次性凭据）。我们刻意不同: 值不过 HTTP,
-   * 因为这条链路的后端没有凭据存储 —— 让它接受明文密钥, 就等于开了一条
-   * "密钥可以穿过设置页"的路, 与"只存变量名"的规则冲突。
+   * dsh 的对应字段是 `apiKey`（一次性凭据）。我们刻意不同: 探测请求只带
+   * 引用名，明文由 `credential.set` 单独写入本机凭据库（0600）；这样密钥
+   * 不经过这条发现请求，也不会随配置或目录快照下发。
    */
   apiKeyEnv?: string
   /**
@@ -640,6 +679,11 @@ export interface DiscoveredModel {
   name?: string
   contextWindow?: number
   maxTokens?: number
+  input?: ModelModality[]
+  output?: ModelModality[]
+  reasoning?: boolean
+  reasoningEfforts?: ReasoningEffort[]
+  defaultReasoningEffort?: ReasoningEffort
 }
 
 /** `registerModelDiscovery()` 的返回值 */
@@ -657,6 +701,8 @@ export interface ResolvedRoute {
   readonly id: string
   /** 这一次请求实际用的模型 id (调用方没点名时 = 该路由第一个) */
   readonly model: string
+  /** 默认三件套带出的档位；显式路由或自动回落不硬塞默认值。 */
+  readonly reasoningEffort?: ReasoningEffort
   readonly adapter: Adapter
 }
 
@@ -699,6 +745,10 @@ export interface LLMService {
   ): DiscoveryDisposer
   /** 问一个 scope 的供应商要模型列表。没人注册 = 抛 DISCOVERY_UNSUPPORTED */
   discoverModels(scope: string, request: ModelDiscoveryRequest): Promise<DiscoveredModel[]>
+  /** 刷新已配置路由的实时清单；默认短时复用，force 用于页面读取/手动刷新 */
+  refreshModels(options?: { force?: boolean }): Promise<ProviderInfo[]>
+  /** 配置变化后作废旧清单；进行中的旧请求即使晚到也不能覆盖下一次刷新 */
+  invalidateModels(): void
   /** 已注册的全部路由, 含**不可用**的 (设置页要列出"装了但没配"的那些) */
   listProviders(): ProviderInfo[]
   /**
@@ -718,6 +768,10 @@ export interface LLMService {
 /** 把单路由的 `Provider` 包成 `Adapter`。唯一的一处归一 */
 function providerAdapter(p: Provider): Adapter {
   return {
+    resolveModel: (_route, model) => {
+      const entry = p.models.find((item) => toModelInfo(item).id === model)
+      return entry === undefined ? undefined : toModelInfo(entry)
+    },
     info: () => ({
       ...(p.displayName === undefined ? {} : { name: p.displayName }),
       ...(p.protocol === undefined ? {} : { protocol: p.protocol }),
@@ -730,71 +784,142 @@ function providerAdapter(p: Provider): Adapter {
   }
 }
 
-export function apply(ctx: Ctx, config: { defaultModel?: string }): Disposer {
+export function apply(ctx: Ctx, config: { defaultModel?: string | DefaultModel } = {}): Disposer {
   /** 路由 → 它的归属。一个 adapter 可以出现在多个 key 上 */
   const regs = new Map<string, Registration>()
   /** 可配置路由的登记: 每个注册一份, 便于 replace / 卸装 */
   const dirs: { entries: ConfigurableProvider[] }[] = []
   /** scope → 探测器。一个 scope 一个实现 (一个插件一个 scope) */
   const discoveries = new Map<string, (request: ModelDiscoveryRequest) => Promise<readonly DiscoveredModel[]>>()
-  let defaultModel = config.defaultModel ?? ''
+  type DiscoveryState =
+    | { status: 'live'; models: ModelInfo[]; fetchedAt: number }
+    | { status: 'error'; error: string; fetchedAt: number }
+    | { status: 'manual'; fetchedAt: number; error?: string }
+  const discoveryStates = new Map<string, DiscoveryState>()
+  const discoveryPending = new Map<string, Promise<void>>()
+  let discoveryRevision = 0
+  const DISCOVERY_TTL_MS = 60_000
+  const configuredDefault = typeof config.defaultModel === 'object' && config.defaultModel !== null
+    ? config.defaultModel
+    : undefined
+  const defaultProvider = configuredDefault?.provider ?? ''
+  const defaultReasoningEffort = configuredDefault?.reasoningEffort
+  let defaultModel = typeof config.defaultModel === 'string'
+    ? config.defaultModel
+    : configuredDefault?.model ?? ''
 
-  const usable = (route: string): boolean => {
-    const reg = regs.get(route)
-    if (!reg) return false
-    return reg.adapter.info?.(route).available ?? true
-  }
-
-  const modelList = (route: string): ModelInfo[] => {
+  const staticModelList = (route: string): ModelInfo[] => {
     const reg = regs.get(route)
     if (!reg) return []
     return (reg.adapter.models?.(route) ?? []).map(toModelInfo)
   }
 
+  const modelList = (route: string): ModelInfo[] => {
+    const state = discoveryStates.get(route)
+    if (state?.status === 'error') return []
+    if (state?.status === 'live') return state.models
+    return staticModelList(route)
+  }
+
+  const usable = (route: string): boolean => {
+    const reg = regs.get(route)
+    if (!reg || !(reg.adapter.info?.(route).available ?? true)) return false
+    const state = discoveryStates.get(route)
+    if (state?.status === 'error') return false
+    if (state?.status === 'live' && state.models.length === 0) return false
+    return true
+  }
+
+  const discoveryFailure = (route: string): LlmError | undefined => {
+    const state = discoveryStates.get(route)
+    if (state?.status === 'error') {
+      return new LlmError(`路由 ${route} 的实时模型清单拉取失败: ${state.error}`, LLM_CODE.DISCOVERY_FAILED)
+    }
+    if (state?.status === 'live' && state.models.length === 0) {
+      return new LlmError(`路由 ${route} 的厂商实时模型清单为空`, LLM_CODE.NO_ADAPTER)
+    }
+    return undefined
+  }
+
   const resolve = (model?: string, provider?: string): ResolvedRoute => {
-    // 点名了路由: 不再猜。**模型不必在列表里** —— catalog 是 advisory,
-    // 新发布的模型名可以直接发, 这是 dsh 明确写下的语义
     if (provider) {
       const reg = regs.get(provider)
       if (!reg) {
         throw new LlmError(`没有路由 ${provider} (已注册: ${[...regs.keys()].join(', ') || '无'})`, LLM_CODE.NO_ADAPTER)
       }
+      const failed = discoveryFailure(provider)
+      if (failed) throw failed
+      const state = discoveryStates.get(provider)
+      if (state?.status === 'live' && model && !state.models.some((m) => m.id === model)) {
+        throw new LlmError(`路由 ${provider} 的厂商实时清单没有模型 ${model}`, LLM_CODE.NO_ADAPTER)
+      }
       return { id: provider, model: model || modelList(provider)[0]?.id || '', adapter: reg.adapter }
     }
 
-    // 用 || 而不是 ?? : 调用方传空字符串是常态(agent 的 defaultModel 没配时就是 ''),
-    // ?? 只在 null/undefined 时回退, 空串会直接走到"找不到 provider" ——
-    // 而且异常被 agent 的 try 吞掉后表现为"一句话也不说", 极难定位
-    const wanted = model || defaultModel
-    // **调用方显式点名** vs **沿用了配置里的默认**。这两者失效时的处置必须不同:
-    // 前者是调用方的错, 要报; 后者说明那条路由被删了/改名了, 该回落。
     const explicit = typeof model === 'string' && model !== ''
 
-    if (wanted) {
-      // 模型名优先, 其次路由名 —— 别要求插件记住 provider↔model 的映射。
-      // **点名的不筛可用性**: 没配 key 的路由也要路由过去, 让它抛出
-      // "没凭据"这个准确的错。在这里改成"找不到 provider", 用户会去翻模型名
-      for (const [route, reg] of regs) {
-        if (modelList(route).some((m) => m.id === wanted) || route === wanted) {
-          return { id: route, model: wanted, adapter: reg.adapter }
+    if (!explicit && defaultProvider) {
+      const reg = regs.get(defaultProvider)
+      if (reg) {
+        const failed = discoveryFailure(defaultProvider)
+        if (failed) throw failed
+        const listed = modelList(defaultProvider)
+        const state = discoveryStates.get(defaultProvider)
+        const picked = state?.status === 'live'
+          ? (listed.some((m) => m.id === defaultModel) ? defaultModel : listed[0]?.id ?? '')
+          : defaultModel || listed[0]?.id || ''
+        if (picked) {
+          return {
+            id: defaultProvider,
+            model: picked,
+            ...(defaultReasoningEffort ? { reasoningEffort: defaultReasoningEffort } : {}),
+            adapter: reg.adapter,
+          }
         }
       }
-      if (explicit) throw new LlmError(`没有 provider 能提供模型 ${wanted}`, LLM_CODE.NO_ADAPTER)
-      // 默认模型指向的那条路由不在了 (用户删了一条供应商路由, 或改了模型名)。
-      // **回落到第一个可用的**, 而不是让整个 agent 瘫在一句"没有 provider"上 ——
-      // 默认值的语义本来就是这个: 没点名时用第一个能用的
+    } else {
+      const wanted = model || defaultModel
+      if (wanted) {
+        for (const [route, reg] of regs) {
+          const state = discoveryStates.get(route)
+          const wasStaticDefault = staticModelList(route).some((m) => m.id === wanted) || route === wanted
+          if (!explicit && wasStaticDefault) {
+            const failed = discoveryFailure(route)
+            if (failed) throw failed
+            if (state?.status === 'live' && !state.models.some((m) => m.id === wanted)) {
+              const replacement = state.models[0]?.id
+              if (replacement) {
+                return {
+                  id: route,
+                  model: replacement,
+                  ...(!explicit && defaultReasoningEffort ? { reasoningEffort: defaultReasoningEffort } : {}),
+                  adapter: reg.adapter,
+                }
+              }
+            }
+          }
+          if (modelList(route).some((m) => m.id === wanted) || route === wanted) {
+            return {
+              id: route,
+              model: wanted,
+              ...(!explicit && defaultReasoningEffort ? { reasoningEffort: defaultReasoningEffort } : {}),
+              adapter: reg.adapter,
+            }
+          }
+        }
+        if (explicit) throw new LlmError(`没有 provider 能提供模型 ${wanted}`, LLM_CODE.NO_ADAPTER)
+      }
     }
 
-    // 没点名: 只挑能用的。装了但没配 key 的路由排在前面时,
-    // 不能用它顶默认 —— 那会让用户第一句话就撞上"没凭据",
-    // 而他其实配好了另一家
     const first = [...regs.keys()].find(usable)
     if (first) {
       const picked = modelList(first)[0]?.id ?? ''
-      return { id: first, model: picked || defaultModel, adapter: regs.get(first)!.adapter }
+      return { id: first, model: picked || (defaultProvider ? '' : defaultModel), adapter: regs.get(first)!.adapter }
     }
 
     const known = [...regs.keys()]
+    const failed = known.map(discoveryFailure).find(Boolean)
+    if (failed) throw failed
     throw new LlmError(
       known.length === 0
         ? '一个 provider 都没装'
@@ -803,17 +928,93 @@ export function apply(ctx: Ctx, config: { defaultModel?: string }): Disposer {
     )
   }
 
+  const refreshRoute = async (route: string, force: boolean): Promise<void> => {
+    const reg = regs.get(route)
+    if (!reg) return
+    const facts = reg.adapter.info?.(route) ?? {}
+    const discover = facts.configScope ? discoveries.get(facts.configScope) : undefined
+    if (!discover || !(facts.available ?? true)) return
+    const previous = discoveryStates.get(route)
+    if (!force && previous && Date.now() - previous.fetchedAt < DISCOVERY_TTL_MS) return
+    const pending = discoveryPending.get(route)
+    if (pending) return pending
+
+    const revision = discoveryRevision
+    const commitState = (state: DiscoveryState): void => {
+      if (revision === discoveryRevision && regs.get(route) === reg) discoveryStates.set(route, state)
+    }
+    const task = (async () => {
+      try {
+        const found = await discover({ provider: route, source: 'endpoint' })
+        const seen = new Set<string>()
+        const models = found.filter((m) => {
+          if (!m.id || seen.has(m.id)) return false
+          seen.add(m.id)
+          return true
+        }).map((found) => {
+          const base = staticModelList(route).find((m) => m.id === found.id)
+          return { ...base, ...found, name: found.name || base?.name || found.id }
+        })
+        if (facts.manualModels && models.length === 0) {
+          commitState({
+            status: 'manual',
+            fetchedAt: Date.now(),
+            error: '厂商实时模型清单为空',
+          })
+        } else {
+          commitState({ status: 'live', models, fetchedAt: Date.now() })
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        if ((err instanceof LlmError && err.code === LLM_CODE.DISCOVERY_UNSUPPORTED) || facts.manualModels) {
+          commitState({ status: 'manual', fetchedAt: Date.now(), ...(message ? { error: message } : {}) })
+        } else {
+          commitState({
+            status: 'error',
+            error: message,
+            fetchedAt: Date.now(),
+          })
+        }
+      }
+    })()
+    discoveryPending.set(route, task)
+    try {
+      await task
+    } finally {
+      if (discoveryPending.get(route) === task) discoveryPending.delete(route)
+    }
+  }
+
   const infoOf = (route: string): ProviderInfo => {
     const reg = regs.get(route)!
     const facts = reg.adapter.info?.(route) ?? {}
-    const available = facts.available ?? true
-    // missing 只在不可用时算: 可用却报"缺东西"是最让人怀疑界面的那种矛盾
-    const missing = available ? [] : (facts.missing ?? [])
+    const state = discoveryStates.get(route)
+    const discover = facts.configScope ? discoveries.get(facts.configScope) : undefined
+    const discoveryError = state?.status === 'error'
+      ? `实时模型清单拉取失败: ${state.error}`
+      : state?.status === 'live' && state.models.length === 0
+        ? '厂商实时模型清单为空'
+        : undefined
+    const manualWarning = state?.status === 'manual' && state.error
+      ? `实时模型清单未拉到，使用手动清单: ${state.error}`
+      : undefined
+    const available = (facts.available ?? true) && !discoveryError
+    const missing = available ? [] : [...(facts.missing ?? []), ...(discoveryError ? [discoveryError] : [])]
+    const modelSource: ModelSource = state?.status === 'live'
+      ? 'endpoint'
+      : state?.status === 'error'
+        ? 'error'
+        : state?.status === 'manual' || !discover
+          ? 'manual'
+          : 'catalog'
     return {
       id: route,
       name: facts.name || route,
       models: modelList(route),
       available,
+      modelSource,
+      ...(discoveryError || manualWarning ? { modelsError: discoveryError ?? manualWarning } : {}),
+      ...(state ? { modelsFetchedAt: state.fetchedAt } : {}),
       ...(missing.length > 0 ? { missing } : {}),
       ...(facts.protocol ? { protocol: facts.protocol } : {}),
       ...(facts.configScope ? { configScope: facts.configScope } : {}),
@@ -838,6 +1039,31 @@ export function apply(ctx: Ctx, config: { defaultModel?: string }): Disposer {
     for (const route of routes) regs.set(route, owner)
   }
 
+  const assertImageInput = (target: ResolvedRoute, req: StreamRequest): void => {
+    const hasImage = (blocks: readonly ContentBlock[]): boolean => blocks.some((block) =>
+      block.type === 'image' || (block.type === 'tool-result' && hasImage(block.content)),
+    )
+    if (!req.messages.some((message) => hasImage(message.content))) return
+    const model = modelList(target.id).find((item) => item.id === target.model)
+      ?? target.adapter.resolveModel?.(target.id, target.model)
+    // 缺 input = 能力未知，按模型目录契约允许尝试；明确不含 image 才拒。
+    if (model?.input && !model.input.includes('image')) {
+      throw new LlmError(`模型 ${target.model} 不支持图片输入，请换用视觉模型`, LLM_CODE.BAD_REQUEST)
+    }
+  }
+
+  const assertReasoningEffort = (target: ResolvedRoute, effort?: ReasoningEffort): void => {
+    if (!effort) return
+    const model = modelList(target.id).find((item) => item.id === target.model)
+    // 未申报 = 能力未知，交给 adapter 尝试；申报过就必须以厂商清单为准。
+    if (!model?.reasoningEfforts || model.reasoningEfforts.includes(effort)) return
+    const supported = model.reasoningEfforts.join(' / ') || '无'
+    throw new LlmError(
+      `模型 ${target.model} 不支持推理档位 "${effort}"（厂商支持: ${supported}）`,
+      LLM_CODE.BAD_REQUEST,
+    )
+  }
+
   const service: LLMService = {
     register(provider) {
       return service.registerAdapter([provider.id], providerAdapter(provider))
@@ -848,7 +1074,7 @@ export function apply(ctx: Ctx, config: { defaultModel?: string }): Disposer {
       commit(routes, adapter, owner)
       // 只在"能用"的路由上落默认模型: 一个没配 key 的 provider 抢走默认,
       // 表现为"用户配好的那家永远用不上"
-      if (!defaultModel) {
+      if (!defaultModel && !defaultProvider) {
         const usableRoute = routes.find(usable)
         const first = usableRoute ? modelList(usableRoute)[0]?.id : undefined
         if (first) defaultModel = first
@@ -943,6 +1169,20 @@ export function apply(ctx: Ctx, config: { defaultModel?: string }): Disposer {
       })
     },
 
+    async refreshModels(options = {}) {
+      const force = options.force ?? false
+      await Promise.all([...regs.keys()].map((route) => refreshRoute(route, force)))
+      ctx.emit('llm/providers-updated')
+      return [...regs.keys()].map(infoOf)
+    },
+
+    invalidateModels() {
+      discoveryRevision++
+      discoveryStates.clear()
+      discoveryPending.clear()
+      ctx.emit('llm/providers-updated')
+    },
+
     listProviders() {
       return [...regs.keys()].map(infoOf)
     },
@@ -954,13 +1194,33 @@ export function apply(ctx: Ctx, config: { defaultModel?: string }): Disposer {
     },
 
     raw(req) {
-      const target = resolve(req.model, req.provider)
-      return target.adapter.stream(target.id, { ...req, model: target.model })
+      return (async function* () {
+        await service.refreshModels()
+        const target = resolve(req.model, req.provider)
+        assertImageInput(target, req)
+        const reasoningEffort = req.reasoningEffort ?? target.reasoningEffort
+        assertReasoningEffort(target, reasoningEffort)
+        yield* target.adapter.stream(target.id, {
+          ...req,
+          model: target.model,
+          ...(reasoningEffort ? { reasoningEffort } : {}),
+        })
+      })()
     },
 
     stream(req) {
-      const target = resolve(req.model, req.provider)
-      return assemble(target.adapter.stream(target.id, { ...req, model: target.model }))
+      return (async function* () {
+        await service.refreshModels()
+        const target = resolve(req.model, req.provider)
+        assertImageInput(target, req)
+        const reasoningEffort = req.reasoningEffort ?? target.reasoningEffort
+        assertReasoningEffort(target, reasoningEffort)
+        yield* assemble(target.adapter.stream(target.id, {
+          ...req,
+          model: target.model,
+          ...(reasoningEffort ? { reasoningEffort } : {}),
+        }))
+      })()
     },
   }
 
@@ -968,9 +1228,12 @@ export function apply(ctx: Ctx, config: { defaultModel?: string }): Disposer {
   ctx.emit('llm/ready', { models: service.models() })
 
   return () => {
+    discoveryRevision++
     regs.clear()
     dirs.length = 0
     discoveries.clear()
+    discoveryStates.clear()
+    discoveryPending.clear()
   }
 }
 

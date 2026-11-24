@@ -29,6 +29,35 @@ export function SendIcon() {
   )
 }
 
+/** 把等待消息提到队首并立即发送。 */
+export function InsertNowIcon() {
+  return (
+    <svg {...base}>
+      <path d="M8 11.5V3.5" />
+      <path d="M4.8 6.7 8 3.5l3.2 3.2" />
+      <path d="M3.5 12.5h9" />
+    </svg>
+  )
+}
+
+/** 编辑等待中的消息。 */
+export function EditIcon() {
+  return (
+    <svg {...base}>
+      <path d="m10.8 2.8 2.4 2.4-7.2 7.2-3.1.7.7-3.1 7.2-7.2Z" />
+      <path d="m9.6 4 2.4 2.4" />
+    </svg>
+  )
+}
+
+export function StopIcon() {
+  return (
+    <svg {...base}>
+      <rect x="4" y="4" width="8" height="8" rx="1.6" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
 export function PlusIcon() {
   return (
     <svg {...base}>
@@ -121,6 +150,85 @@ export function CloseIcon() {
   return (
     <svg {...base}>
       <path d="M4 4l8 8M12 4l-8 8" />
+    </svg>
+  )
+}
+
+/** 导出：一个往下的箭头落进托盘里 */
+export function DownloadIcon() {
+  return (
+    <svg {...base}>
+      <path d="M8 2.5v7.5" />
+      <path d="M5 7.2 8 10.2l3-3" />
+      <path d="M2.8 12.2v1.3h10.4v-1.3" />
+    </svg>
+  )
+}
+
+/** 归档：盒子表示隐藏收纳；恢复时加一条向上的箭头。 */
+export function ArchiveIcon({ restored = false }: { restored?: boolean }) {
+  return (
+    <svg {...base}>
+      <path d="M3 5.2h10v7.3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z" />
+      <path d="M2.2 2.5h11.6v2.7H2.2zM6.2 7.4h3.6" />
+      {restored && <path d="M8 12V8.2M6.3 9.8 8 8.1l1.7 1.7" />}
+    </svg>
+  )
+}
+
+export function TrashIcon() {
+  return (
+    <svg {...base}>
+      <path d="M2.8 4.2h10.4M6.2 2.5h3.6M4.2 4.2l.5 9.3h6.6l.5-9.3M6.5 6.5v4.5M9.5 6.5v4.5" />
+    </svg>
+  )
+}
+
+/** 文件夹。工作区、目录都用它 —— 一个形状认一种东西，别为「打开」和「关闭」画两套 */
+export function FolderIcon() {
+  return (
+    <svg {...base}>
+      <path d="M2 4.2h4l1.3 1.6h6.7v6.2a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z" />
+    </svg>
+  )
+}
+
+/** 盾牌。权限那一档用它：它说的是"能碰什么"，不是一个开关 */
+export function ShieldIcon() {
+  return (
+    <svg {...base}>
+      <path d="M8 2.2 13 4v4.1c0 2.9-2.1 4.9-5 5.7-2.9-.8-5-2.8-5-5.7V4z" />
+    </svg>
+  )
+}
+
+/** 分支。git 状态用它 —— 分支名旁边那个小标记 */
+export function BranchIcon() {
+  return (
+    <svg {...base}>
+      <circle cx="4.5" cy="3.6" r="1.6" />
+      <circle cx="4.5" cy="12.4" r="1.6" />
+      <circle cx="11.5" cy="6.4" r="1.6" />
+      <path d="M4.5 5.2v5.6" />
+      <path d="M11.5 8v1.2c0 1.4-1.1 2.4-2.5 2.4H6.1" />
+    </svg>
+  )
+}
+
+/** 加号。输入框那个「＋」菜单 */
+export function PlusMenuIcon() {
+  return (
+    <svg {...base}>
+      <path d="M8 3.2v9.6M3.2 8h9.6" />
+    </svg>
+  )
+}
+
+/** 下拉箭头。用 CSS 三角形也行, 但那个在小尺寸下会糊 */
+export function ChevronIcon() {
+  return (
+    <svg {...base}>
+      <path d="M4.5 6.5 8 10l3.5-3.5" />
     </svg>
   )
 }
