@@ -24,3 +24,6 @@ dist/
 .env
 .env.*
 !.env.example
+
+# 红队攻击 Skill 只在本地使用，不随公开仓库分发
+plugins/dsh-purge/vendor/dsh-purge/skills/
