@@ -27,3 +27,11 @@ dist/
 
 # 红队攻击 Skill 只在本地使用，不随公开仓库分发
 plugins/dsh-purge/vendor/dsh-purge/skills/
+
+# 公开仓库不包含内部文档、截图、测试和验收脚本
+docs/
+notes/
+**/test/
+**/*.test.ts
+scripts/check-*.mjs
+apps/server/src/smoke.ts

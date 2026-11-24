@@ -2,8 +2,6 @@
 
 一个以插件为核心的本地 AI Agent 平台。模型供应商、工具、审批、记忆、界面和业务能力都通过插件装配，不需要修改内核。
 
-![梦的对话界面](notes/ui-design-light.png)
-
 ## 功能
 
 - **多模型供应商**：支持 OpenAI、Anthropic、Gemini、DeepSeek、MiniMax、Mistral、Azure、Bedrock、Vertex 等协议，可自动发现模型并手动维护模型清单。
@@ -83,22 +81,14 @@ pnpm dev
 ```bash
 pnpm typecheck          # 后端与共享包类型检查
 pnpm typecheck:web      # 前端类型检查
-pnpm test               # 全量测试
 pnpm graph              # 输出插件状态图和不变量结果
 pnpm lint:tokens        # 检查 CSS 是否使用设计 token
-pnpm check:contrast     # 检查浅色/深色对比度
 ```
 
 一次性 CLI 对话：
 
 ```bash
 node --experimental-strip-types apps/server/src/main.ts chat "你好"
-```
-
-端到端冒烟：
-
-```bash
-node --experimental-strip-types apps/server/src/main.ts smoke
 ```
 
 ## 配置
@@ -124,9 +114,8 @@ node --experimental-strip-types apps/server/src/main.ts smoke
 plugins/my-plugin/
 ├── meng.patch.yml
 ├── package.json
-├── src/
-│   └── index.ts
-└── test/
+└── src/
+    └── index.ts
 ```
 
 插件工坊提供创建、适配、校验、构建、打包和隔离装载验证能力。完整规范见：
@@ -136,21 +125,6 @@ plugins/my-plugin/
 - [记忆插件](plugins/memory/README.md)
 - [dsh-purge 适配器](plugins/dsh-purge/README.md)
 
-## 测试
-
-```bash
-pnpm test
-```
-
-浏览器验收需要先启动后端和前端，再运行对应脚本，例如：
-
-```bash
-node scripts/check-queue.mjs
-node scripts/check-queue-styles.mjs
-```
-
-部分浏览器脚本需要本机安装 Playwright Chromium。
-
 ## 安全
 
 - `.env`、`.meng/` 和本机缓存默认不进入 Git。
@@ -158,6 +132,7 @@ node scripts/check-queue-styles.mjs
 - 工作区外的文件访问需要显式配置或审批。
 - 红队攻击技能等敏感素材不随公开仓库分发。
 - 第三方组件遵循各自目录中的许可证和 NOTICE 文件。
+- 测试代码、设计稿和内部文档不随公开仓库分发。
 
 ## 许可证
 

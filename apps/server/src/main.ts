@@ -21,7 +21,6 @@ async function main(): Promise<void> {
   if (command === 'graph') return graph()
   if (command === 'demo') return demo()
   if (command === 'chat') return chat(text)
-  if (command === 'smoke') return smoke()
   return serve()
 }
 
@@ -82,9 +81,6 @@ async function graph(): Promise<void> {
   await kernel.dispose()
 }
 
-async function smoke(): Promise<void> {
-  await import('./smoke.ts')
-}
 
 function helloPatch(): string {
   return fileURLToPath(new URL('../../../plugins/hello/meng.patch.yml', import.meta.url))
