@@ -98,7 +98,7 @@ export function createHttpApp(): HttpApp {
     }
 
     for (const s of statics) {
-      if (path === s.prefix || path.startsWith(s.prefix + '/')) {
+      if (s.prefix === '/' || path === s.prefix || path.startsWith(s.prefix + '/')) {
         await serveStatic(res, s.dir, s.prefix, path)
         return
       }
@@ -108,7 +108,7 @@ export function createHttpApp(): HttpApp {
   }
 
   async function serveStatic(res: ServerResponse, dir: string, prefix: string, path: string): Promise<void> {
-    const rel = path === prefix ? '/index.html' : path.slice(prefix.length)
+    const rel = prefix === '/' ? (path === '/' ? '/index.html' : path.slice(1)) : (path === prefix ? '/index.html' : path.slice(prefix.length))
     // 防目录穿越: normalize 后必须仍在 dir 内
     const target = resolve(join(dir, rel))
     if (!target.startsWith(resolve(dir))) throw new HttpError('bad-request', '路径越界', 400)
@@ -149,7 +149,7 @@ export function createHttpApp(): HttpApp {
       }
     },
     static(prefix, dir) {
-      statics.push({ prefix: prefix === '/' ? '' : prefix, dir })
+      statics.push({ prefix: prefix === '/' ? '/' : prefix.replace(/\/$/, ''), dir })
     },
     listen(port, host) {
       return new Promise((ok, fail) => {
