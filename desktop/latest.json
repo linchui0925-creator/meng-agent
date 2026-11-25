@@ -1,0 +1,17 @@
+{
+  "version": "0.2.0",
+  "download": "https://ghfast.top/https://github.com/linchui0925-creator/meng-agent/releases/download/desktop-v0.2.0/meng-desktop-0.2.0-arm64-mac.zip",
+  "mirrors": [
+    "https://gh-proxy.com/https://github.com/linchui0925-creator/meng-agent/releases/download/desktop-v0.2.0/meng-desktop-0.2.0-arm64-mac.zip",
+    "https://api.github.com/repos/linchui0925-creator/meng-agent/releases/assets/789973247",
+    "https://github.com/linchui0925-creator/meng-agent/releases/download/desktop-v0.2.0/meng-desktop-0.2.0-arm64-mac.zip"
+  ],
+  "sha256": "6a0eb6b3eadf7cef0f46b2b99a753cc8953267f715806c0b87b620d7af2ad1c1",
+  "size": 159162028,
+  "publishedAt": 1795572000000,
+  "notes": "首版自动替换更新器。",
+  "arch": [
+    "arm64"
+  ],
+  "signature": "uEUIdTZcBIrJBX0rwuLqTBCRcqmcXgPCmRbLuWx4swdgxLahBZboGdWtH5D9RqozQSEzghCYgOb2rlF7Swp+Bw=="
+}

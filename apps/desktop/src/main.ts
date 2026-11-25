@@ -15,6 +15,7 @@ import { bootKernel, mockPatch, providersPatch, type Kernel } from '@meng/server
 import type { WebEvent, WebService } from '@meng/web'
 
 import { IPC_EVENT, IPC_INVOKE, IPC_MANIFEST, IPC_STATE } from './channels.ts'
+import { checkForDesktopUpdate, installStagedUpdate } from './updater.ts'
 
 let kernel: Kernel | undefined
 let web: WebService | undefined
@@ -157,6 +158,11 @@ async function main(): Promise<void> {
   await startKernel()
   createWindow()
 
+  // 打包版启动后后台检查更新；下载完成不会打断当前任务，退出梦时替换。
+  void checkForDesktopUpdate()
+  const updateTimer = setInterval(() => { void checkForDesktopUpdate() }, 6 * 60 * 60 * 1000)
+  updateTimer.unref()
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
@@ -176,7 +182,11 @@ app.on('before-quit', (event) => {
   if (quitting) return
   event.preventDefault()
   quitting = true
-  void dispose().finally(() => app.quit())
+  void dispose().finally(() => {
+    // 脚本会等当前进程退出后再替换 .app，成功后自动打开新版本。
+    if (installStagedUpdate()) app.exit(0)
+    else app.quit()
+  })
 })
 
 void main().catch(async (error) => {
