@@ -104,6 +104,9 @@ async function startKernel(): Promise<void> {
   const plugins = pluginRoot()
   if (plugins) process.env.MENG_PLUGIN_ROOT = plugins
 
+  // tsx 的 ESM loader 允许包内插件继续以 TypeScript 源码运行；
+  // 打包后插件在 node_modules 里，Node 自带的 strip-types 会拒绝该路径。
+  await import('tsx/esm')
   kernel = await bootKernel({
     web: true,
     dataDir: join(app.getPath('userData'), 'data'),

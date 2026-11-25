@@ -11,12 +11,10 @@
   },
   "dependencies": {
     "@meng/core": "workspace:*",
-    "@meng/platform": "workspace:*",
-    "@meng/server": "workspace:*",
-    "@meng/transport": "workspace:*",
     "@meng/fs": "workspace:*",
     "@meng/kernel": "workspace:*",
     "@meng/llm": "workspace:*",
+    "@meng/platform": "workspace:*",
     "@meng/plugin-bash-local": "workspace:*",
     "@meng/plugin-config-local": "workspace:*",
     "@meng/plugin-jobs-local": "workspace:*",
@@ -44,11 +42,17 @@
     "@meng/provider-openai": "workspace:*",
     "@meng/questions": "workspace:*",
     "@meng/records": "workspace:*",
+    "@meng/server": "workspace:*",
     "@meng/session": "workspace:*",
     "@meng/spill": "workspace:*",
     "@meng/tools": "workspace:*",
+    "@meng/transport": "workspace:*",
     "@meng/web": "workspace:*",
-    "@meng/workspaces": "workspace:*"
+    "@meng/workspaces": "workspace:*",
+    "tsx": "^4.23.15",
+    "@earendil-works/pi-ai": "0.82.1",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "electron": "^38.0.0",
@@ -85,7 +89,8 @@
     },
     "linux": {
       "target": "AppImage"
-    }
+    },
+    "asar": false
   },
   "author": "梦"
 }
