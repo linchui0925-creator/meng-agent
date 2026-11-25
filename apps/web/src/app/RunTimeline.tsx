@@ -27,22 +27,18 @@ export function RunTimeline({ message, autoFold, readRecord, Slot, onOpenFile }:
   const splitAt = steps.length > RECENT_STEPS && firstRecentPart >= 0 ? firstRecentPart : 0
   const olderParts = parts.slice(0, splitAt)
   const recentParts = parts.slice(splitAt)
-  const olderSteps = olderParts.filter((part): part is RunStep => part.kind === 'step')
-  const olderToolCount = olderSteps.reduce((count, step) => count + step.tools.length, 0)
   return (
     <details className={styles.run} open={running}>
       <summary className={styles.head}>
         <span className={styles.live} data-live={running ? '' : undefined} />
         <span className={styles.headTitle}>执行过程</span>
-        <span className={styles.headCount}>· {steps.length} 步</span>
         <RunElapsed start={message.at} end={running ? undefined : message.finishedAt} live={running} />
       </summary>
       <div className={styles.timeline}>
         {olderParts.length > 0 ? (
           <details className={styles.older}>
             <summary>
-              <span>前面 {olderSteps.length} 步</span>
-              <span>{olderToolCount} 个工具</span>
+              <span>更早过程</span>
               <span className={styles.olderAction}>展开</span>
             </summary>
             <div className={styles.olderBody}>
@@ -104,7 +100,6 @@ function RunStepRow({ step, current, autoFold, readRecord, Slot, onOpenFile }: {
     <details className={styles.step} data-status={step.status}>
       <summary>
         <span className={styles.stepSummary}>{summary}</span>
-        <span className={styles.stepMeta}>{step.tools.length > 0 ? `${step.tools.length} 个工具` : '完成'}</span>
         <span className={styles.chevron}>›</span>
       </summary>
       <div className={styles.stepBody}>
