@@ -76,6 +76,43 @@ pnpm dev
 
 打开 `http://127.0.0.1:4722`。
 
+### 桌面端
+
+```bash
+pnpm --dir apps/desktop dev
+```
+
+桌面端会在主进程启动本地内核，Renderer 通过 preload IPC 调用；不依赖外部后端端口。
+
+打包当前平台：
+
+```bash
+pnpm --dir apps/desktop build
+```
+
+### 移动端
+
+构建 Web 产物并同步到原生工程：
+
+```bash
+cd apps/mobile
+pnpm sync
+```
+
+iOS / Android：
+
+```bash
+pnpm open:ios
+pnpm open:android
+```
+
+生产构建时用 `VITE_MENG_API_URL` 指向远端内核：
+
+```bash
+cd apps/web
+VITE_MENG_API_URL=https://your-agent.example.com pnpm build
+```
+
 ## 常用命令
 
 ```bash
@@ -83,6 +120,8 @@ pnpm typecheck          # 后端与共享包类型检查
 pnpm typecheck:web      # 前端类型检查
 pnpm graph              # 输出插件状态图和不变量结果
 pnpm lint:tokens        # 检查 CSS 是否使用设计 token
+pnpm desktop:dev        # 启动桌面端
+pnpm mobile:sync        # 同步移动端 Web 产物
 ```
 
 一次性 CLI 对话：
@@ -123,7 +162,6 @@ plugins/my-plugin/
 - [插件规范](plugins/plugin-studio/PLUGIN_SPEC.md)
 - [插件工坊说明](plugins/plugin-studio/README.md)
 - [记忆插件](plugins/memory/README.md)
-- [dsh-purge 适配器](plugins/dsh-purge/README.md)
 
 ## 安全
 
@@ -131,6 +169,7 @@ plugins/my-plugin/
 - API Key 只保存在本机配置或环境变量中。
 - 工作区外的文件访问需要显式配置或审批。
 - 红队攻击技能等敏感素材不随公开仓库分发。
+- 本地专用插件不进入公开 bundle。
 - 第三方组件遵循各自目录中的许可证和 NOTICE 文件。
 - 测试代码、设计稿和内部文档不随公开仓库分发。
 

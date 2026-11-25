@@ -5,17 +5,87 @@
   "type": "module",
   "description": "桌面端外壳 (Electron)。主进程就是 Node —— 插件宿主本体直接跑在里面, 零桥接。",
   "scripts": {
-    "dev": "electron .",
-    "build": "electron-builder"
+    "build:main": "vite build",
+    "dev": "pnpm --dir ../web build && pnpm build:main && electron .",
+    "build": "pnpm build:main && electron-builder"
   },
   "dependencies": {
     "@meng/core": "workspace:*",
     "@meng/platform": "workspace:*",
     "@meng/server": "workspace:*",
-    "@meng/transport": "workspace:*"
+    "@meng/transport": "workspace:*",
+    "@meng/fs": "workspace:*",
+    "@meng/kernel": "workspace:*",
+    "@meng/llm": "workspace:*",
+    "@meng/plugin-bash-local": "workspace:*",
+    "@meng/plugin-config-local": "workspace:*",
+    "@meng/plugin-jobs-local": "workspace:*",
+    "@meng/plugin-loop-basic": "workspace:*",
+    "@meng/plugin-memory": "workspace:*",
+    "@meng/plugin-net-local": "workspace:*",
+    "@meng/plugin-policy-approval": "workspace:*",
+    "@meng/plugin-policy-bash": "workspace:*",
+    "@meng/plugin-policy-fs": "workspace:*",
+    "@meng/plugin-policy-spill": "workspace:*",
+    "@meng/plugin-policy-timeout": "workspace:*",
+    "@meng/plugin-questions-web": "workspace:*",
+    "@meng/plugin-schedules-local": "workspace:*",
+    "@meng/plugin-studio": "workspace:*",
+    "@meng/plugin-tool-ask": "workspace:*",
+    "@meng/plugin-tool-bash": "workspace:*",
+    "@meng/plugin-tool-fetch": "workspace:*",
+    "@meng/plugin-tool-fs": "workspace:*",
+    "@meng/plugin-tool-jobs": "workspace:*",
+    "@meng/plugin-tool-outline": "workspace:*",
+    "@meng/plugin-tool-search": "workspace:*",
+    "@meng/prompt": "workspace:*",
+    "@meng/provider-deepseek": "workspace:*",
+    "@meng/provider-mock": "workspace:*",
+    "@meng/provider-openai": "workspace:*",
+    "@meng/questions": "workspace:*",
+    "@meng/records": "workspace:*",
+    "@meng/session": "workspace:*",
+    "@meng/spill": "workspace:*",
+    "@meng/tools": "workspace:*",
+    "@meng/web": "workspace:*",
+    "@meng/workspaces": "workspace:*"
   },
   "devDependencies": {
     "electron": "^38.0.0",
-    "electron-builder": "^26.0.0"
-  }
+    "electron-builder": "^26.0.0",
+    "vite": "^8.0.0"
+  },
+  "main": "dist/main.js",
+  "build": {
+    "appId": "ai.meng.desktop",
+    "productName": "梦",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "preload.cjs",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../web/dist",
+        "to": "web"
+      },
+      {
+        "from": "../web/public/plugins",
+        "to": "plugins"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  },
+  "author": "梦"
 }

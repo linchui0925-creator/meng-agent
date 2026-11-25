@@ -26,15 +26,120 @@ importers:
       '@meng/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@meng/fs':
+        specifier: workspace:*
+        version: link:../../packages/fs
+      '@meng/kernel':
+        specifier: workspace:*
+        version: link:../../packages/kernel
+      '@meng/llm':
+        specifier: workspace:*
+        version: link:../../packages/llm
       '@meng/platform':
         specifier: workspace:*
         version: link:../../packages/platform
+      '@meng/plugin-bash-local':
+        specifier: workspace:*
+        version: link:../../plugins/bash-local
+      '@meng/plugin-config-local':
+        specifier: workspace:*
+        version: link:../../plugins/config-local
+      '@meng/plugin-jobs-local':
+        specifier: workspace:*
+        version: link:../../plugins/jobs-local
+      '@meng/plugin-loop-basic':
+        specifier: workspace:*
+        version: link:../../plugins/loop-basic
+      '@meng/plugin-memory':
+        specifier: workspace:*
+        version: link:../../plugins/memory
+      '@meng/plugin-net-local':
+        specifier: workspace:*
+        version: link:../../plugins/net-local
+      '@meng/plugin-policy-approval':
+        specifier: workspace:*
+        version: link:../../plugins/policy-approval
+      '@meng/plugin-policy-bash':
+        specifier: workspace:*
+        version: link:../../plugins/policy-bash
+      '@meng/plugin-policy-fs':
+        specifier: workspace:*
+        version: link:../../plugins/policy-fs
+      '@meng/plugin-policy-spill':
+        specifier: workspace:*
+        version: link:../../plugins/policy-spill
+      '@meng/plugin-policy-timeout':
+        specifier: workspace:*
+        version: link:../../plugins/policy-timeout
+      '@meng/plugin-questions-web':
+        specifier: workspace:*
+        version: link:../../plugins/questions-web
+      '@meng/plugin-schedules-local':
+        specifier: workspace:*
+        version: link:../../plugins/schedules-local
+      '@meng/plugin-studio':
+        specifier: workspace:*
+        version: link:../../plugins/plugin-studio
+      '@meng/plugin-tool-ask':
+        specifier: workspace:*
+        version: link:../../plugins/tool-ask
+      '@meng/plugin-tool-bash':
+        specifier: workspace:*
+        version: link:../../plugins/tool-bash
+      '@meng/plugin-tool-fetch':
+        specifier: workspace:*
+        version: link:../../plugins/tool-fetch
+      '@meng/plugin-tool-fs':
+        specifier: workspace:*
+        version: link:../../plugins/tool-fs
+      '@meng/plugin-tool-jobs':
+        specifier: workspace:*
+        version: link:../../plugins/tool-jobs
+      '@meng/plugin-tool-outline':
+        specifier: workspace:*
+        version: link:../../plugins/tool-outline
+      '@meng/plugin-tool-search':
+        specifier: workspace:*
+        version: link:../../plugins/tool-search
+      '@meng/prompt':
+        specifier: workspace:*
+        version: link:../../packages/prompt
+      '@meng/provider-deepseek':
+        specifier: workspace:*
+        version: link:../../plugins/provider-deepseek
+      '@meng/provider-mock':
+        specifier: workspace:*
+        version: link:../../plugins/provider-mock
+      '@meng/provider-openai':
+        specifier: workspace:*
+        version: link:../../plugins/provider-openai
+      '@meng/questions':
+        specifier: workspace:*
+        version: link:../../packages/questions
+      '@meng/records':
+        specifier: workspace:*
+        version: link:../../packages/records
       '@meng/server':
         specifier: workspace:*
         version: link:../server
+      '@meng/session':
+        specifier: workspace:*
+        version: link:../../packages/session
+      '@meng/spill':
+        specifier: workspace:*
+        version: link:../../packages/spill
+      '@meng/tools':
+        specifier: workspace:*
+        version: link:../../packages/tools
       '@meng/transport':
         specifier: workspace:*
         version: link:../../packages/transport
+      '@meng/web':
+        specifier: workspace:*
+        version: link:../../packages/web
+      '@meng/workspaces':
+        specifier: workspace:*
+        version: link:../../packages/workspaces
     devDependencies:
       electron:
         specifier: ^38.0.0
@@ -42,9 +147,15 @@ importers:
       electron-builder:
         specifier: ^26.0.0
         version: 26.18.0(electron-builder-squirrel-windows@26.18.0)
+      vite:
+        specifier: ^8.0.0
+        version: 8.3.5(@types/node@22.20.5)(jiti@2.7.0)(yaml@2.9.1)
 
   apps/mobile:
     dependencies:
+      '@capacitor/clipboard':
+        specifier: ^7.0.0
+        version: 7.0.4(@capacitor/core@7.6.10)
       '@capacitor/core':
         specifier: ^7.0.0
         version: 7.6.10
@@ -79,12 +190,24 @@ importers:
 
   apps/server:
     dependencies:
+      '@meng/bundle-base':
+        specifier: workspace:*
+        version: link:../../bundles/base
+      '@meng/bundle-kit':
+        specifier: workspace:*
+        version: link:../../bundles/kit
+      '@meng/bundle-server':
+        specifier: workspace:*
+        version: link:../../bundles/server
       '@meng/config':
         specifier: workspace:*
         version: link:../../packages/config
       '@meng/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@meng/fs':
+        specifier: workspace:*
+        version: link:../../packages/fs
       '@meng/kernel':
         specifier: workspace:*
         version: link:../../packages/kernel
@@ -266,9 +389,6 @@ importers:
       '@meng/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@meng/plugin-dsh-purge':
-        specifier: workspace:*
-        version: link:../../plugins/dsh-purge
       '@meng/plugin-questions-web':
         specifier: workspace:*
         version: link:../../plugins/questions-web
@@ -379,12 +499,37 @@ importers:
 
   packages/platform:
     dependencies:
+      '@capacitor/clipboard':
+        specifier: ^7.0.0
+        version: 7.0.4(@capacitor/core@7.6.10)
+      '@capacitor/core':
+        specifier: ^7.0.0
+        version: 7.6.10
+      '@capacitor/dialog':
+        specifier: ^7.0.0
+        version: 7.0.4(@capacitor/core@7.6.10)
+      '@capacitor/filesystem':
+        specifier: ^7.0.0
+        version: 7.1.9(@capacitor/core@7.6.10)
+      '@capacitor/haptics':
+        specifier: ^7.0.0
+        version: 7.0.5(@capacitor/core@7.6.10)
+      '@capacitor/local-notifications':
+        specifier: ^7.0.0
+        version: 7.0.7(@capacitor/core@7.6.10)
+      '@capacitor/preferences':
+        specifier: ^7.0.0
+        version: 7.0.4(@capacitor/core@7.6.10)
       '@meng/core':
         specifier: workspace:*
         version: link:../core
       '@meng/slots':
         specifier: workspace:*
         version: link:../slots
+    devDependencies:
+      electron:
+        specifier: ^38.0.0
+        version: 38.8.6
 
   packages/plugin-manifest:
     dependencies:
@@ -566,33 +711,6 @@ importers:
         version: 4.6.7
 
   plugins/demo-ui: {}
-
-  plugins/dsh-purge:
-    devDependencies:
-      '@meng/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      '@meng/modules':
-        specifier: workspace:*
-        version: link:../../packages/modules
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.20.5
-      '@types/react':
-        specifier: ^19.3.0
-        version: 19.3.0
-      '@vitejs/plugin-react':
-        specifier: ^6.1.2
-        version: 6.1.2(vite@8.3.5(@types/node@22.20.5)(jiti@2.7.0)(yaml@2.9.1))
-      react:
-        specifier: ^19.3.1
-        version: 19.3.1
-      typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
-      vite:
-        specifier: ^8.0.0
-        version: 8.3.5(@types/node@22.20.5)(jiti@2.7.0)(yaml@2.9.1)
 
   plugins/hello:
     dependencies:
@@ -1058,6 +1176,11 @@ packages:
     resolution: {integrity: sha512-8S0h44+339hCJyDw0EWqKz4ivR08tzSY35WzSs49pQ4gNOrGiyKpBUaZc08zlJgvN8yfzMY1pi8QfKDsSn1eHg==}
     engines: {node: '>=20.0.0'}
     hasBin: true
+
+  '@capacitor/clipboard@7.0.4':
+    resolution: {integrity: sha512-+kiTRFjwD5UiWRg/m1JA/0Z0DDdsZLa25MLqI1e3MUi3yNZIwVZV5Oj6v4O0gxmpoBxf5A1L1v3weq+vWOBUuQ==}
+    peerDependencies:
+      '@capacitor/core': '>=7.0.0'
 
   '@capacitor/core@7.6.10':
     resolution: {integrity: sha512-foYHd//t6E3RTELVG8wdkp5jVnmLcHKUurAa9BA8EUSNd2eY0SijCHpfO0bFwYBP5DrCeXwgSFYi3NJw413gtQ==}
@@ -3555,6 +3678,10 @@ snapshots:
       xml2js: 0.6.2
     transitivePeerDependencies:
       - supports-color
+
+  '@capacitor/clipboard@7.0.4(@capacitor/core@7.6.10)':
+    dependencies:
+      '@capacitor/core': 7.6.10
 
   '@capacitor/core@7.6.10':
     dependencies:

@@ -31,6 +31,7 @@ import * as MengSlots from '@meng/slots'
 import { createSlotRegistry, type SlotDef, type SlotRegistry } from '@meng/slots'
 import type { Transport } from '@meng/transport'
 import { createInprocTransport } from '@meng/transport/inproc'
+import { createIpcTransport } from '@meng/transport/ipc'
 import { createWsTransport, localStorageSeqStore } from '@meng/transport/ws'
 import * as MengUi from '@meng/ui'
 import { createThemeController } from '@meng/ui'
@@ -227,8 +228,8 @@ async function fetchManifestPlugins(transport: Transport, timeoutMs = 2500): Pro
 async function bootstrap(report: (entries: EntryState[]) => void): Promise<Booted> {
   const mode = params.get('transport') ?? 'ws'
 
-  if (mode !== 'fixture' && mode !== 'ws') {
-    throw new Error(`transport=${mode} 不支持 (只有 fixture 与 ws)`)
+  if (mode !== 'fixture' && mode !== 'ws' && mode !== 'ipc') {
+    throw new Error(`transport=${mode} 不支持 (只有 fixture / ws / ipc)`)
   }
 
   const slots = createSlotRegistry()
@@ -329,12 +330,17 @@ async function bootstrap(report: (entries: EntryState[]) => void): Promise<Boote
   let transport: Transport
   let fixture: string | null = null
 
-  if (mode === 'ws') {
-    // 同源: dev 下由 vite 代理 /api 与 /ws 到后端 4721, 生产由后端自己发静态资源
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  if (mode === 'ipc') {
+    transport = createIpcTransport()
+  } else if (mode === 'ws') {
+    // 同源: dev 下由 vite 代理 /api 与 /ws 到后端 4721, 生产由后端自己发静态资源。
+    // 移动端 / 分离部署可用 VITE_MENG_API_URL 指向远端内核。
+    const remote = import.meta.env.VITE_MENG_API_URL?.replace(/\/$/, '')
+    const base = remote ? new URL(remote) : new URL(location.origin)
+    const proto = base.protocol === 'https:' ? 'wss:' : 'ws:'
     transport = createWsTransport({
-      httpBase: '',
-      wsUrl: `${proto}//${location.host}/ws`,
+      httpBase: remote ?? '',
+      wsUrl: `${proto}//${base.host}/ws`,
       store: localStorageSeqStore(),
       onFatal(err) {
         console.error('[meng] ws:', err.message)
@@ -361,8 +367,13 @@ async function bootstrap(report: (entries: EntryState[]) => void): Promise<Boote
   }
 
   const ctx = createContext('shell')
+  const capacitor = (globalThis as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor
+  const platform = capacitor?.isNativePlatform?.()
+    ? (await import('@meng/platform/mobile')).mobileFaces()
+    : (await import('@meng/platform/web')).webFaces()
   ctx.set('slots', slots)
   ctx.set('transport', transport)
+  ctx.set('platform', platform)
 
   /**
    * 侧栏会话行上的「导出」。
@@ -414,8 +425,8 @@ async function bootstrap(report: (entries: EntryState[]) => void): Promise<Boote
   const plugins: PluginRow[] = [
     // ws 模式下插件列表**来自后端** (hello 帧的 manifest), 不再手抄;
     // fixture 模式没有 handshake, 用下面这份假货
-    ...(mode === 'ws' ? await fetchManifestPlugins(transport) : localRows),
-    ...(mode === 'ws'
+    ...((mode === 'ws' || mode === 'ipc') ? await fetchManifestPlugins(transport) : localRows),
+    ...((mode === 'ws' || mode === 'ipc')
       ? []
       : [
           {

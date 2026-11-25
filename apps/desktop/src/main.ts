@@ -1,49 +1,183 @@
 /**
  * Electron 主进程。
  *
- * 为什么是 Electron 而不是 Tauri (docs/05 §0 决策 5):
- *   我们的内核是 Node/TS。Electron 的**主进程就是 Node**, 内核直接跑在里面,
- *   插件宿主和内核在同一个进程, 没有 sidecar / 没有语言边界。
- *   Tauri 2 虽然一套 Rust 核心覆盖桌面+移动, 但它的后端是 Rust —— 内核要 sidecar,
- *   移动端更是只能连远端, 反而多一层。
- *   代价是体积 (90-150MB), 与 VS Code / dsh Desktop 同量级, 接受。
- *
- * 主进程职责:
- *   1. 起本地内核 (@meng/server) —— 这是桌面端的核心价值: 本地文件、隐私、离线可用
- *   2. 提供 platform/desktop 能力面 (fs / dialog / notify / window)
- *   3. 通过 preload + contextBridge 暴露 transport-ipc
- *   4. 加载 apps/web 的产物 (dev 走 4722, prod 走打包产物)
+ * 本地内核直接运行在主进程里；渲染进程不拿 Node，只通过 preload 暴露的
+ * invoke / event / state / manifest 四件事访问内核。HTTP 只绑定 127.0.0.1，
+ * 作为 op 执行的内部通道，不对外暴露。
  */
 
-import { app, BrowserWindow } from 'electron'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 
-/** 本地内核句柄; 由 @meng/server 提供 */
-let kernel: { dispose(): Promise<void> } | undefined
+import { app, BrowserWindow, ipcMain } from 'electron'
+import { desktopFaces } from '@meng/platform/desktop'
+import { bootKernel, mockPatch, providersPatch, type Kernel } from '@meng/server'
+import type { WebEvent, WebService } from '@meng/web'
 
-async function bootKernel(): Promise<{ dispose(): Promise<void> }> {
-  throw new Error('desktop: 未实现 (M5)')
+import { IPC_EVENT, IPC_INVOKE, IPC_MANIFEST, IPC_STATE } from './channels.ts'
+
+let kernel: Kernel | undefined
+let web: WebService | undefined
+let offEvents: (() => void) | undefined
+let quitting = false
+
+function preloadPath(): string {
+  return join(app.getAppPath(), 'preload.cjs')
 }
 
-function createWindow() {
+function firstExisting(candidates: Array<string | undefined>): string | undefined {
+  return candidates.find((item): item is string => item !== undefined && item !== '' && existsSync(item))
+}
+
+function webRoot(): string | undefined {
+  return firstExisting([
+    process.env.MENG_WEB_ROOT,
+    join(app.getAppPath(), 'web'),
+    join(app.getAppPath(), '..', 'web', 'dist'),
+    join(process.resourcesPath, 'web'),
+  ])
+}
+
+function pluginRoot(): string | undefined {
+  return firstExisting([
+    process.env.MENG_PLUGIN_ROOT,
+    join(app.getAppPath(), 'plugins'),
+    join(app.getAppPath(), '..', 'web', 'public', 'plugins'),
+    join(process.resourcesPath, 'plugins'),
+  ])
+}
+
+function withIpcTransport(url: string): string {
+  const parsed = new URL(url)
+  if (!parsed.searchParams.has('transport')) parsed.searchParams.set('transport', 'ipc')
+  return parsed.toString()
+}
+
+function windowUrl(): string {
+  if (process.env.MENG_WEB_URL) return withIpcTransport(process.env.MENG_WEB_URL)
+  if (!web) throw new Error('本地内核 web 能力面未就绪')
+  return withIpcTransport(`${web.url}/`)
+}
+
+async function invoke(op: string, payload: unknown): Promise<unknown> {
+  if (!web) throw new Error('本地内核尚未就绪')
+  const response = await fetch(`${web.url}/api/${op}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload ?? {}),
+  })
+  const body = await response.json() as { error?: { message?: string; code?: string } }
+  if (!response.ok) {
+    throw new Error(body.error?.message ?? `op ${op} 失败 (${response.status})`)
+  }
+  return body
+}
+
+function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280,
     height: 860,
+    minWidth: 920,
+    minHeight: 640,
+    title: '梦',
+    backgroundColor: '#f5f4f0',
     webPreferences: {
-      // 上下文隔离: 渲染进程拿不到 node, 只能通过 preload 白名单
       contextIsolation: true,
       nodeIntegration: false,
-      preload: new URL('./preload.ts', import.meta.url).pathname,
+      sandbox: false,
+      preload: preloadPath(),
     },
   })
-  const devUrl = process.env['MENG_WEB_URL'] ?? 'http://127.0.0.1:4722'
-  void win.loadURL(devUrl)
+  win.webContents.on('did-finish-load', () => {
+    win.webContents.send(IPC_STATE, 'online')
+  })
+  void win.loadURL(windowUrl())
+  return win
 }
 
-void app.whenReady().then(async () => {
-  kernel = await bootKernel()
+async function startKernel(): Promise<void> {
+  const configuredWebUrl = process.env.MENG_WEB_URL
+  process.env.MENG_PORT = '0'
+  process.env.MENG_HOST = '127.0.0.1'
+  const root = webRoot()
+  if (root) process.env.MENG_WEB_ROOT = root
+  const plugins = pluginRoot()
+  if (plugins) process.env.MENG_PLUGIN_ROOT = plugins
+
+  kernel = await bootKernel({
+    web: true,
+    dataDir: join(app.getPath('userData'), 'data'),
+    patches: [providersPatch(), mockPatch()],
+    setup(ctx) {
+      ctx.set('platform', desktopFaces({ preload: preloadPath() }))
+    },
+  })
+  web = kernel.ctx.get<WebService>('web')
+  if (!web) throw new Error('本地内核没有 web 能力面')
+  process.env.MENG_WEB_URL = configuredWebUrl ?? withIpcTransport(`${web.url}/`)
+  offEvents = web.subscribe((event: WebEvent) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send(IPC_EVENT, event)
+    }
+  })
+}
+
+async function dispose(): Promise<void> {
+  offEvents?.()
+  offEvents = undefined
+  for (const win of BrowserWindow.getAllWindows()) win.destroy()
+  await kernel?.dispose()
+  kernel = undefined
+  web = undefined
+}
+
+async function main(): Promise<void> {
+  app.setName('梦')
+  // GUI 应用启动时 PATH 往往不含 /bin；bash 工具需要它。
+  const pathParts = (process.env.PATH ?? '').split(':').filter(Boolean)
+  for (const part of ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin']) {
+    if (!pathParts.includes(part)) pathParts.push(part)
+  }
+  process.env.PATH = pathParts.join(':')
+
+  if (!app.requestSingleInstanceLock()) {
+    app.quit()
+    return
+  }
+
+  ipcMain.handle(IPC_INVOKE, (_event, op: string, payload: unknown) => invoke(op, payload))
+  ipcMain.on(IPC_MANIFEST, (event) => {
+    event.returnValue = web?.manifest()
+  })
+
+  await app.whenReady()
+  await startKernel()
   createWindow()
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+  })
+  app.on('second-instance', () => {
+    const [win] = BrowserWindow.getAllWindows()
+    if (!win) return
+    if (win.isMinimized()) win.restore()
+    win.focus()
+  })
+}
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('before-quit', async () => {
-  await kernel?.dispose()
+app.on('before-quit', (event) => {
+  if (quitting) return
+  event.preventDefault()
+  quitting = true
+  void dispose().finally(() => app.quit())
+})
+
+void main().catch(async (error) => {
+  console.error('[desktop] 启动失败:', error)
+  await dispose().catch(() => {})
+  app.quit()
 })

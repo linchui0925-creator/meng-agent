@@ -37,6 +37,7 @@
  * 它存在的理由就是跨轮次活着。带了信号, 用户按一次 ESC 就把它杀了。
  */
 
+import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { sandboxRoot } from '@meng/config'
 import { defineInvariant, type Ctx, type Disposer } from '@meng/core'
@@ -460,7 +461,10 @@ export const invariant = defineInvariant('@meng/plugin-tool-bash', [
     // 那条断言归 policy-approval 的不变量: 它测"决定", 不真的执行
     id: 'workdir-is-fenced',
     async run(ctx) {
-      const inside = await callBash(ctx, { command: 'true', description: 'verify relative workdir', workdir: 'packages' })
+      // 开发仓库里有 packages/，打包后的桌面应用没有；自检只验证相对 workdir
+      // 不越界，不假设某个固定目录一定存在。
+      const workdir = ['packages', 'plugins', 'apps'].find((dir) => existsSync(resolve(process.cwd(), dir))) ?? '.'
+      const inside = await callBash(ctx, { command: 'true', description: 'verify relative workdir', workdir })
       if (!inside.ok) throw new Error(`工作区内的相对 workdir 被拒: ${inside.error ?? ''}`)
     },
   },

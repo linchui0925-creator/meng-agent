@@ -32,6 +32,8 @@ interface ImportMetaEnv {
   /** 构建期常量: 打包产物里是 true */
   readonly PROD: boolean
   readonly MODE: string
+  /** 移动端 / 分离部署时的内核地址，例如 https://agent.example.com */
+  readonly VITE_MENG_API_URL?: string
 }
 
 interface ImportMeta {

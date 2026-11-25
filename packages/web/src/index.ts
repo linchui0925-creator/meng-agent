@@ -26,6 +26,15 @@ export const PROTOCOL_VERSION = 1
 
 export type OpHandler = (payload: Record<string, unknown>, c: RouteCtx) => unknown | Promise<unknown>
 
+export interface WebEvent {
+  type: string
+  seq: number
+  at: number
+  sessionId?: string
+  runId?: string
+  payload?: unknown
+}
+
 export interface WebService {
   /** 注册一个上行 op → POST /api/{name}。返回 disposer, 卸载即摘路由 */
   op(name: string, handler: OpHandler): Disposer
@@ -36,6 +45,8 @@ export interface WebService {
   prefix(method: string, prefix: string, handler: RouteHandler): Disposer
   /** 下行广播。seq 由内核统一分配, 前端靠它排序和断线重放 */
   broadcast(type: string, payload?: unknown, meta?: { sessionId?: string; runId?: string }): void
+  /** 进程内订阅同一条下行流；IPC / 桌面壳不需要再自建 WebSocket 客户端。 */
+  subscribe(fn: (event: WebEvent) => void): Disposer
   /** 在线连接数, 给调试面板 */
   readonly connections: number
   readonly port: number
@@ -84,6 +95,19 @@ export async function apply(ctx: Ctx, config: WebConfig = {}): Promise<Disposer>
   const app = createHttpApp()
   const ops = new Map<string, OpHandler>()
   const runs = new Map<string, AbortController>()
+  const subscribers = new Set<(event: WebEvent) => void>()
+
+  const publish = (event: WebEvent): void => {
+    const frame = JSON.stringify(event)
+    ws.broadcast(frame)
+    for (const fn of subscribers) {
+      try {
+        fn(event)
+      } catch {
+        // 一个桌面窗口的监听器坏掉，不应该拖垮其他窗口或 WS。
+      }
+    }
+  }
 
   const ws: WSServer = attachWebSocket(app.server, {
     path: '/ws',
@@ -131,15 +155,19 @@ export async function apply(ctx: Ctx, config: WebConfig = {}): Promise<Disposer>
 
     broadcast(type, payload, meta) {
       const seq = session?.nextSeq() ?? 0
-      const event = {
+      publish({
         type,
         seq,
         at: Date.now(),
         ...(meta?.sessionId ? { sessionId: meta.sessionId } : {}),
         ...(meta?.runId ? { runId: meta.runId } : {}),
         payload,
-      }
-      ws.broadcast(JSON.stringify(event))
+      })
+    },
+
+    subscribe(fn) {
+      subscribers.add(fn)
+      return () => { subscribers.delete(fn) }
     },
 
     get connections() {
@@ -159,14 +187,14 @@ export async function apply(ctx: Ctx, config: WebConfig = {}): Promise<Disposer>
   // 会话事件 → 下行。这是"事件流是唯一真相源"的兑现处:
   // 界面上看到的一切都是这条流的投影, 前端不另存一份状态
   const offEvent = ctx.on('session/event', (event: SessionEvent) => {
-    ws.broadcast(JSON.stringify({
+    publish({
       type: event.type,
       seq: event.seq,
       at: event.at,
       sessionId: event.sessionId,
       runId: (event.data as { runId?: string } | null)?.runId,
       payload: event.data,
-    }))
+    })
   })
 
   const offOps = registerBuiltinOps(ctx, service, { runs })
@@ -189,6 +217,7 @@ export async function apply(ctx: Ctx, config: WebConfig = {}): Promise<Disposer>
   return () => {
     offOps()
     offEvent()
+    subscribers.clear()
     ws.dispose()
     for (const ctrl of runs.values()) ctrl.abort()
     runs.clear()

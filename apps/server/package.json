@@ -3,6 +3,11 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "main": "./src/boot.ts",
+  "exports": {
+    ".": "./src/boot.ts",
+    "./main": "./src/main.ts"
+  },
   "dependencies": {
     "@meng/core": "workspace:*",
     "@meng/provider-deepseek": "workspace:*",
@@ -12,6 +17,10 @@
     "@meng/web": "workspace:*",
     "@meng/plugin-schedules-local": "workspace:*",
     "@meng/config": "workspace:*",
-    "@meng/kernel": "workspace:*"
+    "@meng/kernel": "workspace:*",
+    "@meng/bundle-base": "workspace:*",
+    "@meng/bundle-kit": "workspace:*",
+    "@meng/bundle-server": "workspace:*",
+    "@meng/fs": "workspace:*"
   }
 }

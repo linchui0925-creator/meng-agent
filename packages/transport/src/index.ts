@@ -39,6 +39,13 @@ export interface StreamEvent {
 /** 握手帧的 seq 哨兵。前端算 lastSeq 时必须跳过它, 否则重连会过滤掉全部历史 */
 export const HELLO_SEQ = -1
 
+/** handshake 只需要消费方真正用到的字段；具体插件行由 modules 层补类型。 */
+export interface BootManifestLike {
+  protocol?: number
+  plugins?: unknown[]
+  [key: string]: unknown
+}
+
 export interface Transport {
   /** 上行: 命令。返回 Promise, 失败要可重试 */
   invoke<T = unknown>(op: string, payload?: unknown): Promise<T>

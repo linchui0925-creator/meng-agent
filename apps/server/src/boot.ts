@@ -31,6 +31,8 @@ export interface BootOptions {
   /** 数据目录, 传给 session 等本机存储模块 */
   dataDir?: string
   quiet?: boolean
+  /** 桌面/移动壳在装载插件前注入平台能力面。 */
+  setup?: (ctx: Ctx) => void | Promise<void>
 }
 
 export async function bootKernel(options: BootOptions = {}): Promise<Kernel> {
@@ -43,6 +45,7 @@ export async function bootKernel(options: BootOptions = {}): Promise<Kernel> {
   const ctx = createContext('root')
   // 状态图也是能力面: web 的 /api/boot-manifest 和调试面板都读它
   ctx.set('graph', graph)
+  await options.setup?.(ctx)
 
   // 最小启动器只拉起 kernel；从这一行之后，装载与健康检查都交给 kernel。
   const mounted = await loadPatch(ctx, graph, kernelPatch)

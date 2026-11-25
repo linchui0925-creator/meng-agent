@@ -14,7 +14,10 @@
     "dev": "node --use-env-proxy --experimental-strip-types apps/server/src/main.ts",
     "graph": "node --experimental-strip-types apps/server/src/main.ts graph",
     "lint:tokens": "node scripts/lint-tokens.mjs",
-    "build:plugins": "cd apps/web && ./node_modules/.bin/vite build --config vite.plugin.config.ts"
+    "build:plugins": "cd apps/web && ./node_modules/.bin/vite build --config vite.plugin.config.ts",
+    "desktop:dev": "pnpm --dir apps/desktop dev",
+    "desktop:build": "pnpm --dir apps/desktop build",
+    "mobile:sync": "pnpm --dir apps/mobile sync"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

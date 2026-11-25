@@ -5,9 +5,14 @@
   "type": "module",
   "description": "移动端外壳 (Capacitor)。复用 apps/web 的产物, 原生能力以梦插件形式暴露。",
   "scripts": {
-    "sync": "cap sync",
+    "build:web": "pnpm --dir ../web build",
+    "sync": "pnpm build:web && cap sync",
+    "add:ios": "cap add ios",
+    "add:android": "cap add android",
     "open:ios": "cap open ios",
-    "open:android": "cap open android"
+    "open:android": "cap open android",
+    "run:ios": "cap run ios",
+    "run:android": "cap run android"
   },
   "dependencies": {
     "@capacitor/core": "^7.0.0",
@@ -16,7 +21,8 @@
     "@capacitor/haptics": "^7.0.0",
     "@capacitor/local-notifications": "^7.0.0",
     "@capacitor/preferences": "^7.0.0",
-    "@meng/platform": "workspace:*"
+    "@meng/platform": "workspace:*",
+    "@capacitor/clipboard": "^7.0.0"
   },
   "devDependencies": {
     "@capacitor/android": "^7.0.0",
