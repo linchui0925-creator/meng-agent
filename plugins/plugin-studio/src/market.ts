@@ -20,8 +20,8 @@ import { LocalPluginTelemetry, type PluginEvent, type TelemetrySummary } from '.
 const DEFAULT_OFFICIAL_SOURCE: OfficialSource = {
   id: 'meng-official',
   name: '梦官方市场',
-  catalog: 'https://raw.githubusercontent.com/linchui0925-creator/meng-agent/main/market/catalog.json',
-  mirrors: ['https://cdn.jsdelivr.net/gh/linchui0925-creator/meng-agent@main/market/catalog.json'],
+  catalog: 'https://cdn.jsdelivr.net/gh/linchui0925-creator/meng-agent@main/market/catalog.json',
+  mirrors: ['https://raw.githubusercontent.com/linchui0925-creator/meng-agent/main/market/catalog.json'],
   priority: 100,
   enabled: true,
 }
