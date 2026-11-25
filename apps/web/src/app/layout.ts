@@ -393,6 +393,8 @@ export interface ToolRecord {
 /** `conversation.tool` 的公开 props。只换工具卡，不必接管整张消息或布局 */
 export type ToolCardApi = {
   tool: ToolCall
+  /** 运行步骤内使用紧凑字号与间距。 */
+  compact?: boolean
   /** 来自宿主偏好；插件可以照用，也可以自行决定折叠方式 */
   autoFold: boolean
   /** 宿主没接 `tool.record` 时允许缺省，插件不能假定它一定存在 */

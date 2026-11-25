@@ -30,6 +30,8 @@ import styles from './App.module.css'
 
 export interface ToolCardProps {
   tool: ToolCall
+  /** 运行步骤内使用紧凑排版。 */
+  compact?: boolean
   /**
    * 跑完之后默认折叠。来自设置里的「工具卡」开关。
    *
@@ -46,7 +48,7 @@ export interface ToolCardProps {
   readRecord?: (recordId: string) => Promise<ToolRecord>
 }
 
-export function ToolCard({ tool, autoFold = true, readRecord }: ToolCardProps) {
+export function ToolCard({ tool, compact = false, autoFold = true, readRecord }: ToolCardProps) {
   /**
    * `null` = 没手动动过, 跟随偏好的默认值。
    *
@@ -119,6 +121,7 @@ export function ToolCard({ tool, autoFold = true, readRecord }: ToolCardProps) {
     <div
       className={styles.tool}
       data-status={tool.status}
+      data-compact={compact ? '' : undefined}
       /*
         时间线节点用**首字母**当身份 (read→R, bash→B), 不给每个工具配图标:
         插件是外置的, 界面替所有可能出现的工具画图标不现实, 首字母零成本且够认。

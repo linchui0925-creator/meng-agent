@@ -1028,6 +1028,29 @@
   color: var(--meng-alias-warning);
 }
 
+.tool[data-compact] {
+  grid-template-columns: 17px minmax(0, 1fr);
+  column-gap: var(--meng-specific-space-1);
+  font-size: var(--meng-specific-text-xs);
+}
+.tool[data-compact] .toolNode {
+  width: 17px;
+  height: 17px;
+  font-size: 9px;
+}
+.tool[data-compact] .toolArgs,
+.tool[data-compact] .toolSummary,
+.tool[data-compact] .toolSummaryWarn,
+.tool[data-compact] .toolToggle,
+.tool[data-compact] .toolOutput {
+  font-size: var(--meng-specific-text-xs);
+}
+.tool[data-compact] .toolArgs,
+.tool[data-compact] .toolOutput {
+  margin-top: var(--meng-specific-space-1);
+  padding: 6px 8px;
+}
+
 /* min-width:0 让长命令在 grid 里换行, 而不是把卡片撑出容器 */
 .toolBody {
   min-width: 0;

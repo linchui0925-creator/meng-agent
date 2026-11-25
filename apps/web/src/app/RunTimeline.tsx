@@ -60,7 +60,6 @@ function RunStepRow({ step, current, autoFold, readRecord, Slot, onOpenFile }: {
   if (current) {
     return (
       <section className={styles.step} data-current="">
-        <span className={styles.node}>{step.index}</span>
         <div className={styles.currentLabel}><i />{step.status === 'waiting' ? '等待工具' : '正在执行'}</div>
         <div className={styles.thought}><Markdown text={step.text || (step.status === 'waiting' ? '正在调用工具…' : '')} caret={step.status === 'streaming'} /></div>
         {files.length > 0 && <FileChanges files={files} onOpenFile={onOpenFile} />}
@@ -71,7 +70,6 @@ function RunStepRow({ step, current, autoFold, readRecord, Slot, onOpenFile }: {
   return (
     <details className={styles.step} data-status={step.status}>
       <summary>
-        <span className={styles.node}>{step.index}</span>
         <span className={styles.stepSummary}>{summary}</span>
         <span className={styles.stepMeta}>{step.tools.length > 0 ? `${step.tools.length} 个工具` : '完成'}</span>
         <span className={styles.chevron}>›</span>
@@ -102,7 +100,7 @@ function Tools({ tools, autoFold, readRecord, Slot }: {
   return (
     <div className={styles.tools}>
       {tools.map((tool) => {
-        const card = { tool, autoFold, readRecord }
+        const card = { tool, compact: true, autoFold, readRecord }
         return <Slot key={tool.callId} name="conversation.tool" props={card} fallback={<ToolCard {...card} />} />
       })}
     </div>
