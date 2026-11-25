@@ -15,11 +15,6 @@
         webRoot: !!js process.env.MENG_WEB_ROOT || ''
         pluginRoot: !!js process.env.MENG_PLUGIN_ROOT || ''
 
-    # dsh-purge: 后端工具 / 网页 op + 前端设置分区。需要 web 能力面，
-    # 所以属于 server 层，不能放进无 HTTP 的 kit。
-    - id: dsh-purge
-      name: '@meng/plugin-dsh-purge'
-
     # 插件工坊: 创建/安装/市场/发布者/遥测。它是插件系统的控制面，
     # 默认随 server 启动，否则用户没有入口管理外部插件。
     - id: plugin-studio

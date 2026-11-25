@@ -6,7 +6,6 @@
   "main": "./src/index.ts",
   "dependencies": {
     "@meng/core": "workspace:*",
-    "@meng/plugin-dsh-purge": "workspace:*",
     "@meng/plugin-studio": "workspace:*",
     "@meng/plugin-questions-web": "workspace:*",
     "@meng/plugin-schedules-local": "workspace:*",
