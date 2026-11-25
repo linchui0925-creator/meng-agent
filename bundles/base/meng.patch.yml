@@ -63,7 +63,8 @@
     - id: loop-basic
       name: '@meng/plugin-loop-basic'
       config:
-        maxTurns: 24
+        checkpointEvery: 20
+        hardStopSteps: 500
 
     # 记忆与上下文压缩。外部是一个插件，内部拆成压缩、搜索库和技能说明。
     - id: memory

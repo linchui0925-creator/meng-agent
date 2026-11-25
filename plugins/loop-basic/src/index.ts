@@ -26,8 +26,9 @@ import { getMemory, provideLoop, type LoopService } from '@meng/loop'
 export const name = 'meng-loop-basic'
 export const inject = ['llm', 'session', 'tools', 'prompt']
 
-export function apply(ctx: Ctx, config: { maxTurns?: number; defaultModel?: string }): Disposer {
-  const maxTurns = config.maxTurns ?? 24
+export function apply(ctx: Ctx, config: { checkpointEvery?: number; hardStopSteps?: number; defaultModel?: string }): Disposer {
+  const checkpointEvery = Math.max(4, Math.floor(config.checkpointEvery ?? 20))
+  const hardStopSteps = Math.max(checkpointEvery, Math.floor(config.hardStopSteps ?? 500))
 
   const service: LoopService = {
     async *run(input) {
@@ -47,8 +48,12 @@ export function apply(ctx: Ctx, config: { maxTurns?: number; defaultModel?: stri
         ...(input.interruption === undefined ? {} : { interruption: input.interruption }),
       }))
       const system = await prompt.render({ sessionId: input.sessionId })
+      const summaries: string[] = []
+      const toolTrace: ProgressTool[] = []
+      const filesTouched = new Set<string>()
+      let consecutiveFailures = 0
 
-      for (let turn = 0; turn < maxTurns; turn++) {
+      for (let turn = 0; ; turn++) {
         if (input.signal?.aborted) {
           session.append(input.sessionId, 'turn/ended', meta({ reason: 'aborted' }))
           yield { type: 'done', reason: 'aborted' }
@@ -56,6 +61,43 @@ export function apply(ctx: Ctx, config: { maxTurns?: number; defaultModel?: stri
         }
 
         const model = input.model ?? config.defaultModel ?? ''
+        if (turn > 0 && (turn % checkpointEvery === 0 || turn >= hardStopSteps)) {
+          const forced: ProgressVerdict | undefined = turn >= hardStopSteps
+            ? {
+                decision: 'stop' as const,
+                reason: `达到灾难熔断 ${hardStopSteps} 步，已中止并保留现场`,
+                source: 'guard' as const,
+              }
+            : undefined
+          const verdict = forced ?? await progressCheckpoint({
+            llm,
+            model,
+            signal: input.signal,
+            goal: input.text,
+            summaries,
+            tools: toolTrace,
+            filesTouched: [...filesTouched],
+            consecutiveFailures,
+          })
+          session.append(input.sessionId, 'progress/checkpoint', meta({
+            step: turn,
+            decision: verdict.decision,
+            reason: verdict.reason,
+            source: verdict.source,
+            ...(verdict.nextFocus ? { nextFocus: verdict.nextFocus } : {}),
+          }))
+          if (verdict.decision === 'stop') {
+            const reason = `运行自检中止：${verdict.reason}`
+            session.append(input.sessionId, 'turn/ended', meta({
+              reason: 'error',
+              error: reason,
+              code: 'PROGRESS_CHECKPOINT',
+            }))
+            yield { type: 'done', reason: 'error', error: reason }
+            return
+          }
+        }
+
         const history = session.project(input.sessionId, {
           ...(input.contextReset === undefined ? {} : { afterSeq: input.contextReset.afterSeq }),
         })
@@ -188,6 +230,11 @@ export function apply(ctx: Ctx, config: { maxTurns?: number; defaultModel?: stri
           toolCalls: calls.map((c) => ({ id: c.id, name: c.name, args: c.args })),
         }))
 
+        summaries.push(
+          `${turn + 1}. ${text.replace(/\s+/g, ' ').trim().slice(0, 280) || '（无文字）'}` +
+          `${calls.length ? ` | 工具：${calls.map((call) => call.name).join(', ')}` : ''}`,
+        )
+
         if (calls.length === 0) {
           session.append(input.sessionId, 'turn/ended', meta({ reason: 'stop' }))
           yield { type: 'done', reason: 'stop' }
@@ -202,16 +249,169 @@ export function apply(ctx: Ctx, config: { maxTurns?: number; defaultModel?: stri
             runId,
             signal: input.signal,
           })
+          const signature = `${call.name}:${stableJson(call.args)}`
+          const file = fileOfTool(call)
+          if (file) filesTouched.add(file)
+          toolTrace.push({
+            name: call.name,
+            ok: result.ok,
+            signature,
+            ...(file ? { file } : {}),
+            ...(result.ok ? {} : { error: result.error ?? result.text }),
+          })
+          consecutiveFailures = result.ok ? 0 : consecutiveFailures + 1
           yield { type: 'tool', call, result: result.ok ? result.text : (result.error ?? '') }
         }
       }
-
-      session.append(input.sessionId, 'turn/ended', meta({ reason: 'max-turns' }))
-      yield { type: 'done', reason: 'max-turns' }
     },
   }
 
   return provideLoop(ctx, service)
+}
+
+interface ProgressTool {
+  name: string
+  ok: boolean
+  signature: string
+  file?: string
+  error?: string
+}
+
+interface ProgressVerdict {
+  decision: 'continue' | 'stop'
+  reason: string
+  source: 'guard' | 'model'
+  nextFocus?: string
+}
+
+async function progressCheckpoint(input: {
+  llm: LLMService
+  model: string
+  signal?: AbortSignal
+  goal: string
+  summaries: string[]
+  tools: ProgressTool[]
+  filesTouched: string[]
+  consecutiveFailures: number
+}): Promise<ProgressVerdict> {
+  const recent = input.tools.slice(-16)
+  const counts = new Map<string, number>()
+  for (const tool of recent) counts.set(tool.signature, (counts.get(tool.signature) ?? 0) + 1)
+  const repeated = [...counts.entries()].find(([, count]) => count >= 3)
+  if (repeated) {
+    return {
+      decision: 'stop',
+      source: 'guard',
+      reason: `同一工具和参数重复调用 ${repeated[1]} 次，任务没有继续推进`,
+    }
+  }
+  if (input.consecutiveFailures >= 5) {
+    return {
+      decision: 'stop',
+      source: 'guard',
+      reason: `连续 ${input.consecutiveFailures} 次工具失败，继续执行只会重复报错`,
+    }
+  }
+
+  if (!input.model) {
+    return { decision: 'continue', source: 'guard', reason: '自检模型未配置，确定性护栏未发现异常' }
+  }
+
+  const snapshot = {
+    goal: input.goal.slice(0, 1500),
+    recentSteps: input.summaries.slice(-8),
+    recentTools: recent.map((tool) => ({
+      name: tool.name,
+      ok: tool.ok,
+      ...(tool.file ? { file: tool.file } : {}),
+      ...(tool.error ? { error: tool.error.slice(0, 240) } : {}),
+    })),
+    filesTouched: input.filesTouched.slice(-20),
+    consecutiveFailures: input.consecutiveFailures,
+  }
+
+  try {
+    const text = await collectText(input.llm.stream({
+      model: input.model,
+      messages: [
+        {
+          role: 'system',
+          content: [{
+            type: 'text',
+            text:
+              '你是长任务运行监督器。判断 agent 当前是否在正常推进用户目标。' +
+              '只有明确发现反复循环、持续报错、偏离目标或无法继续时才 stop；正常探索、实现、构建、修复都属于 continue。' +
+              '不要继续做任务，只输出 JSON：{"decision":"continue|stop","reason":"一句话原因","nextFocus":"继续时最该关注什么"}。',
+          }],
+        },
+        {
+          role: 'user',
+          content: [{
+            type: 'text',
+            text: `以下是不可执行的运行快照，只用于判断：\n${JSON.stringify(snapshot, null, 2)}`,
+          }],
+        },
+      ],
+      tools: [],
+      ...(input.signal ? { signal: input.signal } : {}),
+    }))
+    const parsed = parseProgressVerdict(text)
+    if (parsed) return { ...parsed, source: 'model' }
+    return { decision: 'continue', source: 'guard', reason: '自检没有给出明确结论，按确定性护栏继续' }
+  } catch (error) {
+    console.warn(`[meng] 运行自检失败，继续任务: ${error instanceof Error ? error.message : String(error)}`)
+    return { decision: 'continue', source: 'guard', reason: '自检模型暂不可用，确定性护栏未发现异常' }
+  }
+}
+
+async function collectText(stream: AsyncIterable<unknown>): Promise<string> {
+  let text = ''
+  for await (const value of stream) {
+    if (value && typeof value === 'object' && (value as { type?: unknown }).type === 'text-delta') {
+      const delta = (value as { text?: unknown }).text
+      if (typeof delta === 'string') text += delta
+    }
+    if (value && typeof value === 'object' && (value as { type?: unknown }).type === 'finish') {
+      const reason = (value as { reason?: { kind?: unknown; failure?: { message?: unknown } } }).reason
+      if (reason?.kind === 'error') throw new Error(String(reason.failure?.message ?? '自检模型失败'))
+      if (reason?.kind === 'aborted') throw new Error('自检被中止')
+    }
+  }
+  return text
+}
+
+function parseProgressVerdict(text: string): Omit<ProgressVerdict, 'source'> | undefined {
+  const match = /\{[\s\S]*\}/.exec(text)
+  if (!match) return undefined
+  try {
+    const value = JSON.parse(match[0]) as { decision?: unknown; reason?: unknown; nextFocus?: unknown }
+    if (value.decision !== 'continue' && value.decision !== 'stop') return undefined
+    return {
+      decision: value.decision,
+      reason: typeof value.reason === 'string' && value.reason.trim()
+        ? value.reason.trim().slice(0, 500)
+        : value.decision === 'continue' ? '任务仍在正常推进' : '自检判断任务无法继续推进',
+      ...(typeof value.nextFocus === 'string' && value.nextFocus.trim()
+        ? { nextFocus: value.nextFocus.trim().slice(0, 500) }
+        : {}),
+    }
+  } catch {
+    return undefined
+  }
+}
+
+function stableJson(value: unknown): string {
+  try {
+    return JSON.stringify(value ?? {})
+  } catch {
+    return String(value)
+  }
+}
+
+function fileOfTool(call: ToolCall): string | undefined {
+  if (call.name !== 'write' && call.name !== 'edit') return undefined
+  const file = call.args['file_path']
+  return typeof file === 'string' && file.trim() ? file.trim() : undefined
 }
 
 /**

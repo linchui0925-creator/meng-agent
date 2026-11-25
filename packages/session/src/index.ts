@@ -34,6 +34,8 @@ export type SessionEventType =
   | 'model/switched'
   /** 自动压缩检查点：摘要替代较早表层，但原始事件仍保留。 */
   | 'context/compacted'
+  /** 运行中自检：模型判断任务是在正常推进还是已经跑偏。 */
+  | 'progress/checkpoint'
   /**
    * 后台任务开跑。与 job/completed **同形状** (完整快照, status='running',
    * 没有 finishedAt) —— 前端按 id upsert 同一条任务条, 不需要两套渲染分支。

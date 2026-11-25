@@ -451,6 +451,26 @@ export function project(events: readonly StreamEvent[]): Message[] {
         break
       }
 
+      case 'progress/checkpoint': {
+        if (!runId) break
+        const at = byRun.get(runId)
+        const target = at === undefined ? undefined : messages[at]
+        if (!target) break
+        const decision = textOf(payload, 'decision')
+        const reason = textOf(payload, 'reason')
+        const nextFocus = textOf(payload, 'nextFocus')
+        target.steps ??= []
+        target.steps.push({
+          kind: 'marker',
+          id: `checkpoint:${event.seq}`,
+          at: event.at,
+          label: decision === 'stop' ? '自检中止' : '自检通过',
+          ...(reason || nextFocus ? { detail: nextFocus && decision !== 'stop' ? `${reason} · 继续关注 ${nextFocus}` : reason } : {}),
+          tone: decision === 'stop' ? 'error' : 'check',
+        })
+        break
+      }
+
       case 'error': {
         if (!runId) break
         const at = byRun.get(runId)
