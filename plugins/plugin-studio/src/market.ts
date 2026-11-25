@@ -17,6 +17,15 @@ import { readSignature } from './signing.ts'
 import { OfficialSourceStore, type OfficialSource, type OfficialSourcePatch } from './sources.ts'
 import { LocalPluginTelemetry, type PluginEvent, type TelemetrySummary } from './telemetry.ts'
 
+const DEFAULT_OFFICIAL_SOURCE: OfficialSource = {
+  id: 'meng-official',
+  name: '梦官方市场',
+  catalog: 'https://raw.githubusercontent.com/linchui0925-creator/meng-agent/main/market/catalog.json',
+  mirrors: ['https://cdn.jsdelivr.net/gh/linchui0925-creator/meng-agent@main/market/catalog.json'],
+  priority: 100,
+  enabled: true,
+}
+
 export interface MarketPaths {
   profileDir: string
   dataDir: string
@@ -69,6 +78,7 @@ export class MarketOperations {
   }
 
   dashboard(): MarketDashboard {
+    this.ensureDefaultSource()
     const sources = this.sourceStore().list()
     const primarySource = sources.find((source) => source.enabled)
     return {
@@ -115,14 +125,17 @@ export class MarketOperations {
     enabled?: boolean
     mirrors?: string[]
   }): OfficialSource {
+    this.ensureDefaultSource()
     return this.sourceStore().add({ ...input, name: input.name || input.id })
   }
 
   setSource(id: string, patch: OfficialSourcePatch): OfficialSource {
+    this.ensureDefaultSource()
     return this.sourceStore().set(id, patch)
   }
 
   removeSource(id: string): void {
+    this.ensureDefaultSource()
     this.sourceStore().remove(id)
   }
 
@@ -221,6 +234,7 @@ export class MarketOperations {
 
   private resolveSource(input: { source?: string; sourceId?: string }): OfficialSource | CustomSource {
     if (input.source?.trim()) return customSource(input.source.trim())
+    this.ensureDefaultSource()
     const store = this.sourceStore()
     if (input.sourceId?.trim()) {
       const selected = store.get(input.sourceId.trim())
@@ -252,6 +266,11 @@ export class MarketOperations {
       }
     }
     throw last instanceof Error ? last : new Error(`市场源 ${source.id} 的所有 catalog 地址均不可用`)
+  }
+
+  private ensureDefaultSource(): void {
+    if (existsSync(this.paths.sourcesFile)) return
+    this.sourceStore().add(DEFAULT_OFFICIAL_SOURCE)
   }
 
   private publisherStore(): PublisherStore {

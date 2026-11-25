@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "name": "梦插件市场",
+  "updatedAt": 1795569900,
+  "plugins": [
+    {
+      "id": "dsh-purge",
+      "name": "dsh-purge",
+      "description": "dsh-purge 1.7.20 梦适配器：规则、探针、RedTeam 事实库与可扩展技能库",
+      "tags": [
+        "安全",
+        "规则",
+        "探针",
+        "redteam",
+        "adapter"
+      ],
+      "publisher": {
+        "id": "meng",
+        "name": "梦"
+      },
+      "versions": [
+        {
+          "version": "0.3.2",
+          "download": "https://github.com/linchui0925-creator/meng-agent/releases/download/plugin-dsh-purge-v0.3.2/meng-plugin-dsh-purge-0.3.2.tgz",
+          "sha256": "6c5c5bb1279766461793e0920f7f13f189a433d3f72c7f97af54988b5df081ca",
+          "channels": [
+            "stable"
+          ],
+          "changelog": "公开发行版：保留 dsh-purge 适配器主体、规则、探针和 RedTeam 事实库；不内置红队攻击技能，可在面板中自行导入。",
+          "compatibility": {
+            "host": ">=0.1.0 <1.0.0",
+            "platforms": [
+              "web",
+              "desktop",
+              "mobile"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
