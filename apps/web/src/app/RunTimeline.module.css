@@ -76,3 +76,30 @@
 @media (prefers-reduced-motion: reduce) {
   .live[data-live], .chevron, .file { animation: none; transition: none; }
 }
+
+/* 超过最近 3 步后，旧过程自动收成一行。 */
+.older {
+  margin: 2px 0 5px;
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: var(--meng-specific-radius-sm);
+  background: color-mix(in srgb, var(--meng-alias-bg-inset) 54%, transparent);
+  overflow: clip;
+}
+.older > summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--meng-specific-space-2);
+  padding: 7px 9px;
+  color: var(--meng-alias-fg-muted);
+  font-size: 10.5px;
+  cursor: pointer;
+  list-style: none;
+}
+.older > summary::-webkit-details-marker { display: none; }
+.older > summary:hover { background: var(--meng-alias-bg-hover); }
+.olderAction { color: var(--meng-alias-fg-secondary); }
+.olderBody { padding: 0 4px 4px; border-top: 1px solid var(--meng-alias-border-l1); }
+@media (prefers-reduced-motion: reduce) {
+  .older > summary { transition: none; }
+}

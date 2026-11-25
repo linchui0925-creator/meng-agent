@@ -6,6 +6,8 @@ import { Markdown } from './Markdown.tsx'
 import { ToolCard } from './ToolCard.tsx'
 import styles from './RunTimeline.module.css'
 
+const RECENT_STEPS = 3
+
 interface RunTimelineProps {
   message: Message
   autoFold: boolean
@@ -20,6 +22,13 @@ export function RunTimeline({ message, autoFold, readRecord, Slot, onOpenFile }:
   if (steps.length === 0) return null
   const running = message.status === 'streaming'
   const currentStepId = running ? steps[steps.length - 1]?.id : undefined
+  const recentStepIds = new Set(steps.slice(-RECENT_STEPS).map((step) => step.id))
+  const firstRecentPart = parts.findIndex((part) => part.kind === 'step' && recentStepIds.has(part.id))
+  const splitAt = steps.length > RECENT_STEPS && firstRecentPart >= 0 ? firstRecentPart : 0
+  const olderParts = parts.slice(0, splitAt)
+  const recentParts = parts.slice(splitAt)
+  const olderSteps = olderParts.filter((part): part is RunStep => part.kind === 'step')
+  const olderToolCount = olderSteps.reduce((count, step) => count + step.tools.length, 0)
   return (
     <details className={styles.run} open={running}>
       <summary className={styles.head}>
@@ -29,7 +38,31 @@ export function RunTimeline({ message, autoFold, readRecord, Slot, onOpenFile }:
         <RunElapsed start={message.at} end={running ? undefined : message.finishedAt} live={running} />
       </summary>
       <div className={styles.timeline}>
-        {parts.map((part, index) => part.kind === 'marker'
+        {olderParts.length > 0 ? (
+          <details className={styles.older}>
+            <summary>
+              <span>前面 {olderSteps.length} 步</span>
+              <span>{olderToolCount} 个工具</span>
+              <span className={styles.olderAction}>展开</span>
+            </summary>
+            <div className={styles.olderBody}>
+              {olderParts.map((part) => part.kind === 'marker'
+                ? <RunMarkerRow key={part.id} marker={part} />
+                : (
+                  <RunStepRow
+                    key={part.id}
+                    step={part}
+                    current={false}
+                    autoFold={autoFold}
+                    readRecord={readRecord}
+                    Slot={Slot}
+                    onOpenFile={onOpenFile}
+                  />
+                ))}
+            </div>
+          </details>
+        ) : null}
+        {recentParts.map((part) => part.kind === 'marker'
           ? <RunMarkerRow key={part.id} marker={part} />
           : (
             <RunStepRow
