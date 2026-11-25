@@ -21,7 +21,7 @@
       "versions": [
         {
           "version": "0.3.2",
-          "download": "https://github.com/linchui0925-creator/meng-agent/releases/download/plugin-dsh-purge-v0.3.2/meng-plugin-dsh-purge-0.3.2.tgz",
+          "download": "https://cdn.jsdelivr.net/gh/linchui0925-creator/meng-agent@main/market/meng-plugin-dsh-purge-0.3.2.tgz",
           "sha256": "6c5c5bb1279766461793e0920f7f13f189a433d3f72c7f97af54988b5df081ca",
           "channels": [
             "stable"
@@ -34,7 +34,11 @@
               "desktop",
               "mobile"
             ]
-          }
+          },
+          "mirrors": [
+            "https://raw.githubusercontent.com/linchui0925-creator/meng-agent/main/market/meng-plugin-dsh-purge-0.3.2.tgz",
+            "https://github.com/linchui0925-creator/meng-agent/releases/download/plugin-dsh-purge-v0.3.2/meng-plugin-dsh-purge-0.3.2.tgz"
+          ]
         }
       ]
     }
