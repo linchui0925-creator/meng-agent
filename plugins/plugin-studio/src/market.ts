@@ -1,5 +1,6 @@
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import type { StatusGraph } from '@meng/core'
 import { ProfileStore } from '@meng/plugin-manifest'
 import {
   findUpdates,
@@ -34,12 +35,26 @@ export interface MarketPaths {
   telemetryDir: string
 }
 
+export interface MarketLibraryPlugin {
+  id: string
+  name: string
+  packageName: string
+  version: string
+  source: 'builtin' | 'external'
+  enabled: boolean
+  runtime: string
+  restartRequired: boolean
+  configurable: boolean
+  client: boolean
+}
+
 export interface MarketDashboard {
   paths: MarketPaths
   publishers: PublisherRecord[]
   sources: OfficialSource[]
   primarySource?: OfficialSource
   installed: Array<{ name: string; pluginId: string; version: string; enabled: boolean }>
+  library: MarketLibraryPlugin[]
   telemetry: TelemetrySummary
 }
 
@@ -63,8 +78,12 @@ export interface MarketInstallInput {
 
 export class MarketOperations {
   readonly paths: MarketPaths
+  private readonly graph?: Pick<StatusGraph, 'snapshot'>
+  private readonly externalIds: ReadonlySet<string>
 
-  constructor(profileDir: string, dataDir?: string) {
+  constructor(profileDir: string, dataDir?: string, graph?: Pick<StatusGraph, 'snapshot'>, externalIds: ReadonlySet<string> = new Set()) {
+    this.graph = graph
+    this.externalIds = externalIds
     const profile = resolve(profileDir)
     const root = resolve(dataDir || process.env['MENG_DATA_DIR'] || join(profile, '..'))
     const marketData = join(root, 'plugins', 'plugin-studio', 'data')
@@ -87,6 +106,7 @@ export class MarketOperations {
       sources,
       ...(primarySource ? { primarySource } : {}),
       installed: this.installed(),
+      library: this.library(),
       telemetry: this.telemetry().summary,
     }
   }
@@ -95,10 +115,86 @@ export class MarketOperations {
     if (!existsSync(join(this.paths.profileDir, 'package.json'))) return []
     return new ProfileStore(this.paths.profileDir).list().map((item) => ({
       name: item.name,
-      pluginId: typeof item.config.id === 'string' ? item.config.id : item.name,
+      pluginId: typeof item.config.id === 'string' ? item.config.id : this.pluginIdOf(item.name),
       version: item.version,
       enabled: item.enabled,
     }))
+  }
+
+  private pluginIdOf(packageName: string): string {
+    try {
+      const file = join(this.paths.profileDir, 'node_modules', ...packageName.split('/'), 'package.json')
+      const pkg = JSON.parse(readFileSync(file, 'utf8')) as { meng?: { plugin?: { id?: unknown } } }
+      return typeof pkg.meng?.plugin?.id === 'string' && pkg.meng.plugin.id.trim() ? pkg.meng.plugin.id.trim() : packageName
+    } catch {
+      return packageName
+    }
+  }
+
+  library(): MarketLibraryPlugin[] {
+    const installed = this.installed()
+    const nodes = this.graph?.snapshot() ?? []
+    const externalIds = new Set<string>(this.externalIds)
+    const installedIds = new Set<string>()
+    const rows: MarketLibraryPlugin[] = []
+
+    for (const item of installed) {
+      const node = nodes.find((entry) => entry.id === item.pluginId || entry.name === item.name)
+      const externalId = node?.id ?? item.pluginId
+      externalIds.add(externalId)
+      installedIds.add(externalId)
+      const runtime = node?.status ?? 'discovered'
+      const active = runtime === 'active'
+      const restartRequired = runtime === 'failed' || runtime === 'pending' || item.enabled !== active
+      rows.push({
+        id: node?.id ?? item.pluginId,
+        name: node?.id ?? item.pluginId,
+        packageName: item.name,
+        version: item.version,
+        source: 'external',
+        enabled: item.enabled,
+        runtime,
+        restartRequired,
+        configurable: true,
+        client: Boolean(node?.client),
+      })
+    }
+
+    for (const externalId of externalIds) {
+      if (installedIds.has(externalId)) continue
+      const node = nodes.find((entry) => entry.id === externalId)
+      if (!node) continue
+      rows.push({
+        id: node.id,
+        name: node.id,
+        packageName: node.name || node.id,
+        version: '',
+        source: 'external',
+        enabled: false,
+        runtime: node.status,
+        restartRequired: true,
+        configurable: false,
+        client: Boolean(node.client),
+      })
+    }
+
+    for (const node of nodes) {
+      if (externalIds.has(node.id) || node.id === 'kernel') continue
+      rows.push({
+        id: node.id,
+        name: node.name || node.id,
+        packageName: node.name || node.id,
+        version: '',
+        source: 'builtin',
+        enabled: true,
+        runtime: node.status,
+        restartRequired: false,
+        configurable: false,
+        client: Boolean(node.client),
+      })
+    }
+
+    return rows.sort((a, b) => a.source.localeCompare(b.source) || a.name.localeCompare(b.name))
   }
 
   addPublisher(input: {
@@ -193,6 +289,14 @@ export class MarketOperations {
       },
     )
     return result
+  }
+
+  setPlugin(name: string, enabled: boolean): { name: string; enabled: boolean; restartRequired: true } {
+    const store = new ProfileStore(this.paths.profileDir)
+    const item = store.list().find((entry) => entry.name === name)
+    if (!item) throw new Error(`外部插件不存在: ${name}`)
+    store.setEnabled(name, enabled)
+    return { name, enabled, restartRequired: true }
   }
 
   uninstall(name: string): UninstallResult {

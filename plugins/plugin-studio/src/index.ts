@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { defineInvariant, type Ctx } from '@meng/core'
+import { defineInvariant, type Ctx, type StatusGraph } from '@meng/core'
 import { buildPlugin } from './build.ts'
 import { packPlugin, verifyPlugin, verifyPluginPackage } from './package.ts'
 import { installArchive, installPackage, rollbackLast, uninstallPlugin } from './install.ts'
@@ -72,6 +72,14 @@ interface Web {
   op(name: string, handler: (payload: Record<string, unknown>) => unknown): () => void
 }
 
+interface Platform {
+  app?: { restart(): Promise<void> | void }
+}
+
+interface ProfileRuntime {
+  plugins?: Array<{ pluginId?: string }>
+}
+
 const writeSchema = {
   type: 'object',
   properties: {
@@ -86,6 +94,10 @@ export function apply(ctx: Ctx): void {
   const tools = ctx.get<Tools>('tools')
   const prompt = ctx.get<Prompt>('prompt')
   const web = ctx.get<Web>('web')
+  const graph = ctx.get<StatusGraph>('graph')
+  const platform = ctx.get<Platform>('platform')
+  const profileRuntime = ctx.get<ProfileRuntime>('plugin-profile')
+  const externalIds = new Set((profileRuntime?.plugins ?? []).flatMap((item) => typeof item.pluginId === 'string' ? [item.pluginId] : []))
   if (!tools || !prompt || !web) throw new Error('需要 tools、prompt 与 web 能力面')
 
   // 工具名用下划线, 不用点号: 厂商接口对 function.name 的规则是
@@ -655,7 +667,7 @@ export function apply(ctx: Ctx): void {
     ctx.effect(() => web.op(name, handler))
   }
   const market = (payload: Record<string, unknown>): MarketOperations =>
-    new MarketOperations(profileDir(payload), optional(payload.dataDir))
+    new MarketOperations(profileDir(payload), optional(payload.dataDir), graph, externalIds)
   const strings = (value: unknown): string[] => Array.isArray(value)
     ? value.filter((item): item is string => typeof item === 'string' && item.trim() !== '')
     : []
@@ -689,6 +701,16 @@ export function apply(ctx: Ctx): void {
   registerWeb('pluginMarket.uninstall', (payload) => {
     confirm(payload)
     return market(payload).uninstall(text(payload.name))
+  })
+  registerWeb('pluginMarket.plugin.set', (payload) => {
+    confirm(payload)
+    return market(payload).setPlugin(text(payload.name), payload.enabled === true)
+  })
+  registerWeb('pluginMarket.restart', (payload) => {
+    confirm(payload)
+    if (!platform?.app) return { ok: false, supported: false }
+    setTimeout(() => { void platform.app?.restart() }, 50)
+    return { ok: true, supported: true }
   })
   registerWeb('pluginMarket.publisher.add', (payload) => {
     confirm(payload)

@@ -26,7 +26,7 @@ __MENG_LOADER__.load({
         name: 'settings.section',
         component: BoundPanel,
         order: 920,
-        meta: { label: '插件市场', group: '插件', origin: 'external' },
+        meta: { label: '插件中心', group: '插件', origin: 'external' },
       })
       return () => {
         off()

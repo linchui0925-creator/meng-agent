@@ -55,6 +55,12 @@ export function desktopFaces(options: DesktopFaceOptions = {}): PlatformFaces {
   const root = rootOf()
 
   return {
+    app: {
+      async restart() {
+        app.relaunch()
+        app.exit(0)
+      },
+    },
     fs: {
       limits: { scope: 'workspace', writable: true },
       async read(path) {

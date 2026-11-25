@@ -75,6 +75,13 @@ ${graph.table()}`)
     ? { dir: profileDir, plugins: [], warnings: [] }
     : discoverProfilePlugins(profileDir, options.quiet ? () => {} : (message) => console.warn(`[meng/profile] ${message}`))
   files.push(...profile.plugins.map((plugin) => plugin.patchFile))
+  ctx.set('plugin-profile', {
+    plugins: profile.plugins.map((plugin) => ({
+      pluginId: plugin.pluginId,
+      packageName: plugin.packageName,
+      version: plugin.version,
+    })),
+  })
 
   mounted.push(...await kernel.mount(files))
 

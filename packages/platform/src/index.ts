@@ -51,6 +51,11 @@ export interface SecureStoreFace {
   set(key: string, value: string): Promise<void>
 }
 
+export interface AppFace {
+  /** 桌面端重启整个应用；网页端不提供，避免伪装成后端重启。 */
+  restart(): Promise<void>
+}
+
 /** 平台插件提供的全部能力面。缺哪个就是哪个不支持 */
 export interface PlatformFaces {
   fs?: FsFace
@@ -60,6 +65,7 @@ export interface PlatformFaces {
   clipboard?: ClipboardFace
   haptics?: HapticsFace
   secureStore?: SecureStoreFace
+  app?: AppFace
 }
 
 export const PLATFORM_FACE_NAMES = [
@@ -70,6 +76,7 @@ export const PLATFORM_FACE_NAMES = [
   'clipboard',
   'haptics',
   'secureStore',
+  'app',
 ] as const
 
 export type PlatformFaceName = (typeof PLATFORM_FACE_NAMES)[number]

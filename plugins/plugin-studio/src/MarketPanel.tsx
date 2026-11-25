@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react'
 
 interface Transport {
   invoke<T>(op: string, payload?: unknown): Promise<T>
@@ -58,6 +58,24 @@ interface Installed {
   enabled: boolean
 }
 
+interface LibraryPlugin extends Installed {
+  id: string
+  packageName: string
+  source: 'builtin' | 'external'
+  runtime: string
+  restartRequired: boolean
+  configurable: boolean
+  client: boolean
+}
+
+type LayoutMode = 'cards' | 'rows' | 'split'
+
+interface RestartRequest {
+  title: string
+  message: string
+  unsupported?: boolean
+}
+
 interface TelemetrySummary {
   installs: number
   updates: number
@@ -84,6 +102,7 @@ interface Dashboard {
   sources: Source[]
   primarySource?: Source
   installed: Installed[]
+  library: LibraryPlugin[]
   telemetry: TelemetrySummary
 }
 
@@ -103,7 +122,7 @@ const EMPTY_SUMMARY: TelemetrySummary = {
 }
 
 const TABS = [
-  { id: 'discover', label: '发现' },
+  { id: 'discover', label: '插件库' },
   { id: 'publishers', label: '发布者' },
   { id: 'sources', label: '市场源' },
   { id: 'telemetry', label: '反馈与遥测' },
@@ -117,6 +136,7 @@ export function MarketPanel({ transport }: { transport?: Transport }) {
     publishers: [],
     sources: [],
     installed: [],
+    library: [],
     telemetry: EMPTY_SUMMARY,
   })
   const [telemetry, setTelemetry] = useState<TelemetryResult>({ summary: EMPTY_SUMMARY, events: [] })
@@ -130,6 +150,8 @@ export function MarketPanel({ transport }: { transport?: Transport }) {
   const [rolloutKey, setRolloutKey] = useState(() => localStorage.getItem('meng.market.rolloutKey') ?? '')
   const [plugins, setPlugins] = useState<CatalogPlugin[]>([])
   const [updates, setUpdates] = useState<Update[]>([])
+  const [restartPrompt, setRestartPrompt] = useState<RestartRequest | null>(null)
+  const [restarting, setRestarting] = useState(false)
 
   const [publisherId, setPublisherId] = useState('')
   const [publisherName, setPublisherName] = useState('')
@@ -165,6 +187,11 @@ export function MarketPanel({ transport }: { transport?: Transport }) {
   useEffect(() => {
     void reloadDashboard()
   }, [reloadDashboard])
+
+  useEffect(() => {
+    if (!transport) return
+    void search()
+  }, [transport])
 
   useEffect(() => {
     const timer = setTimeout(() => localStorage.setItem('meng.market.customSource', customSource), 300)
@@ -220,7 +247,6 @@ export function MarketPanel({ transport }: { transport?: Transport }) {
   async function install(pluginId: string, version?: string) {
     if (!transport) return
     const label = version ? `${pluginId}@${version}` : pluginId
-    if (!window.confirm(`安装 ${label}？`)) return
     setBusy(`install:${pluginId}`)
     setOutput('')
     try {
@@ -234,10 +260,52 @@ export function MarketPanel({ transport }: { transport?: Transport }) {
       })
       setOutput(`已安装 ${result.name}@${result.version}`)
       await reloadDashboard()
+      setRestartPrompt({
+        title: '插件已安装',
+        message: `${result.name}@${result.version} 需要重启后才会生效。`,
+      })
     } catch (error) {
       setOutput(errorText(error))
     } finally {
       setBusy('')
+    }
+  }
+
+  async function togglePlugin(plugin: LibraryPlugin, enabled: boolean) {
+    if (!transport || !plugin.configurable) return
+    setBusy(`toggle:${plugin.packageName}`)
+    setOutput('')
+    try {
+      await transport.invoke('pluginMarket.plugin.set', {
+        name: plugin.packageName,
+        enabled,
+        confirm: true,
+      })
+      setOutput(enabled ? `${plugin.id} 将在重启后启动` : `${plugin.id} 将在重启后关闭`)
+      await reloadDashboard()
+      setRestartPrompt({
+        title: enabled ? '插件已启用' : '插件已关闭',
+        message: `${plugin.id} 的状态需要重启后才会生效。`,
+      })
+    } catch (error) {
+      setOutput(errorText(error))
+    } finally {
+      setBusy('')
+    }
+  }
+
+  async function restartNow() {
+    if (!transport) return
+    setRestarting(true)
+    try {
+      const result = await transport.invoke<{ ok: boolean; supported: boolean }>('pluginMarket.restart', { confirm: true })
+      if (!result.supported) {
+        setRestartPrompt((current) => current ? { ...current, unsupported: true } : current)
+        setRestarting(false)
+      }
+    } catch (error) {
+      setOutput(errorText(error))
+      setRestarting(false)
     }
   }
 
@@ -382,13 +450,20 @@ export function MarketPanel({ transport }: { transport?: Transport }) {
     <section className="plugin-market">
       <header className="plugin-market__header">
         <div>
-          <h3>插件市场</h3>
-          <p className="plugin-market__muted">安装、发布者、市场源和兼容反馈都在本机插件工坊里管理。</p>
+          <h3>插件中心</h3>
+          <p className="plugin-market__muted">{dashboard.library.filter((item) => item.runtime === 'active').length} 个运行中 · {dashboard.library.length} 个已安装</p>
         </div>
         <button className="plugin-market__button" disabled={Boolean(busy)} onClick={() => void reloadDashboard()}>刷新</button>
       </header>
 
-      <nav className="plugin-market__tabs" aria-label="插件市场分区">
+      {dashboard.library.some((item) => item.restartRequired) ? (
+        <div className="plugin-center__restart">
+          <span>有插件变更等待生效</span>
+          <button type="button" className="plugin-center__restart-action" onClick={() => setRestartPrompt({ title: '需要重启', message: '插件状态已变更，重启后生效。' })}>查看</button>
+        </div>
+      ) : null}
+
+      <nav className="plugin-market__tabs" aria-label="插件中心分区">
         {TABS.map((item) => (
           <button
             type="button"
@@ -406,6 +481,7 @@ export function MarketPanel({ transport }: { transport?: Transport }) {
         <DiscoverPanel
           sources={dashboard.sources}
           installed={dashboard.installed}
+          library={dashboard.library}
           plugins={plugins}
           updates={updates}
           busy={busy}
@@ -423,6 +499,7 @@ export function MarketPanel({ transport }: { transport?: Transport }) {
           checkUpdates={checkUpdates}
           install={install}
           uninstall={uninstall}
+          togglePlugin={togglePlugin}
         />
       ) : null}
 
@@ -484,6 +561,23 @@ export function MarketPanel({ transport }: { transport?: Transport }) {
       ) : null}
 
       {output ? <pre className="plugin-market__output">{output}</pre> : null}
+
+      {restartPrompt ? (
+        <div className="plugin-center__modal-backdrop" role="presentation">
+          <div className="plugin-center__modal" role="dialog" aria-modal="true" aria-labelledby="plugin-restart-title">
+            <div className="plugin-center__modal-mark" aria-hidden="true">↻</div>
+            <h4 id="plugin-restart-title">{restartPrompt.title}</h4>
+            <p>{restartPrompt.message}</p>
+            {restartPrompt.unsupported ? <p className="plugin-center__modal-error">当前环境不能自动重启，请关闭并重新打开梦。</p> : null}
+            <div className="plugin-center__modal-actions">
+              <button type="button" className="plugin-market__button" onClick={() => setRestartPrompt(null)}>稍后</button>
+              <button type="button" className="plugin-center__primary" disabled={restarting} onClick={() => restartPrompt.unsupported ? setRestartPrompt(null) : void restartNow()}>
+                {restarting ? '正在重启…' : restartPrompt.unsupported ? '知道了' : '立即重启'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   )
 }
@@ -491,6 +585,7 @@ export function MarketPanel({ transport }: { transport?: Transport }) {
 function DiscoverPanel(props: {
   sources: Source[]
   installed: Installed[]
+  library: LibraryPlugin[]
   plugins: CatalogPlugin[]
   updates: Update[]
   busy: string
@@ -508,80 +603,271 @@ function DiscoverPanel(props: {
   checkUpdates: () => Promise<void>
   install: (pluginId: string, version?: string) => Promise<void>
   uninstall: (name: string) => Promise<void>
+  togglePlugin: (plugin: LibraryPlugin, enabled: boolean) => Promise<void>
 }) {
-  return (
-    <div className="plugin-market__panel">
-      <div className="plugin-market__row">
-        <select className="plugin-market__input" value={props.sourceId} onChange={(event) => props.setSourceId(event.target.value)} aria-label="市场源">
-          <option value="auto">自动选择主市场源</option>
-          {props.sources.map((source) => (
-            <option key={source.id} value={source.id} disabled={!source.enabled}>
-              {source.name}{source.enabled ? '' : '（已停用）'}
-            </option>
+  const [layout, setLayout] = useState<LayoutMode>(() => {
+    const saved = localStorage.getItem('meng.pluginCenter.layout')
+    return saved === 'rows' || saved === 'split' || saved === 'cards' ? saved : 'cards'
+  })
+  const [category, setCategory] = useState<'all' | 'builtin' | 'external' | 'market'>('all')
+  const [stateFilter, setStateFilter] = useState<'all' | 'active' | 'restart' | 'off'>('all')
+  const deferredQuery = useDeferredValue(props.query.trim().toLowerCase())
+
+  useEffect(() => {
+    localStorage.setItem('meng.pluginCenter.layout', layout)
+  }, [layout])
+
+  const library = useMemo(() => props.library.filter((plugin) => {
+    if (deferredQuery && !`${plugin.id} ${plugin.packageName} ${plugin.name}`.toLowerCase().includes(deferredQuery)) return false
+    if (category === 'builtin' && plugin.source !== 'builtin') return false
+    if ((category === 'external' || category === 'market') && plugin.source !== 'external') return false
+    if (stateFilter === 'active' && (plugin.runtime !== 'active' || !plugin.enabled)) return false
+    if (stateFilter === 'restart' && !plugin.restartRequired) return false
+    if (stateFilter === 'off' && plugin.enabled) return false
+    return true
+  }), [category, deferredQuery, props.library, stateFilter])
+
+  const installedIds = useMemo(() => new Set(props.library.map((plugin) => plugin.id)), [props.library])
+  const marketOnly = useMemo(() => {
+    if (category === 'builtin') return []
+    if (stateFilter !== 'all' && stateFilter !== 'off') return []
+    return props.plugins.filter((plugin) => {
+      if (installedIds.has(plugin.id)) return false
+      return !deferredQuery || `${plugin.id} ${plugin.name} ${plugin.description ?? ''}`.toLowerCase().includes(deferredQuery)
+    })
+  }, [category, deferredQuery, installedIds, props.plugins, stateFilter])
+
+  const counts = useMemo(() => ({
+    all: props.library.length,
+    builtin: props.library.filter((plugin) => plugin.source === 'builtin').length,
+    external: props.library.filter((plugin) => plugin.source === 'external').length,
+    market: props.plugins.filter((plugin) => !installedIds.has(plugin.id)).length,
+    active: props.library.filter((plugin) => plugin.runtime === 'active' && plugin.enabled).length,
+    restart: props.library.filter((plugin) => plugin.restartRequired).length,
+    off: props.library.filter((plugin) => !plugin.enabled).length,
+  }), [installedIds, props.library, props.plugins])
+
+  const filters = (
+    <>
+      <div className="plugin-center__filter-group">
+        <span className="plugin-center__filter-label">来源</span>
+        <div className="plugin-center__chips">
+          {([
+            ['all', '全部', counts.all],
+            ['builtin', '内置', counts.builtin],
+            ['external', '外部', counts.external],
+            ['market', '可安装', counts.market],
+          ] as const).map(([id, label, count]) => (
+            <button type="button" key={id} className="plugin-center__chip" data-active={category === id ? '' : undefined} onClick={() => setCategory(id)}>
+              {label}<span>{count}</span>
+            </button>
           ))}
-        </select>
-        <select className="plugin-market__input" value={props.channel} onChange={(event) => props.setChannel(event.target.value)} aria-label="发布通道">
-          <option value="stable">stable</option>
-          <option value="beta">beta</option>
-        </select>
+        </div>
       </div>
-      <input className="plugin-market__input" value={props.customSource} onChange={(event) => props.setCustomSource(event.target.value)} placeholder="可选：临时 catalog 地址或本地路径（优先于市场源）" />
-      <div className="plugin-market__row">
-        <input className="plugin-market__input" value={props.query} onChange={(event) => props.setQuery(event.target.value)} placeholder="搜索插件" />
-        <input className="plugin-market__input" value={props.rolloutKey} onChange={(event) => props.setRolloutKey(event.target.value)} placeholder="灰度标识（可选，默认当前 profile）" />
-        <button className="plugin-market__button" disabled={Boolean(props.busy)} onClick={() => void props.search()}>搜索</button>
-        <button className="plugin-market__button" disabled={Boolean(props.busy)} onClick={() => void props.checkUpdates()}>检查更新</button>
+      <div className="plugin-center__filter-group">
+        <span className="plugin-center__filter-label">状态</span>
+        <div className="plugin-center__chips">
+          {([
+            ['all', '全部', counts.all],
+            ['active', '已启用', counts.active],
+            ['restart', '需重启', counts.restart],
+            ['off', '已关闭', counts.off],
+          ] as const).map(([id, label, count]) => (
+            <button type="button" key={id} className="plugin-center__chip" data-active={stateFilter === id ? '' : undefined} onClick={() => setStateFilter(id)}>
+              {label}<span>{count}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </>
+  )
+
+  return (
+    <div className={`plugin-center plugin-center--${layout}`}>
+      <div className="plugin-center__toolbar">
+        <div className="plugin-center__search">
+          <input className="plugin-market__input" value={props.query} onChange={(event) => props.setQuery(event.target.value)} placeholder="搜索插件" />
+          <button className="plugin-center__secondary" disabled={Boolean(props.busy)} onClick={() => void props.search()}>{props.busy === 'search' ? '搜索中…' : '搜索市场'}</button>
+        </div>
+        <div className="plugin-center__layout" role="group" aria-label="插件库布局">
+          {([
+            ['cards', '卡片'],
+            ['rows', '列表'],
+            ['split', '分栏'],
+          ] as const).map(([id, label]) => (
+            <button type="button" key={id} data-active={layout === id ? '' : undefined} onClick={() => setLayout(id)}>{label}</button>
+          ))}
+        </div>
       </div>
 
+      <details className="plugin-center__market-tools">
+        <summary>市场筛选</summary>
+        <div className="plugin-market__row">
+          <select className="plugin-market__input" value={props.sourceId} onChange={(event) => props.setSourceId(event.target.value)} aria-label="市场源">
+            <option value="auto">自动选择主市场源</option>
+            {props.sources.map((source) => (
+              <option key={source.id} value={source.id} disabled={!source.enabled}>
+                {source.name}{source.enabled ? '' : '（已停用）'}
+              </option>
+            ))}
+          </select>
+          <select className="plugin-market__input" value={props.channel} onChange={(event) => props.setChannel(event.target.value)} aria-label="发布通道">
+            <option value="stable">stable</option>
+            <option value="beta">beta</option>
+          </select>
+          <button className="plugin-center__secondary" disabled={Boolean(props.busy)} onClick={() => void props.checkUpdates()}>{props.busy === 'updates' ? '检查中…' : '检查更新'}</button>
+        </div>
+        <input className="plugin-market__input" value={props.customSource} onChange={(event) => props.setCustomSource(event.target.value)} placeholder="临时 catalog 地址或本地路径" />
+        <input className="plugin-market__input" value={props.rolloutKey} onChange={(event) => props.setRolloutKey(event.target.value)} placeholder="灰度标识" />
+      </details>
+
       {props.updates.length > 0 ? (
-        <div className="plugin-market__list">
-          <h4>可用更新</h4>
+        <div className="plugin-center__updates">
+          <strong>可用更新</strong>
           {props.updates.map((item) => (
-            <div className="plugin-market__card plugin-market__card--inline" key={item.pluginId}>
-              <span className="plugin-market__title">{item.name}</span>
-              <span className="plugin-market__muted">{item.installed} → {item.available} · {item.channel}</span>
-              <button className="plugin-market__button" disabled={Boolean(props.busy)} onClick={() => void props.install(item.pluginId, item.available)}>更新</button>
+            <div className="plugin-center__update" key={item.pluginId}>
+              <span>{item.name}</span>
+              <span>{item.installed} → {item.available}</span>
+              <button className="plugin-center__primary" disabled={Boolean(props.busy)} onClick={() => void props.install(item.pluginId, item.available)}>更新</button>
             </div>
           ))}
         </div>
       ) : null}
 
-      <div className="plugin-market__list">
-        {props.plugins.map((plugin) => (
-          <article className="plugin-market__card" key={plugin.id}>
-            <span className="plugin-market__title">{plugin.name}</span>
-            <span className="plugin-market__muted">{plugin.id}{plugin.publisher ? ` · ${plugin.publisher.name}` : ''}</span>
-            {plugin.description ? <p>{plugin.description}</p> : null}
-            <div className="plugin-market__versions">
-              {versionsForChannel(plugin, props.channel).map((version) => (
-                <button
-                  className="plugin-market__button"
-                  key={version.version}
-                  disabled={Boolean(props.busy)}
-                  onClick={() => void props.install(plugin.id, version.version)}
-                  title={version.changelog ?? ''}
-                >
-                  {version.version} 安装{version.rollout !== undefined && version.rollout < 100 ? ` · 灰度 ${version.rollout}%` : ''}
-                </button>
-              ))}
-            </div>
-          </article>
-        ))}
-      </div>
+      {layout === 'split' ? <aside className="plugin-center__rail">{filters}</aside> : null}
 
-      <div className="plugin-market__list">
-        <h4>已安装</h4>
-        {props.installed.length === 0 ? <p className="plugin-market__muted">还没有安装插件。</p> : null}
-        {props.installed.map((item) => (
-          <div className="plugin-market__card plugin-market__card--inline" key={item.name}>
-            <span className="plugin-market__title">{item.pluginId}</span>
-            <span className="plugin-market__muted">{item.name} · {item.version}</span>
-            <button className="plugin-market__button plugin-market__button--danger" disabled={Boolean(props.busy)} onClick={() => void props.uninstall(item.name)}>卸载</button>
+      <div className="plugin-center__content">
+        {layout !== 'split' ? <div className="plugin-center__filters">{filters}</div> : null}
+
+        <div className="plugin-center__list">
+          {library.map((plugin) => (
+            <PluginCard
+              key={plugin.packageName}
+              plugin={plugin}
+              busy={props.busy}
+              large={layout === 'cards'}
+              toggle={(enabled) => void props.togglePlugin(plugin, enabled)}
+              uninstall={() => void props.uninstall(plugin.packageName)}
+            />
+          ))}
+          {marketOnly.map((plugin) => (
+            <MarketCard
+              key={plugin.id}
+              plugin={plugin}
+              channel={props.channel}
+              busy={props.busy}
+              install={(version) => void props.install(plugin.id, version)}
+            />
+          ))}
+        </div>
+
+        {library.length === 0 && marketOnly.length === 0 ? (
+          <div className="plugin-center__empty">
+            <strong>没有匹配的插件</strong>
+            <button type="button" onClick={() => { props.setQuery(''); setCategory('all'); setStateFilter('all') }}>清除筛选</button>
           </div>
-        ))}
+        ) : null}
       </div>
     </div>
   )
+}
+
+function PluginCard(props: {
+  plugin: LibraryPlugin
+  busy: string
+  large: boolean
+  toggle: (enabled: boolean) => void
+  uninstall: () => void
+}) {
+  const { plugin } = props
+  const status = pluginStatus(plugin)
+  return (
+    <article className="plugin-center__plugin" data-source={plugin.source} data-state={status.tone} data-large={props.large ? '' : undefined}>
+      <div className="plugin-center__plugin-main">
+        <div className="plugin-center__plugin-icon" aria-hidden="true">{plugin.source === 'builtin' ? '内' : '外'}</div>
+        <div className="plugin-center__plugin-copy">
+          <div className="plugin-center__plugin-title">
+            <strong>{plugin.id}</strong>
+            <span>{plugin.source === 'builtin' ? '系统内置' : '外部插件'}</span>
+          </div>
+          <span className="plugin-center__plugin-meta">{plugin.packageName}{plugin.version ? ` · ${plugin.version}` : ''}</span>
+        </div>
+        <PluginSwitch
+          checked={plugin.enabled}
+          disabled={!plugin.configurable || Boolean(props.busy)}
+          label={`${plugin.id} ${plugin.enabled ? '已启用' : '已关闭'}`}
+          title={plugin.configurable ? (plugin.enabled ? '关闭插件' : '启用插件') : '系统内置插件随应用启动'}
+          onChange={props.toggle}
+        />
+      </div>
+      <div className="plugin-center__plugin-foot">
+        <span className="plugin-center__status" data-tone={status.tone}><i />{status.label}</span>
+        {plugin.source === 'external' ? (
+          <button type="button" className="plugin-center__text-button" disabled={Boolean(props.busy)} onClick={props.uninstall}>卸载</button>
+        ) : <span className="plugin-center__locked">固定启用</span>}
+      </div>
+    </article>
+  )
+}
+
+function MarketCard(props: {
+  plugin: CatalogPlugin
+  channel: string
+  busy: string
+  install: (version?: string) => void
+}) {
+  const versions = versionsForChannel(props.plugin, props.channel)
+  return (
+    <article className="plugin-center__plugin" data-source="market" data-state="available" data-large="">
+      <div className="plugin-center__plugin-main">
+        <div className="plugin-center__plugin-icon" aria-hidden="true">＋</div>
+        <div className="plugin-center__plugin-copy">
+          <div className="plugin-center__plugin-title">
+            <strong>{props.plugin.name}</strong>
+            <span>市场插件</span>
+          </div>
+          <span className="plugin-center__plugin-meta">{props.plugin.id}{props.plugin.publisher ? ` · ${props.plugin.publisher.name}` : ''}</span>
+          {props.plugin.description ? <p>{props.plugin.description}</p> : null}
+        </div>
+      </div>
+      <div className="plugin-center__plugin-foot">
+        <span className="plugin-center__status" data-tone="available"><i />可安装</span>
+        <button className="plugin-center__primary" disabled={Boolean(props.busy)} onClick={() => props.install(versions[0]?.version)}>
+          {props.busy === `install:${props.plugin.id}` ? '安装中…' : `安装${versions[0] ? ` ${versions[0].version}` : ''}`}
+        </button>
+      </div>
+    </article>
+  )
+}
+
+function PluginSwitch(props: {
+  checked: boolean
+  disabled: boolean
+  label: string
+  title: string
+  onChange: (checked: boolean) => void
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={props.checked}
+      aria-label={props.label}
+      title={props.title}
+      className="plugin-center__switch"
+      disabled={props.disabled}
+      onClick={() => props.onChange(!props.checked)}
+    ><span /></button>
+  )
+}
+
+function pluginStatus(plugin: LibraryPlugin): { label: string; tone: 'active' | 'restart' | 'off' | 'failed' } {
+  if (plugin.runtime === 'failed') return { label: '启动失败', tone: 'failed' }
+  if (plugin.restartRequired) {
+    return { label: plugin.enabled ? '未激活（需重启）' : '已关闭（需重启）', tone: 'restart' }
+  }
+  if (plugin.enabled && plugin.runtime === 'active') return { label: '已启用', tone: 'active' }
+  return { label: plugin.enabled ? '等待启动' : '已关闭', tone: 'off' }
 }
 
 function PublishersPanel(props: {
