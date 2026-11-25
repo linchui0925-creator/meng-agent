@@ -35,6 +35,7 @@ notes/
 **/*.test.ts
 scripts/check-*.mjs
 apps/server/src/smoke.ts
+plugins/dsh-purge/
 apps/web/public/plugins/dsh-purge/
 apps/desktop/release/
 apps/desktop/dist/
