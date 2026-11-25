@@ -1,6 +1,6 @@
 {
   "name": "@meng/app-desktop",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "type": "module",
   "description": "桌面端外壳 (Electron)。主进程就是 Node —— 插件宿主本体直接跑在里面, 零桥接。",
@@ -69,7 +69,9 @@
     "files": [
       "dist/**/*",
       "preload.cjs",
-      "package.json"
+      "package.json",
+      "startup.html",
+      "startup-preload.cjs"
     ],
     "extraResources": [
       {
@@ -90,7 +92,8 @@
     "linux": {
       "target": "AppImage"
     },
-    "asar": false
+    "asar": false,
+    "afterPack": "scripts/after-pack.cjs"
   },
   "author": "梦"
 }

@@ -14,12 +14,16 @@ import { desktopFaces } from '@meng/platform/desktop'
 import { bootKernel, mockPatch, providersPatch, type Kernel } from '@meng/server'
 import type { WebEvent, WebService } from '@meng/web'
 
-import { IPC_EVENT, IPC_INVOKE, IPC_MANIFEST, IPC_STATE } from './channels.ts'
+import { IPC_EVENT, IPC_INVOKE, IPC_MANIFEST, IPC_STATE, IPC_STARTUP_QUIT, IPC_STARTUP_RETRY } from './channels.ts'
+import { minimumSplashWait, openStartupScreen, revealMainWindow, type StartupScreen } from './startup.ts'
 import { checkForDesktopUpdate, installStagedUpdate } from './updater.ts'
 
 let kernel: Kernel | undefined
 let web: WebService | undefined
 let offEvents: (() => void) | undefined
+let startupScreen: StartupScreen | undefined
+let mainWindow: BrowserWindow | undefined
+let booting = false
 let quitting = false
 
 function preloadPath(): string {
@@ -74,14 +78,16 @@ async function invoke(op: string, payload: unknown): Promise<unknown> {
   return body
 }
 
-function createWindow(): BrowserWindow {
+function createMainWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280,
     height: 860,
     minWidth: 920,
     minHeight: 640,
+    show: false,
+    opacity: 0,
     title: '梦',
-    backgroundColor: '#f5f4f0',
+    backgroundColor: '#eceef3',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -96,8 +102,9 @@ function createWindow(): BrowserWindow {
   return win
 }
 
-async function startKernel(): Promise<void> {
+async function startKernel(onStage?: (stage: string) => void): Promise<void> {
   const configuredWebUrl = process.env.MENG_WEB_URL
+  onStage?.('准备内核')
   process.env.MENG_PORT = '0'
   process.env.MENG_HOST = '127.0.0.1'
   const root = webRoot()
@@ -108,6 +115,7 @@ async function startKernel(): Promise<void> {
   // tsx 的 ESM loader 允许包内插件继续以 TypeScript 源码运行；
   // 打包后插件在 node_modules 里，Node 自带的 strip-types 会拒绝该路径。
   await import('tsx/esm')
+  onStage?.('装载插件')
   kernel = await bootKernel({
     web: true,
     dataDir: join(app.getPath('userData'), 'data'),
@@ -118,21 +126,93 @@ async function startKernel(): Promise<void> {
   })
   web = kernel.ctx.get<WebService>('web')
   if (!web) throw new Error('本地内核没有 web 能力面')
+  onStage?.('恢复会话')
   process.env.MENG_WEB_URL = configuredWebUrl ?? withIpcTransport(`${web.url}/`)
   offEvents = web.subscribe((event: WebEvent) => {
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) win.webContents.send(IPC_EVENT, event)
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC_EVENT, event)
     }
   })
 }
 
-async function dispose(): Promise<void> {
+async function disposeKernel(): Promise<void> {
   offEvents?.()
   offEvents = undefined
-  for (const win of BrowserWindow.getAllWindows()) win.destroy()
   await kernel?.dispose()
   kernel = undefined
   web = undefined
+}
+
+async function dispose(): Promise<void> {
+  startupScreen?.close()
+  startupScreen = undefined
+  mainWindow?.destroy()
+  mainWindow = undefined
+  await disposeKernel()
+}
+
+function waitForWindowReady(win: BrowserWindow): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const done = (): void => {
+      if (settled) return
+      settled = true
+      resolve()
+    }
+    win.once('ready-to-show', done)
+    win.webContents.once('did-fail-load', (_event, code, description) => {
+      if (settled) return
+      settled = true
+      reject(new Error(`主界面加载失败 (${code}): ${description}`))
+    })
+  })
+}
+
+async function bootAndOpen(): Promise<void> {
+  if (!startupScreen || booting) return
+  booting = true
+  const startedAt = Date.now()
+  try {
+    await startupScreen.reset('准备内核')
+    await startKernel((stage) => {
+      void startupScreen?.setStage(stage)
+    })
+    await minimumSplashWait(startedAt)
+    await startupScreen.setStage('打开工作区')
+
+    const win = createMainWindow()
+    mainWindow = win
+    await waitForWindowReady(win)
+
+    const splash = startupScreen
+    await revealMainWindow(splash, win)
+    startupScreen = undefined
+  } catch (error) {
+    mainWindow?.destroy()
+    mainWindow = undefined
+    await disposeKernel()
+    const message = error instanceof Error ? error.message : String(error)
+    console.error('[desktop] 启动失败:', error)
+    await startupScreen?.showError(message)
+  } finally {
+    booting = false
+  }
+}
+
+async function retryStartup(): Promise<void> {
+  if (booting || !startupScreen) return
+  mainWindow?.destroy()
+  mainWindow = undefined
+  await disposeKernel()
+  await startupScreen.reset('重新准备内核')
+  await bootAndOpen()
+}
+
+async function quitFromStartup(): Promise<void> {
+  if (quitting) return
+  await dispose()
+  quitting = true
+  app.quit()
 }
 
 async function main(): Promise<void> {
@@ -154,9 +234,12 @@ async function main(): Promise<void> {
     event.returnValue = web?.manifest()
   })
 
+  ipcMain.on(IPC_STARTUP_RETRY, () => { void retryStartup() })
+  ipcMain.on(IPC_STARTUP_QUIT, () => { void quitFromStartup() })
+
   await app.whenReady()
-  await startKernel()
-  createWindow()
+  startupScreen = await openStartupScreen()
+  void bootAndOpen()
 
   // 打包版启动后后台检查更新；下载完成不会打断当前任务，退出梦时替换。
   void checkForDesktopUpdate()
@@ -164,11 +247,14 @@ async function main(): Promise<void> {
   updateTimer.unref()
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    const win = startupScreen?.window ?? mainWindow
+    if (!win || win.isDestroyed()) return
+    if (win.isMinimized()) win.restore()
+    win.focus()
   })
   app.on('second-instance', () => {
-    const [win] = BrowserWindow.getAllWindows()
-    if (!win) return
+    const win = startupScreen?.window ?? mainWindow
+    if (!win || win.isDestroyed()) return
     if (win.isMinimized()) win.restore()
     win.focus()
   })
@@ -191,6 +277,10 @@ app.on('before-quit', (event) => {
 
 void main().catch(async (error) => {
   console.error('[desktop] 启动失败:', error)
+  if (startupScreen) {
+    await startupScreen.showError(error instanceof Error ? error.message : String(error))
+    return
+  }
   await dispose().catch(() => {})
   app.quit()
 })

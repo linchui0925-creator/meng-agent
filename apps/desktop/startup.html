@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'" />
+<style>
+  :root {
+    --border: rgba(17, 18, 20, 0.09);
+    --fg: #17181a;
+    --muted: #656970;
+    --faint: #9da1a8;
+    --blue: rgba(112, 146, 255, 0.20);
+    --violet: rgba(168, 132, 232, 0.17);
+    --peach: rgba(255, 206, 160, 0.18);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; margin: 0; background: transparent; }
+  body {
+    overflow: hidden;
+    font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  [hidden] { display: none !important; }
+
+  .desktop {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    isolation: isolate;
+  }
+
+  .splash {
+    width: 100%;
+    height: 100%;
+    border-radius: 30px;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(160deg, rgba(255,255,255,0.96), rgba(250,250,248,0.86));
+    border: 1px solid var(--border);
+    box-shadow:
+      0 32px 90px rgba(34, 43, 63, 0.17),
+      0 10px 28px rgba(34, 43, 63, 0.08),
+      inset 0 1px 0 rgba(255,255,255,0.95);
+    backdrop-filter: blur(30px) saturate(1.15);
+    -webkit-app-region: drag;
+    user-select: none;
+    animation: enter 420ms cubic-bezier(.2,0,.2,1) both;
+  }
+
+  .splash::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(circle at 18% 8%, rgba(112,146,255,0.22), transparent 32%),
+      radial-gradient(circle at 82% 18%, rgba(168,132,232,0.17), transparent 33%),
+      radial-gradient(circle at 63% 100%, rgba(255,206,160,0.19), transparent 35%);
+    pointer-events: none;
+  }
+
+  .splash::after {
+    content: "";
+    position: absolute;
+    inset: 1px;
+    border-radius: 29px;
+    border: 1px solid rgba(255,255,255,0.66);
+    pointer-events: none;
+  }
+
+  .mark-wrap {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 92px;
+    height: 92px;
+    margin-bottom: 20px;
+  }
+
+  .aura {
+    position: absolute;
+    width: 118px;
+    height: 118px;
+    border-radius: 50%;
+    background: rgba(42, 99, 224, 0.20);
+    filter: blur(25px);
+    animation: breathe 2.8s ease-in-out infinite;
+  }
+
+  .mark {
+    position: relative;
+    width: 68px;
+    height: 68px;
+    border-radius: 21px;
+    display: grid;
+    place-items: center;
+    color: #fff;
+    font-family: "Songti SC", "STSong", "Kaiti SC", serif;
+    font-size: 34px;
+    font-weight: 600;
+    letter-spacing: -0.06em;
+    background: linear-gradient(145deg, #7fa3ff 0%, #2a63e0 58%, #214cb2 100%);
+    box-shadow:
+      0 15px 30px rgba(42, 99, 224, 0.28),
+      0 3px 8px rgba(42, 99, 224, 0.18),
+      inset 0 1px 0 rgba(255,255,255,0.58);
+  }
+
+  .mark::after {
+    content: "";
+    position: absolute;
+    inset: 1px;
+    border-radius: 20px;
+    border: 1px solid rgba(255,255,255,0.22);
+  }
+
+  .loading-copy,
+  .error-copy {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+  }
+
+  .tagline {
+    color: var(--fg);
+    font-family: "Avenir Next", "Helvetica Neue", sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.24em;
+    text-indent: 0.24em;
+    line-height: 1;
+    margin-bottom: 11px;
+    text-transform: uppercase;
+  }
+
+  .intro {
+    width: 360px;
+    margin: 0 0 23px;
+    color: var(--muted);
+    font-family: "Avenir Next", "Helvetica Neue", sans-serif;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.7;
+    letter-spacing: 0.015em;
+    text-align: center;
+  }
+
+  .progress {
+    width: 176px;
+    height: 1px;
+    position: relative;
+    overflow: visible;
+    border-radius: 999px;
+    background: rgba(23, 24, 26, 0.10);
+  }
+
+  .progress::before {
+    content: "";
+    position: absolute;
+    top: -1px;
+    left: -22%;
+    width: 30%;
+    height: 3px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, transparent, rgba(64, 112, 232, 0.18), #4c7cf0, rgba(64, 112, 232, 0.18), transparent);
+    box-shadow: 0 0 13px rgba(42, 99, 224, 0.34);
+    animation: slide 2.25s cubic-bezier(.45,0,.2,1) infinite;
+  }
+
+  .stage {
+    margin-top: 17px;
+    color: var(--muted);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-indent: 0.16em;
+    line-height: 1;
+  }
+
+  .error-title {
+    color: var(--fg);
+    font-family: "Songti SC", "STSong", "Kaiti SC", serif;
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    margin-bottom: 9px;
+  }
+
+  .error-detail {
+    width: 350px;
+    min-height: 34px;
+    margin: 0 0 18px;
+    overflow: hidden;
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.55;
+    text-align: center;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .actions {
+    display: flex;
+    gap: 8px;
+    -webkit-app-region: no-drag;
+  }
+
+  button {
+    min-width: 76px;
+    height: 34px;
+    padding: 0 16px;
+    border-radius: 11px;
+    border: 1px solid transparent;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+  }
+
+  button:active { transform: translateY(1px); }
+  button:focus-visible { outline: 2px solid #4c7cf0; outline-offset: 2px; }
+  button:disabled { cursor: default; opacity: 0.6; }
+
+  .primary {
+    color: #fff;
+    background: #2a63e0;
+    box-shadow: 0 8px 18px rgba(42, 99, 224, 0.22);
+  }
+
+  .primary:hover:not(:disabled) { background: #2354c6; }
+
+  .secondary {
+    color: var(--muted);
+    border-color: rgba(17, 18, 20, 0.10);
+    background: rgba(255, 255, 255, 0.62);
+  }
+
+  .secondary:hover:not(:disabled) { background: rgba(255, 255, 255, 0.92); }
+
+  .version {
+    position: absolute;
+    right: 20px;
+    bottom: 16px;
+    color: var(--faint);
+    font-family: "SF Mono", ui-monospace, Menlo, monospace;
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    line-height: 1;
+  }
+
+  @keyframes enter {
+    from { opacity: 0; transform: translateY(7px) scale(.986); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  @keyframes breathe {
+    0%, 100% { opacity: .48; transform: scale(.92); }
+    50% { opacity: .82; transform: scale(1.08); }
+  }
+
+  @keyframes slide {
+    0% { left: -30%; opacity: 0; }
+    16% { opacity: 1; }
+    76% { opacity: 1; }
+    100% { left: 100%; opacity: 0; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .splash, .aura, .progress::before { animation: none; }
+    button { transition: none; }
+  }
+</style>
+</head>
+<body>
+  <main class="desktop">
+    <section class="splash" aria-label="梦正在启动">
+      <div class="mark-wrap">
+        <div class="aura"></div>
+        <div class="mark" aria-hidden="true">梦</div>
+      </div>
+
+      <div id="loadingCopy" class="loading-copy">
+        <div class="tagline">Born for Dreams</div>
+        <p class="intro">A quiet space where ideas take shape, work keeps moving,<br>and every dream finds its way into the world.</p>
+        <div class="progress" aria-hidden="true"></div>
+        <div id="stage" class="stage" role="status" aria-live="polite">准备内核</div>
+      </div>
+
+      <div id="errorCopy" class="error-copy" hidden>
+        <div class="error-title">启动没有完成</div>
+        <p id="errorDetail" class="error-detail"></p>
+        <div class="actions">
+          <button id="quitButton" class="secondary" type="button">退出</button>
+          <button id="retryButton" class="primary" type="button">重试</button>
+        </div>
+      </div>
+
+      <div id="version" class="version"></div>
+    </section>
+  </main>
+
+  <script>
+    const loadingCopy = document.getElementById('loadingCopy')
+    const errorCopy = document.getElementById('errorCopy')
+    const stage = document.getElementById('stage')
+    const errorDetail = document.getElementById('errorDetail')
+    const retryButton = document.getElementById('retryButton')
+    const quitButton = document.getElementById('quitButton')
+    const version = document.getElementById('version')
+
+    window.setStartupStage = (text) => {
+      loadingCopy.hidden = false
+      errorCopy.hidden = true
+      stage.textContent = text || '准备内核'
+    }
+
+    window.setStartupVersion = (text) => {
+      version.textContent = text || ''
+    }
+
+    window.setStartupError = (message) => {
+      loadingCopy.hidden = true
+      errorCopy.hidden = false
+      errorDetail.textContent = message || '启动过程中发生错误，请重试。'
+      retryButton.disabled = false
+      quitButton.disabled = false
+      retryButton.focus()
+    }
+
+    window.setStartupLoading = (text) => {
+      window.setStartupStage(text || '准备内核')
+      retryButton.disabled = false
+      quitButton.disabled = false
+    }
+
+    retryButton.addEventListener('click', () => {
+      retryButton.disabled = true
+      quitButton.disabled = true
+      window.setStartupLoading('重新准备内核')
+      window.mengStartup?.retry()
+    })
+
+    quitButton.addEventListener('click', () => {
+      retryButton.disabled = true
+      quitButton.disabled = true
+      window.mengStartup?.quit()
+    })
+  </script>
+</body>
+</html>
