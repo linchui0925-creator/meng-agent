@@ -1,17 +1,17 @@
 {
-  "version": "0.2.1",
-  "download": "https://ghfast.top/https://github.com/linchui0925-creator/meng-agent/releases/download/desktop-v0.2.1/meng-desktop-0.2.1-arm64-mac.zip",
+  "version": "0.2.2",
+  "download": "https://ghfast.top/https://github.com/linchui0925-creator/meng-agent/releases/download/desktop-v0.2.2/meng-desktop-0.2.2-arm64-mac.zip",
   "mirrors": [
-    "https://gh-proxy.com/https://github.com/linchui0925-creator/meng-agent/releases/download/desktop-v0.2.1/meng-desktop-0.2.1-arm64-mac.zip",
-    "https://api.github.com/repos/linchui0925-creator/meng-agent/releases/assets/790090499",
-    "https://github.com/linchui0925-creator/meng-agent/releases/download/desktop-v0.2.1/meng-desktop-0.2.1-arm64-mac.zip"
+    "https://gh-proxy.com/https://github.com/linchui0925-creator/meng-agent/releases/download/desktop-v0.2.2/meng-desktop-0.2.2-arm64-mac.zip",
+    "https://api.github.com/repos/linchui0925-creator/meng-agent/releases/assets/790136692",
+    "https://github.com/linchui0925-creator/meng-agent/releases/download/desktop-v0.2.2/meng-desktop-0.2.2-arm64-mac.zip"
   ],
-  "sha256": "440a96ec4a4d26cee8c247dfdeb4692c06e04f89c31812b97b3aa6191ea7813a",
-  "size": 143663458,
-  "publishedAt": 1795582088277,
-  "notes": "修复长任务在第 24 步被硬截断的问题；改为每 20 步运行自检，并保留 500 步灾难熔断。",
+  "sha256": "5555a03899d082e2ea57b0e461a0a3b4ed04a8d56ac00609acd540f350da6389",
+  "size": 148021164,
+  "publishedAt": 1795583212021,
+  "notes": "新增品牌启动界面和真实启动阶段；启动完成后平滑进入主界面，失败时可重试或退出。同步修复桌面包遗漏 esbuild 运行文件的问题。",
   "arch": [
     "arm64"
   ],
-  "signature": "m8QVgeclklko8nBbdF/PJ7W+tZc4KLx4DmlnI0WTR2cugiHGG732O5d1fZF/B8UpQEZP+dVtMg0+N1LJt3C9Dw=="
+  "signature": "Dw4QacqofbK7zu9r5iKE4NogfecVkbvFU5ZwV6Sb7f9ptJM0BEclWfR4Q5FYKPYcg2scaTT0vIps2adRR+q2AQ=="
 }
