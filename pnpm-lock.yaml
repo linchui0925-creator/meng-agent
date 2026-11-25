@@ -335,6 +335,9 @@ importers:
       '@meng/exec':
         specifier: workspace:*
         version: link:../../packages/exec
+      '@meng/fs':
+        specifier: workspace:*
+        version: link:../../packages/fs
       '@meng/jobs':
         specifier: workspace:*
         version: link:../../packages/jobs

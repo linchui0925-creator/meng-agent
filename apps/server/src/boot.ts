@@ -6,6 +6,7 @@
  * 关闭由 disposer 栈逆序展开, 代码里没有一处需要知道"谁先谁后"。
  */
 
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createContext, StatusGraph, type Ctx, type MountedRow } from '@meng/core'
 import { loadPatch } from '@meng/core/loader'
@@ -13,6 +14,8 @@ import { patch as kernelPatch, type KernelService } from '@meng/kernel'
 import { patch as basePatch } from '@meng/bundle-base'
 import { patch as kitPatch } from '@meng/bundle-kit'
 import { patch as serverPatch } from '@meng/bundle-server'
+import type { WebService } from '@meng/web'
+import { discoverProfilePlugins } from './profile.ts'
 
 export interface Kernel {
   ctx: Ctx
@@ -33,6 +36,10 @@ export interface BootOptions {
   quiet?: boolean
   /** 桌面/移动壳在装载插件前注入平台能力面。 */
   setup?: (ctx: Ctx) => void | Promise<void>
+  /** profile 插件目录。缺省为 <MENG_DATA_DIR>/profile。 */
+  profileDir?: string
+  /** 测试或特殊部署可关闭 profile 插件自动装载。 */
+  loadProfilePlugins?: boolean
 }
 
 export async function bootKernel(options: BootOptions = {}): Promise<Kernel> {
@@ -56,11 +63,37 @@ export async function bootKernel(options: BootOptions = {}): Promise<Kernel> {
 ${graph.table()}`)
   }
 
-  // base(基础能力) → kit(能干什么活) → server(怎么接世界) → 额外插件。
+  // base(基础能力) → kit(能干什么活) → server(怎么接世界) → 额外插件 → profile 插件。
   const files = [basePatch, kitPatch]
   if (options.web) files.push(serverPatch)
   files.push(...(options.patches ?? []))
+
+  const profileDir = options.profileDir
+    ?? process.env['MENG_PROFILE_DIR']
+    ?? join(options.dataDir ?? process.env['MENG_DATA_DIR'] ?? '.meng', 'profile')
+  const profile = options.loadProfilePlugins === false
+    ? { dir: profileDir, plugins: [], warnings: [] }
+    : discoverProfilePlugins(profileDir, options.quiet ? () => {} : (message) => console.warn(`[meng/profile] ${message}`))
+  files.push(...profile.plugins.map((plugin) => plugin.patchFile))
+
   mounted.push(...await kernel.mount(files))
+
+  // 后端装载成功后再映射 profile 插件的前端产物。
+  // 静态路由按“最长前缀优先”匹配，因此会覆盖应用内置 /plugins 根目录中的同名 miss。
+  const web = ctx.get<WebService>('web')
+  if (web) {
+    const active = new Set(graph.snapshot().filter((node) => node.status === 'active').map((node) => node.id))
+    for (const plugin of profile.plugins) {
+      const clientDir = plugin.clientDir
+      if (!clientDir || !active.has(plugin.pluginId)) continue
+      try {
+        ctx.effect(() => web.pluginRoot(plugin.pluginId, clientDir))
+      } catch (error) {
+        if (!options.quiet) console.warn(`[meng/profile] ${plugin.packageName} 前端路由注册失败: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+  }
+
   const health = await kernel.check(mounted)
 
   if (!options.quiet) {

@@ -43,6 +43,8 @@ export interface WebService {
   route(method: string, path: string, handler: RouteHandler): Disposer
   /** 项目适配器专用：注册 HTTP 前缀路由；method 可为 '*'。 */
   prefix(method: string, prefix: string, handler: RouteHandler): Disposer
+  /** 运行时插件前端目录，固定映射到 /plugins/<id>/。 */
+  pluginRoot(id: string, dir: string): Disposer
   /** 下行广播。seq 由内核统一分配, 前端靠它排序和断线重放 */
   broadcast(type: string, payload?: unknown, meta?: { sessionId?: string; runId?: string }): void
   /** 进程内订阅同一条下行流；IPC / 桌面壳不需要再自建 WebSocket 客户端。 */
@@ -151,6 +153,11 @@ export async function apply(ctx: Ctx, config: WebConfig = {}): Promise<Disposer>
 
     prefix(method, path, handler) {
       return app.prefix(method, path, handler)
+    },
+
+    pluginRoot(id, dir) {
+      if (!/^[a-z0-9][a-z0-9._-]*$/i.test(id)) throw new Error(`插件前端 id 不合法: ${id}`)
+      return app.static(`/plugins/${id}`, dir)
     },
 
     broadcast(type, payload, meta) {

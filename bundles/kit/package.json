@@ -7,6 +7,7 @@
   "dependencies": {
     "@meng/core": "workspace:*",
     "@meng/exec": "workspace:*",
+    "@meng/fs": "workspace:*",
     "@meng/jobs": "workspace:*",
     "@meng/net": "workspace:*",
     "@meng/plugin-bash-local": "workspace:*",

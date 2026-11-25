@@ -40,8 +40,8 @@ export interface HttpApp {
   route(method: string, path: string, fn: RouteHandler): () => void
   /** 前缀路由。method 可为 '*'；最长前缀优先。 */
   prefix(method: string, prefix: string, fn: RouteHandler): () => void
-  /** 静态目录。命中返回 true */
-  static(prefix: string, dir: string): void
+  /** 静态目录。返回 disposer；最长前缀优先。 */
+  static(prefix: string, dir: string): () => void
   listen(port: number, host: string): Promise<{ port: number }>
   dispose(): Promise<void>
 }
@@ -97,11 +97,12 @@ export function createHttpApp(): HttpApp {
       return
     }
 
-    for (const s of statics) {
-      if (s.prefix === '/' || path === s.prefix || path.startsWith(s.prefix + '/')) {
-        await serveStatic(res, s.dir, s.prefix, path)
-        return
-      }
+    const matchedStatic = statics
+      .filter((item) => item.prefix === '/' || path === item.prefix || path.startsWith(item.prefix + '/'))
+      .sort((a, b) => b.prefix.length - a.prefix.length)[0]
+    if (matchedStatic) {
+      await serveStatic(res, matchedStatic.dir, matchedStatic.prefix, path)
+      return
     }
 
     throw new HttpError('not-found', `${method} ${path}`, 404)
@@ -149,7 +150,12 @@ export function createHttpApp(): HttpApp {
       }
     },
     static(prefix, dir) {
-      statics.push({ prefix: prefix === '/' ? '/' : prefix.replace(/\/$/, ''), dir })
+      const item = { prefix: prefix === '/' ? '/' : prefix.replace(/\/$/, ''), dir }
+      statics.push(item)
+      return () => {
+        const index = statics.indexOf(item)
+        if (index >= 0) statics.splice(index, 1)
+      }
     },
     listen(port, host) {
       return new Promise((ok, fail) => {
