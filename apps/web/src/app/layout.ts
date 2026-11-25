@@ -17,7 +17,7 @@ import type { ConnectionState } from '@meng/transport'
 import type { createSlotRenderer } from '@meng/web-react'
 
 import type { ComposerAttachment, FileListing } from './attachments.ts'
-import type { JobRow, Message, PendingQuestion, ToolCall, WaitState } from './conversation.ts'
+import type { JobRow, Message, ModifiedFile, PendingQuestion, ToolCall, WaitState } from './conversation.ts'
 import type { QueuedMessage } from './queue.ts'
 import type { SessionSummary } from './sessions.ts'
 import type { Workspace } from './workspaces.ts'
@@ -409,6 +409,8 @@ export type MessageRowApi = {
   autoFold: boolean
   readRecord?: (recordId: string) => Promise<ToolRecord>
   readAttachment?: (attachmentId: string) => Promise<{ id: string; mime: string; dataBase64: string }>
+  /** 打开右侧文件详情；缺省表示当前布局不支持文件检查器。 */
+  onOpenFile?: (file: ModifiedFile) => void
   /** 替换者必须能继续画 `conversation.tool` / `conversation.actions` 等内部的洞 */
   Slot: SlotComponent
 }

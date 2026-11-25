@@ -73,6 +73,40 @@ export interface ModelSwitchInfo {
   at: number
 }
 
+export type RunStepStatus = 'streaming' | 'waiting' | 'done' | 'blocked' | 'error'
+
+export interface RunStep {
+  kind: 'step'
+  id: string
+  index: number
+  text: string
+  status: RunStepStatus
+  tools: ToolCall[]
+  startedAt: number
+  endedAt?: number
+}
+
+export interface RunMarker {
+  kind: 'marker'
+  id: string
+  at: number
+  label: string
+  detail?: string
+  tone: 'compact' | 'check' | 'error'
+}
+
+export type RunPart = RunStep | RunMarker
+
+export interface ModifiedFile {
+  path: string
+  tool: 'write' | 'edit'
+  callId: string
+  at?: number
+  content?: string
+  oldText?: string
+  newText?: string
+}
+
 export interface Message {
   id: string
   role: MessageRole
@@ -83,6 +117,10 @@ export interface Message {
   at: number
   status: 'streaming' | 'done' | 'error'
   tools: ToolCall[]
+  /** 运行时按“模型想法 + 本轮工具”交错展示；旧消息可以没有。 */
+  steps?: RunPart[]
+  /** turn/ended 的时刻；没有表示仍在运行或旧数据没记。 */
+  finishedAt?: number
   /**
    * 这一轮的 token 用量（`llm/completed` 的 `usage`）。
    * 缺 = 内核没报（不是 0）。输入框那格上下文用量用它, 缺就不画那一格。
@@ -160,6 +198,70 @@ function attachmentsOf(payload: unknown): MessageAttachment[] {
  * 分组键是 `runId`: 一个 turn 里的用户消息、助手回复、工具调用共享一个 runId。
  * 没有 runId 的事件 (session/created 之类) 直接跳过 —— 它们不是对话内容。
  */
+function assistantStep(target: Message, at: number): RunStep {
+  const steps = target.steps ??= []
+  let last = [...steps].reverse().find((part): part is RunStep => part.kind === 'step')
+  if (!last || last.status !== 'streaming') {
+    const index = steps.filter((part) => part.kind === 'step').length + 1
+    last = {
+      kind: 'step',
+      id: `${target.id}:step:${index}`,
+      index,
+      text: '',
+      status: 'streaming',
+      tools: [],
+      startedAt: at,
+    }
+    steps.push(last)
+  }
+  return last
+}
+
+function lastStep(target: Message): RunStep | undefined {
+  return [...(target.steps ?? [])].reverse().find((part): part is RunStep => part.kind === 'step')
+}
+
+function settleStep(step: RunStep | undefined, at: number): void {
+  if (!step) return
+  const running = step.tools.some((tool) => tool.status === 'running')
+  if (!running) {
+    step.status = step.tools.some((tool) => tool.status === 'blocked') ? 'blocked' : 'done'
+    step.endedAt = at
+  }
+}
+
+function toolOfStep(target: Message, callId: string): { tool: ToolCall; step: RunStep } | undefined {
+  for (const part of [...(target.steps ?? [])].reverse()) {
+    if (part.kind !== 'step') continue
+    const tool = part.tools.find((item) => item.callId === callId) ?? part.tools[part.tools.length - 1]
+    if (tool) return { tool, step: part }
+  }
+  return undefined
+}
+
+export function modifiedFilesOf(message: Message): ModifiedFile[] {
+  const out: ModifiedFile[] = []
+  for (const part of message.steps ?? []) {
+    if (part.kind !== 'step') continue
+    for (const tool of part.tools) {
+      if (tool.tool !== 'write' && tool.tool !== 'edit') continue
+      const args = tool.args && typeof tool.args === 'object' ? tool.args as Record<string, unknown> : {}
+      const path = typeof args.file_path === 'string' ? args.file_path : ''
+      if (!path) continue
+      out.push({
+        path,
+        tool: tool.tool,
+        callId: tool.callId,
+        ...(tool.startedAt === undefined ? {} : { at: tool.startedAt }),
+        ...(typeof args.content === 'string' ? { content: args.content } : {}),
+        ...(typeof args.old_string === 'string' ? { oldText: args.old_string } : {}),
+        ...(typeof args.new_string === 'string' ? { newText: args.new_string } : {}),
+      })
+    }
+  }
+  return out
+}
+
 export function project(events: readonly StreamEvent[]): Message[] {
   const messages: Message[] = []
   /** runId → 助手消息在 messages 里的下标 */
@@ -195,6 +297,7 @@ export function project(events: readonly StreamEvent[]): Message[] {
           at: event.at,
           status: 'streaming',
           tools: [],
+          steps: [],
         })
         byRun.set(runId, first + 1)
         break
@@ -228,7 +331,10 @@ export function project(events: readonly StreamEvent[]): Message[] {
         if (at === undefined) break
         const target = messages[at]
         if (!target) break
-        target.text += textOf(payload, 'delta')
+        const delta = textOf(payload, 'delta')
+        const step = assistantStep(target, event.at)
+        step.text += delta
+        target.text += delta
         break
       }
 
@@ -240,6 +346,11 @@ export function project(events: readonly StreamEvent[]): Message[] {
         // 收尾文本以 completed 为准: 分片可能因为网络丢了几片, completed 是完整版
         const full = textOf(payload, 'text')
         if (full) target.text = full
+        const step = assistantStep(target, event.at)
+        step.text = full
+        const calls = field<unknown>(payload, 'toolCalls')
+        step.status = Array.isArray(calls) && calls.length > 0 ? 'waiting' : 'done'
+        if (step.status === 'done') step.endedAt = event.at
         /*
          * 用量。**只有内核真的报了才记** —— 输入框那格"用了多少 token"就靠它,
          * 编一个默认值会让用户拿它判断"还能不能再塞一段长代码"。
@@ -257,7 +368,7 @@ export function project(events: readonly StreamEvent[]): Message[] {
         const target = at === undefined ? undefined : messages[at]
         if (!target) break
         const callId = textOf(payload, 'callId') || `${runId}:tool:${target.tools.length}`
-        target.tools.push({
+        const tool: ToolCall = {
           callId,
           tool: textOf(payload, 'tool'),
           args: field(payload, 'args'),
@@ -265,7 +376,13 @@ export function project(events: readonly StreamEvent[]): Message[] {
           // 开跑时刻取**事件自带的 at**, 不是"投影跑到的那一刻":
           // 断线重放 / 切会话读历史时, 后者会把一个跑了 40 秒的命令显示成 1 秒
           startedAt: event.at,
-        })
+        }
+        target.tools.push(tool)
+        const step = lastStep(target)
+        if (step) {
+          step.tools.push(tool)
+          step.status = 'waiting'
+        }
         break
       }
 
@@ -275,7 +392,8 @@ export function project(events: readonly StreamEvent[]): Message[] {
         const target = at === undefined ? undefined : messages[at]
         if (!target) break
         const callId = textOf(payload, 'callId')
-        const call = target.tools.find((t) => t.callId === callId) ?? target.tools[target.tools.length - 1]
+        const found = toolOfStep(target, callId)
+        const call = found?.tool ?? target.tools.find((t) => t.callId === callId) ?? target.tools[target.tools.length - 1]
         if (call) {
           call.status = 'done'
           // 真后端契约使用 result；output 只作为旧事件和早期 fixture 的兼容回退。
@@ -287,9 +405,10 @@ export function project(events: readonly StreamEvent[]): Message[] {
            */
           const recordId = textOf(payload, 'recordId')
           if (recordId !== '') call.recordId = recordId
-          const bytes = field<unknown>(payload, 'bytes')
+          const bytes = field(payload, 'bytes')
           if (typeof bytes === 'number' && Number.isFinite(bytes)) call.bytes = bytes
           if (field<unknown>(payload, 'truncated') === true) call.truncated = true
+          settleStep(found?.step, event.at)
         }
         break
       }
@@ -300,11 +419,35 @@ export function project(events: readonly StreamEvent[]): Message[] {
         const target = at === undefined ? undefined : messages[at]
         if (!target) break
         const callId = textOf(payload, 'callId')
-        const call = target.tools.find((t) => t.callId === callId) ?? target.tools[target.tools.length - 1]
+        const found = toolOfStep(target, callId)
+        const call = found?.tool ?? target.tools.find((t) => t.callId === callId) ?? target.tools[target.tools.length - 1]
         if (call) {
           call.status = 'blocked'
           call.reason = textOf(payload, 'reason')
+          settleStep(found?.step, event.at)
         }
+        break
+      }
+
+      case 'context/compacted': {
+        if (!runId) break
+        const at = byRun.get(runId)
+        const target = at === undefined ? undefined : messages[at]
+        if (!target) break
+        const before = field<unknown>(payload, 'beforeTokens')
+        const after = field<unknown>(payload, 'afterTokens')
+        const detail = typeof before === 'number' && typeof after === 'number'
+          ? `${Math.round(before / 100) / 10}k → ${Math.round(after / 100) / 10}k`
+          : undefined
+        target.steps ??= []
+        target.steps.push({
+          kind: 'marker',
+          id: `compact:${event.seq}`,
+          at: event.at,
+          label: '上下文已压缩',
+          ...(detail ? { detail } : {}),
+          tone: 'compact',
+        })
         break
       }
 
@@ -314,6 +457,8 @@ export function project(events: readonly StreamEvent[]): Message[] {
         const target = at === undefined ? undefined : messages[at]
         if (!target) break
         target.status = 'error'
+        const step = lastStep(target)
+        if (step) step.status = 'error'
         target.error = textOf(payload, 'message') || textOf(payload, 'code')
         target.errorCode = textOf(payload, 'code') || undefined
         break
@@ -324,13 +469,19 @@ export function project(events: readonly StreamEvent[]): Message[] {
         const at = byRun.get(runId)
         const target = at === undefined ? undefined : messages[at]
         if (!target) break
+        target.finishedAt = event.at
         // 真实后端失败时只写 turn/ended，不一定另有 error 事件；不能留下一个空白成功气泡。
         if (textOf(payload, 'reason') === 'error') {
           target.status = 'error'
           target.error = target.error || textOf(payload, 'error') || textOf(payload, 'message') || '本轮未能完成'
           target.errorCode = target.errorCode ?? (textOf(payload, 'code') || undefined)
+          const step = lastStep(target)
+          if (step) step.status = 'error'
         } else if (target.status !== 'error') {
           target.status = 'done'
+          const step = lastStep(target)
+          if (step && step.status === 'streaming') step.status = 'done'
+          if (step && step.endedAt === undefined) step.endedAt = event.at
         }
         break
       }

@@ -15,7 +15,7 @@ import { Badge, Button, IconButton, ScrollArea, Separator, Spinner, Tooltip } fr
 
 import { MoonIcon, PlusIcon, SunIcon, LayersIcon, GearIcon } from './icons.tsx'
 import type { LayoutApi, MessageRowApi, ToolCardApi } from './layout.ts'
-import { waitingState, windowMessages, type Message, type WaitState } from './conversation.ts'
+import { waitingState, windowMessages, type Message, type ModifiedFile, type WaitState } from './conversation.ts'
 import { WHISPER_DELAY_BY_PREF, WHISPER_HOLD_MS } from './whisper.ts'
 import { WaitBubble } from './WaitBubble.tsx'
 import { ToolCard } from './ToolCard.tsx'
@@ -25,6 +25,8 @@ import { AutolinkText, Markdown } from './Markdown.tsx'
 import { JobTray } from './JobTray.tsx'
 import { QuestionCard } from './QuestionCard.tsx'
 import { PluginPanel } from './PluginPanel.tsx'
+import { RunTimeline } from './RunTimeline.tsx'
+import { FileInspector } from './FileInspector.tsx'
 import { SidebarNav } from './SidebarNav.tsx'
 import { SidebarSessions } from './SidebarSessions.tsx'
 import styles from './App.module.css'
@@ -80,7 +82,13 @@ export function BuiltinLayout(api: LayoutApi) {
 
   // 窗口大小归会话所有: 换会话时翻过的页数没有意义, 回到 60
   const [windowSize, setWindowSize] = useState(MESSAGE_WINDOW)
+  const [selectedFile, setSelectedFile] = useState<ModifiedFile>()
   useEffect(() => setWindowSize(MESSAGE_WINDOW), [sessionId])
+  useEffect(() => { if (!plugins.open) setSelectedFile(undefined) }, [plugins.open])
+  function openFile(file: ModifiedFile): void {
+    setSelectedFile(file)
+    if (!plugins.open) plugins.toggle()
+  }
   const { visible, hidden } = windowMessages(messages, windowSize)
 
   /**
@@ -334,6 +342,7 @@ export function BuiltinLayout(api: LayoutApi) {
                   autoFold: prefs.foldTools,
                   readRecord: readToolRecord,
                   readAttachment,
+                  onOpenFile: openFile,
                 }
                 return (
                   <Slot
@@ -446,11 +455,17 @@ export function BuiltinLayout(api: LayoutApi) {
       <div className={styles.panelSlot} data-open={view === 'chat' && plugins.open ? 'true' : 'false'}>
         {view === 'chat' && plugins.open && (
           <div className={styles.rightPanelStack}>
-            <Slot
-              name="right.panel"
-              props={{ sessionId, onOpenSettings, plugins }}
-            />
-            <PluginPanel graph={plugins.graph} onRefresh={plugins.refresh} onClose={plugins.close} />
+            {selectedFile ? (
+              <FileInspector file={selectedFile} onClose={() => { setSelectedFile(undefined); plugins.close() }} />
+            ) : (
+              <>
+                <Slot
+                  name="right.panel"
+                  props={{ sessionId, onOpenSettings, plugins }}
+                />
+                <PluginPanel graph={plugins.graph} onRefresh={plugins.refresh} onClose={plugins.close} />
+              </>
+            )}
           </div>
         )}
       </div>
@@ -473,6 +488,7 @@ function MessageRow({
   autoFold,
   readRecord,
   readAttachment,
+  onOpenFile,
 }: MessageRowApi) {
   if (message.role === 'system' && message.modelSwitch !== undefined) {
     const change = message.modelSwitch
@@ -499,6 +515,7 @@ function MessageRow({
   }
 
   const isUser = message.role === 'user'
+  const hasRun = !isUser && (message.steps?.length ?? 0) > 0
 
   return (
     <div className={`${styles.msg} ${isUser ? styles.msgUser : ''}`} data-message-role={message.role}>
@@ -516,7 +533,15 @@ function MessageRow({
         工具区接 compact 密度: 工具输出天生是"机器产物", 一行一条、越紧越好读;
         而正文需要呼吸感。密度是继承的 CSS 变量, 写在这一层只影响工具卡。
       */}
-      {message.tools.length > 0 && (
+      {hasRun && onOpenFile ? (
+        <RunTimeline
+          message={message}
+          autoFold={autoFold}
+          readRecord={readRecord}
+          Slot={Slot}
+          onOpenFile={onOpenFile}
+        />
+      ) : message.tools.length > 0 && (
         <details className={styles.toolsDetails} data-density="compact" open={message.tools.some((tool) => tool.status === 'running')}>
           <summary className={styles.chainHead}>
             <span>执行过程</span>
@@ -549,7 +574,7 @@ function MessageRow({
         </div>
       )}
 
-      {(message.text || message.status === 'streaming') && (
+      {(!hasRun || message.status !== 'streaming') && (message.text || message.status === 'streaming') && (
         <div className={isUser ? styles.bodyUser : styles.body}>
           {/*
             助手的话过完整 Markdown, 用户的话只做裸链接识别 —— 不擅自解释用户输入里的 * / #。
