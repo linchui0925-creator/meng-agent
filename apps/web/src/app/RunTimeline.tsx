@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type { SlotComponent, ToolRecord } from './layout.ts'
-import type { Message, ModifiedFile, RunMarker, RunStep, ToolCall } from './conversation.ts'
+import { toolTitle, type Message, type ModifiedFile, type RunMarker, type RunStep, type ToolCall } from './conversation.ts'
 import { Markdown } from './Markdown.tsx'
 import { ToolCard } from './ToolCard.tsx'
 import styles from './RunTimeline.module.css'
@@ -85,12 +85,26 @@ function RunStepRow({ step, current, autoFold, readRecord, Slot, onOpenFile }: {
   onOpenFile: (file: ModifiedFile) => void
 }) {
   const files = modifiedFilesOfStep(step)
-  const summary = step.text.replace(/\s+/g, ' ').trim().slice(0, 120) || '正在准备下一步…'
+  const hasText = step.text.trim() !== ''
+  const hasReasoning = (step.reasoning?.trim() ?? '') !== ''
+  const summary = summaryOf(step)
+  const reasoning = hasReasoning && step.reasoning !== undefined
+    ? <ReasoningRow text={step.reasoning} running={step.status === 'streaming'} />
+    : null
+
   if (current) {
     return (
       <section className={styles.step} data-current="">
         <div className={styles.currentLabel}><i />{step.status === 'waiting' ? '等待工具' : '正在执行'}</div>
-        <div className={styles.thought}><Markdown text={step.text || (step.status === 'waiting' ? '正在调用工具…' : '')} caret={step.status === 'streaming'} /></div>
+        {reasoning}
+        {hasText && (
+          <div className={styles.thought}>
+            <Markdown text={step.text} caret={step.status === 'streaming'} />
+          </div>
+        )}
+        {!hasText && !hasReasoning && step.status === 'waiting' && (
+          <div className={styles.thought}>正在调用工具…</div>
+        )}
         {files.length > 0 && <FileChanges files={files} onOpenFile={onOpenFile} />}
         {step.tools.length > 0 && <Tools tools={step.tools} autoFold={autoFold} readRecord={readRecord} Slot={Slot} />}
       </section>
@@ -103,12 +117,70 @@ function RunStepRow({ step, current, autoFold, readRecord, Slot, onOpenFile }: {
         <span className={styles.chevron}>›</span>
       </summary>
       <div className={styles.stepBody}>
-        {step.text && <div className={styles.thought}><Markdown text={step.text} /></div>}
+        {reasoning}
+        {hasText && <div className={styles.thought}><Markdown text={step.text} /></div>}
         {files.length > 0 && <FileChanges files={files} onOpenFile={onOpenFile} />}
         {step.tools.length > 0 && <Tools tools={step.tools} autoFold={autoFold} readRecord={readRecord} Slot={Slot} />}
       </div>
     </details>
   )
+}
+
+/** 思考块只用一行导航；完整正文点开才渲染，避免流式时不断把会话顶下去。 */
+function ReasoningRow({ text, running }: { text: string; running: boolean }) {
+  const [expanded, setExpanded] = useState(false)
+  const summaryRef = useRef<HTMLSpanElement>(null)
+  const summary = running ? latestLine(text) : firstLine(text)
+  useEffect(() => {
+    const element = summaryRef.current
+    if (element === null) return
+    element.scrollLeft = running ? element.scrollWidth - element.clientWidth : 0
+  }, [running, summary])
+  return (
+    <div className={styles.reasoningRow} data-running={running ? '' : undefined}>
+      <button
+        type="button"
+        className={styles.reasoningHead}
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <span className={styles.reasoningMark} aria-hidden="true">✦</span>
+        <span className={styles.reasoningTitle}>思考</span>
+        <span className={styles.reasoningSeparator} aria-hidden="true" />
+        <span
+          ref={summaryRef}
+          className={styles.reasoningSummary}
+          data-follow-end={running ? '' : undefined}
+        >
+          {summary || '正在思考…'}
+        </span>
+        <span className={styles.reasoningChevron} aria-hidden="true">{expanded ? '⌃' : '⌄'}</span>
+      </button>
+      {expanded && <pre className={styles.reasoningBody}>{text}</pre>}
+    </div>
+  )
+}
+
+function firstLine(text: string): string {
+  const newline = text.indexOf('\n')
+  return newline === -1 ? text : text.slice(0, newline)
+}
+
+function latestLine(text: string): string {
+  const visible = text.trimEnd()
+  const newline = visible.lastIndexOf('\n')
+  return newline === -1 ? visible : visible.slice(newline + 1)
+}
+
+function summaryOf(step: RunStep): string {
+  const text = (step.text.trim() || step.reasoning?.trim() || '').replace(/\s+/g, ' ')
+  if (text) return text.slice(0, 120)
+  const tool = step.tools.at(-1)
+  if (tool) {
+    const title = toolTitle(tool)
+    return step.status === 'streaming' || step.status === 'waiting' ? `${title}…` : title
+  }
+  return step.status === 'waiting' ? '等待工具结果…' : '已完成这一步'
 }
 
 function RunMarkerRow({ marker }: { marker: RunMarker }) {

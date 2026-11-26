@@ -42,13 +42,15 @@ import {
   listSessions,
   readArchivedSessions,
   sessionTitleFromInput,
+  sortSessionsByActivity,
   writeArchivedSessions,
   type SessionSummary,
 } from './sessions.ts'
 import { normalizeWorkspaces, type Workspace } from './workspaces.ts'
 import { createConversationStore } from './store.ts'
+import { createStreamBatcher } from './stream-batcher.ts'
 import { applyTheme, toggleTheme, type ResolvedTheme } from '../theme.ts'
-import { readPrefs, updatePrefs, type Prefs } from '../prefs.ts'
+import { readPrefs, updatePrefs, type Prefs, type ThemeMode } from '../prefs.ts'
 import { applyPresentation } from '../presentation.ts'
 
 type EffortCapability = {
@@ -74,10 +76,16 @@ export interface AppProps {
   fixture: string | null
   /** 非空时加载完成后自动发送这句话 (?auto=...), 给演示与截图用 */
   auto?: string
+  /** 任务完成/失败时由宿主决定如何提醒（桌面是系统通知）。 */
+  notify?: (title: string, body: string) => void | Promise<void>
 }
 
-export function App({ transport, slots, fixture, auto }: AppProps) {
+export function App({ transport, slots, fixture, auto, notify }: AppProps) {
   const store = useRef(createConversationStore()).current
+  const streamBatcher = useMemo(
+    () => createStreamBatcher((events) => store.actions.ingestMany(events)),
+    [store],
+  )
   const useStore = useMemo(() => bindSnapshotSelector(store), [store])
   const messages = useStore((s) => project(s.events))
   const jobs = useStore((s) => projectJobs(s.events))
@@ -89,6 +97,8 @@ export function App({ transport, slots, fixture, auto }: AppProps) {
   const [view, setView] = useState<'chat' | 'tasks'>('chat')
   const [sessionId, setSessionId] = useState<string>()
   const [sessions, setSessions] = useState<SessionSummary[]>([])
+  const sessionsRef = useRef<SessionSummary[]>([])
+  const notifyRef = useRef(notify)
   /** 归档是前端视图偏好；刷新后由 localStorage 恢复，后端会话保持原样。 */
   const [archivedSessionIds, setArchivedSessionIds] = useState<string[]>(() => readArchivedSessions())
 
@@ -306,6 +316,23 @@ export function App({ transport, slots, fixture, auto }: AppProps) {
     setQueueBlocked(next)
   }
 
+  useEffect(() => {
+    sessionsRef.current = sessions
+  }, [sessions])
+
+  useEffect(() => {
+    notifyRef.current = notify
+  }, [notify])
+
+  function touchSessionActivity(sessionId: string, seq: number, at: number): void {
+    setSessions((current) => {
+      if (!current.some((item) => item.sessionId === sessionId)) return current
+      return sortSessionsByActivity(current.map((item) => item.sessionId === sessionId
+        ? { ...item, lastSeq: Math.max(item.lastSeq, seq), updatedAt: Math.max(item.updatedAt ?? item.at, at) }
+        : item))
+    })
+  }
+
   // 下行事件 → store。**唯一的写入口**
   //
   // 过滤是必须的: 订阅是全局的, 一个进程里可能开着好几个会话, 不过滤的话
@@ -314,10 +341,34 @@ export function App({ transport, slots, fixture, auto }: AppProps) {
   useEffect(() => {
     const offEvent = transport.subscribe((event) => {
       const sid = event.sessionId
+      if (sid && (event.type === 'turn/started' || event.type === 'turn/ended')) {
+        touchSessionActivity(sid, event.seq, event.at)
+      }
       if (sid && event.type === 'turn/started' && event.runId) markRunStarted(sid, event.runId)
-      if (sid && event.type === 'turn/ended') markRunEnded(sid, event.runId)
+      if (sid && event.type === 'turn/ended') {
+        const endedRunWasActive = event.runId !== undefined && activeRunsRef.current[sid] === event.runId
+        markRunEnded(sid, event.runId)
+        if (endedRunWasActive) {
+          const payload = event.payload as { reason?: unknown; error?: unknown } | undefined
+          const reason = typeof payload?.reason === 'string' ? payload.reason : 'stop'
+          if (reason !== 'aborted') {
+            const background = sid !== sessionIdRef.current || document.visibilityState !== 'visible' || !document.hasFocus()
+            if (background) {
+              const title = reason === 'error' ? '任务失败' : reason === 'max-turns' ? '任务已暂停' : '任务完成'
+              const sessionTitle = sessionsRef.current.find((item) => item.sessionId === sid)?.title ?? sid
+              const detail = reason === 'error' && typeof payload?.error === 'string'
+                ? `${sessionTitle}
+${payload.error.slice(0, 160)}`
+                : sessionTitle
+              void notifyRef.current?.(title, detail)
+            }
+          }
+        }
+      }
       if (sid && sid !== sessionIdRef.current) return
-      store.actions.ingest(event)
+      // chunk 走合帧器（对齐 dsh 的 animation-frame publication）；完成、工具和错误事件
+      // 会先把前面的 chunk 一并冲出，再立即提交，不会拖慢状态切换。
+      streamBatcher.push(event)
       if (event.type === 'context/compacted' || event.type === 'turn/ended') {
         setContextTick((n) => n + 1)
       }
@@ -346,13 +397,17 @@ export function App({ transport, slots, fixture, auto }: AppProps) {
     })
     const offState = transport.onStateChange(setConnection)
     // 后端换代后 transport 会从零重放；旧 lastSeq 也必须清掉，否则重放仍被 store 挡住。
-    const offReset = transport.onReset?.(() => store.actions.reset())
+    const offReset = transport.onReset?.(() => {
+      streamBatcher.cancel()
+      store.actions.reset()
+    })
     return () => {
+      streamBatcher.cancel()
       offEvent()
       offState()
       offReset?.()
     }
-  }, [transport, store])
+  }, [transport, store, streamBatcher])
 
   useEffect(() => {
     sessionIdRef.current = sessionId
@@ -1020,7 +1075,7 @@ export function App({ transport, slots, fixture, auto }: AppProps) {
   useEffect(() => {
     let alive = true
     void listSessions(transport).then((list) => {
-      if (alive) setSessions(list)
+      if (alive) setSessions(sortSessionsByActivity(list))
     })
     return () => {
       alive = false
@@ -1143,6 +1198,7 @@ export function App({ transport, slots, fixture, auto }: AppProps) {
     const targetSession = sessions.find((item) => item.sessionId === id)
     setWorkspaceId(targetSession?.workspace)
     setWorkspaceDraft(targetSession?.workspace !== undefined)
+    streamBatcher.cancel()
     store.actions.reset()
     // 上一组问题属于上一个会话 —— 不清的话, 新会话还没捞到问题时它还杵在这儿
     setPendingQuestions([])
@@ -1161,12 +1217,17 @@ export function App({ transport, slots, fixture, auto }: AppProps) {
     try {
       const history = await transport.invoke<Array<StreamEvent & { data?: { runId?: string } }>>('session.read', { sessionId: id })
       if (Array.isArray(history)) {
-        for (const ev of history) {
-          // HTTP 历史把载荷和 runId 放在 data，实时 WS 使用顶层字段；进入投影前统一。
-          const normalized = { ...ev, runId: ev.runId ?? ev.data?.runId, payload: ev.payload ?? ev.data }
-          store.actions.ingest(normalized)
-          if (normalized.type === 'turn/started' && normalized.runId) markRunStarted(id, normalized.runId)
-          if (normalized.type === 'turn/ended') markRunEnded(id, normalized.runId)
+        // HTTP 历史把载荷和 runId 放在 data，实时 WS 使用顶层字段；进入投影前统一。
+        const normalized = history.map((ev) => ({
+          ...ev,
+          runId: ev.runId ?? ev.data?.runId,
+          payload: ev.payload ?? ev.data,
+        }))
+        // 一次写入整页历史：重放几百条事件也只通知 React 一次。
+        store.actions.ingestMany(normalized)
+        for (const ev of normalized) {
+          if (ev.type === 'turn/started' && ev.runId) markRunStarted(id, ev.runId)
+          if (ev.type === 'turn/ended') markRunEnded(id, ev.runId)
         }
       }
     } catch (err) {
@@ -1183,6 +1244,7 @@ export function App({ transport, slots, fixture, auto }: AppProps) {
    */
   function resetConversation(workspace?: string) {
     setView('chat')
+    streamBatcher.cancel()
     store.actions.reset()
     setPendingQuestions([])
     setActiveQuestionId(undefined)
@@ -1276,6 +1338,16 @@ export function App({ transport, slots, fixture, auto }: AppProps) {
   /** 标题栏那个日/月按钮。它只该在浅深之间来回, 所以先 resolve 成具体值再写 */
   function switchTheme() {
     changePrefs({ theme: toggleTheme(theme) })
+  }
+
+  /**
+   * 侧栏主题导航的写入口。
+   *
+   * 它和标题栏那个按钮、设置页那三张卡走的是**同一条路** (changePrefs) ——
+   * 三个入口各写各的, 是这类界面最常见的"设置不生效"来源。
+   */
+  function setThemeMode(mode: ThemeMode) {
+    changePrefs({ theme: mode })
   }
 
   const status = connectionText(connection)
@@ -1542,6 +1614,8 @@ export function App({ transport, slots, fixture, auto }: AppProps) {
   }
 
   const composer: ComposerApi = {
+    ...(sessionId === undefined ? {} : { sessionId }),
+    ensureSession: (title?: string) => ensureSession(title ?? '新会话'),
     value: input,
     setValue: setInput,
     send: () => void send(input),
@@ -1597,6 +1671,8 @@ export function App({ transport, slots, fixture, auto }: AppProps) {
       <TaskCenter
         invoke={(op, payload) => transport.invoke(op, payload)}
         workspaces={workspaces}
+        model={model}
+        modelGroups={modelGroups}
         onOpenSession={(id) => {
           setView('chat')
           void selectSession(id)
@@ -1628,6 +1704,9 @@ export function App({ transport, slots, fixture, auto }: AppProps) {
     onNewSession: () => void newSession(),
     onNewWorkspaceSession: newWorkspaceSession,
     onToggleTheme: switchTheme,
+    /** 侧栏主题导航: 给的是**模式**, 所以「跟随系统」这一档也能被选中 */
+    themeMode: prefs.theme,
+    onThemeChange: setThemeMode,
     /** 打开设置页。入口在标题栏（齿轮）, 但「开了」这个状态归宿主 */
     onOpenSettings: () => setSettingsOpen(true),
     onNewWorkspace: openWorkspacePicker,
@@ -1667,10 +1746,16 @@ export function App({ transport, slots, fixture, auto }: AppProps) {
       }
     },
     jobActions: {
-      read: async (jobId) => {
+      read: async (jobId, full = false) => {
         const sid = sessionIdRef.current
         if (!sid) throw new Error('当前没有会话')
-        return transport.invoke<{ text: string; job?: unknown }>('job.output', { sessionId: sid, jobId })
+        return transport.invoke<{
+          text: string
+          lossy?: boolean
+          spillPath?: string
+          tailTruncated?: boolean
+          job?: unknown
+        }>('job.output', { sessionId: sid, jobId, full })
       },
       stop: async (jobId) => {
         const sid = sessionIdRef.current

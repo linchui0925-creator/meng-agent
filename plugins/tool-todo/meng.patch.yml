@@ -1,0 +1,3 @@
+- insert:
+    - id: tool-todo
+      name: '@meng/plugin-tool-todo'

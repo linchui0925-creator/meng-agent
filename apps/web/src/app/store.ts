@@ -19,21 +19,46 @@ export interface ConversationState {
 }
 
 type ConversationActions = {
+  /** 单条写入；非流式事件仍走这里。 */
   ingest: (state: ConversationState, event: StreamEvent) => ConversationState
+  /** 一帧的 chunk 一次性写入，避免每个 token 都复制事件数组/通知 React。 */
+  ingestMany: (state: ConversationState, events: readonly StreamEvent[]) => ConversationState
   reset: (state: ConversationState) => ConversationState
 }
 
 /** 单个会话最多留这么多事件, 再多就丢掉最早的 (界面只显示最近一段) */
 const MAX_EVENTS = 4000
 
+/**
+ * 批量追加。**一次复制 + 一次通知**是这段的核心：
+ * 流式 token 可能一秒几十条, 逐条 `[...events, event]` 会让事件数组从
+ * O(n) 复制变成 O(n × token 数), 还会让每个 token 都触发一次 React 重渲染。
+ */
+function appendEvents(state: ConversationState, incoming: readonly StreamEvent[]): ConversationState {
+  const fresh: StreamEvent[] = []
+  let lastSeq = state.lastSeq
+  for (const event of incoming) {
+    // 断线重连会重放; seq 不递增说明这条已经见过
+    if (event.seq <= lastSeq) continue
+    fresh.push(event)
+    lastSeq = event.seq
+  }
+  if (fresh.length === 0) return state
+  const merged = [...state.events, ...fresh]
+  return {
+    events: merged.length > MAX_EVENTS ? merged.slice(-MAX_EVENTS) : merged,
+    lastSeq,
+  }
+}
+
 export const conversationSpec: StoreSpec<ConversationState, ConversationActions> = {
   init: () => ({ events: [], lastSeq: 0 }),
   actions: {
     ingest(state, event) {
-      // 断线重连会重放; seq 不递增说明这条已经见过, 返回同一引用 = 不通知不重渲染
-      if (event.seq <= state.lastSeq) return state
-      const events = state.events.length >= MAX_EVENTS ? state.events.slice(-MAX_EVENTS + 1) : state.events
-      return { events: [...events, event], lastSeq: event.seq }
+      return appendEvents(state, [event])
+    },
+    ingestMany(state, incoming) {
+      return appendEvents(state, incoming)
     },
     reset() {
       return { events: [], lastSeq: 0 }

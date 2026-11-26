@@ -1,0 +1,21 @@
+{
+  "name": "@meng/plugin-tool-subagent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "subagent 工具：把一个有界目标交给隔离子智能体",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "files": ["src", "meng.patch.yml", "README.md"],
+  "scripts": {
+    "test": "node --experimental-strip-types test/subagent-tool.ts"
+  },
+  "dependencies": {
+    "@meng/core": "workspace:*",
+    "@meng/subagent": "workspace:*",
+    "@meng/tools": "workspace:*"
+  }
+}

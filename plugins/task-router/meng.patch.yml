@@ -1,0 +1,6 @@
+- insert:
+    - id: task-router
+      name: '@meng/plugin-task-router'
+      config:
+        smallEditMaxTools: 8
+        requireTodoForMulti: true

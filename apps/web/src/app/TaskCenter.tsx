@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 
+import type { ComposerModelGroup } from './layout.ts'
 import type { Workspace } from './workspaces.ts'
 import {
   formatScheduleTime,
@@ -22,9 +23,10 @@ interface FormState {
   dayOfMonth: number
   runAtLocal: string
   workspace: string
+  model: string
 }
 
-function initialForm(): FormState {
+function initialForm(model?: string): FormState {
   const tomorrow = new Date()
   tomorrow.setHours(9, 0, 0, 0)
   if (tomorrow.getTime() <= Date.now()) tomorrow.setDate(tomorrow.getDate() + 1)
@@ -37,6 +39,7 @@ function initialForm(): FormState {
     dayOfMonth: 1,
     runAtLocal: localInput(tomorrow.getTime()),
     workspace: '',
+    model: model ?? '',
   }
 }
 
@@ -53,10 +56,14 @@ function errText(err: unknown): string {
 export function TaskCenter({
   invoke,
   workspaces,
+  model,
+  modelGroups,
   onOpenSession,
 }: {
   invoke: Invoke
   workspaces: readonly Workspace[]
+  model?: string
+  modelGroups?: readonly ComposerModelGroup[]
   onOpenSession: (sessionId: string) => void
 }) {
   const [schedules, setSchedules] = useState<ScheduleRecord[]>([])
@@ -65,7 +72,7 @@ export function TaskCenter({
   const [busy, setBusy] = useState(false)
   const [editingId, setEditingId] = useState<string>()
   const [confirmDelete, setConfirmDelete] = useState<string>()
-  const [form, setForm] = useState<FormState>(initialForm)
+  const [form, setForm] = useState<FormState>(() => initialForm(model))
   const [notice, setNotice] = useState<{ tone: 'ok' | 'error'; text: string }>()
 
   const refresh = useCallback(async (quiet = false) => {
@@ -95,6 +102,11 @@ export function TaskCenter({
 
   const groups = useMemo(() => groupSchedules(schedules), [schedules])
 
+  useEffect(() => {
+    if (editingId !== undefined) return
+    setForm((current) => current.model || !model ? current : { ...current, model })
+  }, [editingId, model])
+
   function patch(next: Partial<FormState>): void {
     setForm((current) => ({ ...current, ...next }))
     setNotice(undefined)
@@ -111,6 +123,7 @@ export function TaskCenter({
       dayOfMonth: schedule.dayOfMonth ?? 1,
       runAtLocal: localInput(schedule.runAt ?? Date.now() + 3_600_000),
       workspace: schedule.workspace ?? '',
+      model: schedule.model ?? model ?? '',
     })
     setNotice(undefined)
   }
@@ -128,11 +141,16 @@ export function TaskCenter({
       setNotice({ tone: 'error', text: '任务名称和任务内容都不能为空' })
       return
     }
+    if (!form.model.trim()) {
+      setNotice({ tone: 'error', text: '请选择定时任务运行时使用的模型' })
+      return
+    }
     const payload = {
       title: form.title.trim(),
       prompt: form.prompt.trim(),
       recurrence: form.recurrence,
       ...(form.workspace ? { workspace: form.workspace } : {}),
+      model: form.model.trim(),
       ...(form.recurrence === 'once'
         ? { runAt: new Date(form.runAtLocal).getTime() }
         : { time: form.time }),
@@ -259,7 +277,7 @@ export function TaskCenter({
                       <div className={styles.itemTop}>
                         <div>
                           <h2>{schedule.title}</h2>
-                          <p>{recurrenceLabel(schedule)} · {schedule.workspace ? schedule.workspace.split('/').at(-1) : '默认工作区'}</p>
+                          <p>{recurrenceLabel(schedule)} · {schedule.workspace ? schedule.workspace.split('/').at(-1) : '默认工作区'} · {schedule.model ?? '未指定模型'}</p>
                         </div>
                         <span className={styles.status} data-status={schedule.lastStatus ?? 'scheduled'}>{status}</span>
                       </div>
@@ -322,6 +340,16 @@ export function TaskCenter({
             <select value={form.workspace} onChange={(e) => patch({ workspace: e.target.value })}>
               <option value="">默认工作区</option>
               {workspaces.map((item) => <option key={item.id} value={item.path}>{item.name}</option>)}
+            </select>
+          </label>
+          <label>运行模型
+            <select value={form.model} onChange={(e) => patch({ model: e.target.value })}>
+              <option value="">请选择模型</option>
+              {(modelGroups ?? []).map((group) => (
+                <optgroup key={group.id} label={group.name}>
+                  {group.models.map((item) => <option key={item.id} value={item.id}>{item.name ?? item.id}</option>)}
+                </optgroup>
+              ))}
             </select>
           </label>
 

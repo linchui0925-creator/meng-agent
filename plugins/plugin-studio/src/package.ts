@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -17,12 +17,17 @@ export async function packPlugin(directory: string, destination: string): Promis
   mkdirSync(outDir, { recursive: true })
   const file = join(outDir, `${pkg.name.replace(/^@/, '').replaceAll('/', '-')}-${pkg.version}.tgz`)
   if (existsSync(file)) throw new Error(`分发包已存在: ${file}`)
-  execFileSync('pnpm', ['pack', '--out', file], {
-    cwd: dir,
-    env: { ...process.env, CI: '1' },
-    stdio: 'pipe',
-    maxBuffer: 4 * 1024 * 1024,
-  })
+  const restore = sanitizeWorkspaceProtocols(dir)
+  try {
+    execFileSync('pnpm', ['pack', '--out', file], {
+      cwd: dir,
+      env: { ...process.env, CI: '1' },
+      stdio: 'pipe',
+      maxBuffer: 4 * 1024 * 1024,
+    })
+  } finally {
+    restore()
+  }
   return { file, name: pkg.name, version: pkg.version }
 }
 
@@ -102,6 +107,41 @@ export async function verifyPluginPackage(archive: string): Promise<VerifyResult
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
+}
+
+function sanitizeWorkspaceProtocols(dir: string): () => void {
+  const file = join(dir, 'package.json')
+  const original = readFileSync(file, 'utf8')
+  const pkg = JSON.parse(original) as Record<string, unknown>
+  let changed = false
+  for (const field of ['dependencies', 'devDependencies', 'peerDependencies']) {
+    const deps = pkg[field]
+    if (!deps || typeof deps !== 'object') continue
+    const record = deps as Record<string, unknown>
+    for (const [name, value] of Object.entries(record)) {
+      if (typeof value !== 'string' || !value.startsWith('workspace:')) continue
+      record[name] = packageVersion(name)
+      changed = true
+    }
+  }
+  if (changed) writeFileSync(file, `${JSON.stringify(pkg, null, 2)}
+`)
+  return () => {
+    if (changed) writeFileSync(file, original)
+  }
+}
+
+function packageVersion(id: string): string {
+  const require = createRequire(import.meta.url)
+  let entry = require.resolve(id)
+  while (!existsSync(join(entry, 'package.json'))) {
+    const parent = dirname(entry)
+    if (parent === entry) throw new Error(`找不到依赖版本: ${id}`)
+    entry = parent
+  }
+  const pkg = JSON.parse(readFileSync(join(entry, 'package.json'), 'utf8')) as { version?: unknown }
+  if (typeof pkg.version !== 'string' || !pkg.version) throw new Error(`依赖没有版本: ${id}`)
+  return pkg.version
 }
 
 function linkDependencies(dir: string): void {

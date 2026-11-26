@@ -74,6 +74,8 @@
         thresholdRatio: 0.8
         retainRatio: 0.16
         summaryMaxTokens: 8192
+        instructionFilename: AGENTS.md
+        instructionMaxBytes: 65536
 
     # ── 以下是 P1 建包后启用的策略行, 现在注释掉 ──────────────────
     # 打开前记得先建对应包, 否则装载器会把它们记成 failed (这是对的:

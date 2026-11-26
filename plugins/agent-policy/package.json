@@ -1,0 +1,20 @@
+{
+  "name": "@meng/plugin-agent-policy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Agent 总任务策略：复杂度判断、插件/核心决策、计划与委派",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "files": ["src", "README.md"],
+  "scripts": {
+    "test": "node --experimental-strip-types test/policy.ts"
+  },
+  "dependencies": {
+    "@meng/core": "workspace:*",
+    "@meng/prompt": "workspace:*"
+  }
+}

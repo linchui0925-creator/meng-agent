@@ -1,0 +1,5 @@
+- insert:
+    - id: metrics-local
+      name: '@meng/plugin-metrics-local'
+      config:
+        dir: !!js process.env.MENG_DATA_DIR || '.meng'

@@ -80,6 +80,8 @@ export interface RunStep {
   id: string
   index: number
   text: string
+  /** 模型在这一轮工具调用前/中写下的思考；可能比 text 先到。 */
+  reasoning?: string
   status: RunStepStatus
   tools: ToolCall[]
   startedAt: number
@@ -198,6 +200,13 @@ function attachmentsOf(payload: unknown): MessageAttachment[] {
  * 分组键是 `runId`: 一个 turn 里的用户消息、助手回复、工具调用共享一个 runId。
  * 没有 runId 的事件 (session/created 之类) 直接跳过 —— 它们不是对话内容。
  */
+function isOrderedBySeq(events: readonly StreamEvent[]): boolean {
+  for (let i = 1; i < events.length; i++) {
+    if ((events[i]?.seq ?? 0) < (events[i - 1]?.seq ?? 0)) return false
+  }
+  return true
+}
+
 function assistantStep(target: Message, at: number): RunStep {
   const steps = target.steps ??= []
   let last = [...steps].reverse().find((part): part is RunStep => part.kind === 'step')
@@ -208,6 +217,7 @@ function assistantStep(target: Message, at: number): RunStep {
       id: `${target.id}:step:${index}`,
       index,
       text: '',
+      reasoning: '',
       status: 'streaming',
       tools: [],
       startedAt: at,
@@ -267,10 +277,9 @@ export function project(events: readonly StreamEvent[]): Message[] {
   /** runId → 助手消息在 messages 里的下标 */
   const byRun = new Map<string, number>()
 
-  // 乱序按 seq 排好再投。重连重放与实时流会**重叠**一段, 顺序不保证,
-  // 而"分片拼接"这件事对顺序是敏感的 —— 先排一遍, 投影就不用到处判顺序。
-  // Array.prototype.sort 在现代引擎里是稳定的, 同 seq 保持原序。
-  const ordered = [...events].sort((a, b) => a.seq - b.seq)
+  // 实时流通常已经按 seq 到达；只有乱序才复制排序，避免每个 token
+  // 都把整段事件再 O(n log n) 扫一遍。重连重放与实时流重叠时仍会走排序兜底。
+  const ordered = isOrderedBySeq(events) ? events : [...events].sort((a, b) => a.seq - b.seq)
 
   for (const event of ordered) {
     const runId = event.runId
@@ -333,8 +342,12 @@ export function project(events: readonly StreamEvent[]): Message[] {
         if (!target) break
         const delta = textOf(payload, 'delta')
         const step = assistantStep(target, event.at)
-        step.text += delta
-        target.text += delta
+        if (textOf(payload, 'channel') === 'reasoning') {
+          step.reasoning = (step.reasoning ?? '') + delta
+        } else {
+          step.text += delta
+          target.text += delta
+        }
         break
       }
 
@@ -348,6 +361,8 @@ export function project(events: readonly StreamEvent[]): Message[] {
         if (full) target.text = full
         const step = assistantStep(target, event.at)
         step.text = full
+        const reasoning = textOf(payload, 'reasoning')
+        if (reasoning) step.reasoning = reasoning
         const calls = field<unknown>(payload, 'toolCalls')
         step.status = Array.isArray(calls) && calls.length > 0 ? 'waiting' : 'done'
         if (step.status === 'done') step.endedAt = event.at
@@ -537,6 +552,8 @@ export interface JobRow {
   id: string
   kind: string
   label: string
+  /** 原始命令；任务名现在优先使用模型写的 label，不把命令当标题 */
+  command?: string
   status: JobStatusValue
   detail?: string
   startedAt: number
@@ -574,6 +591,7 @@ export function projectJobs(events: readonly StreamEvent[]): JobRow[] {
       id,
       kind: textOf(payload, 'kind') || 'job',
       label: textOf(payload, 'label') || id,
+      ...(textOf(payload, 'command') ? { command: textOf(payload, 'command') } : {}),
       status: safeStatus,
       ...(textOf(payload, 'detail') ? { detail: textOf(payload, 'detail') } : {}),
       startedAt: numberOr(payload, 'startedAt', event.at),
@@ -682,6 +700,7 @@ const TOOL_VERBS: Readonly<Record<string, string>> = {
 const TITLE_ARG_KEYS = [
   'file_path',
   'path',
+  'description',
   'command',
   'query',
   'url',

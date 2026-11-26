@@ -1,6 +1,6 @@
 {
   "name": "@meng/app-desktop",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "type": "module",
   "description": "桌面端外壳 (Electron)。主进程就是 Node —— 插件宿主本体直接跑在里面, 零桥接。",

@@ -1,0 +1,70 @@
+{
+  "name": "@meng/plugin-screen-ambient",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "抓取屏幕实时主色，驱动梦的环境光背景呼吸",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./client": "./client/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "client",
+    "meng.patch.yml",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && vite build"
+  },
+  "peerDependencies": {
+    "@meng/core": ">=0.0.0"
+  },
+  "devDependencies": {
+    "@meng/core": "workspace:*",
+    "@meng/modules": "workspace:*",
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "react": "^19.3.1",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.0"
+  },
+  "meng": {
+    "plugin": {
+      "apiVersion": 1,
+      "id": "screen-ambient",
+      "patch": "./meng.patch.yml"
+    },
+    "client": {
+      "platforms": [
+        "web",
+        "desktop"
+      ],
+      "immediately": false,
+      "slots": [
+        "settings.section"
+      ]
+    },
+    "compatibility": {
+      "host": ">=0.1.0 <1.0.0",
+      "platforms": [
+        "web",
+        "desktop"
+      ]
+    },
+    "permissions": {
+      "network": [],
+      "fs": [],
+      "exec": false
+    }
+  }
+}

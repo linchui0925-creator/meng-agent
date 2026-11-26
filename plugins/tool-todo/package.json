@@ -1,0 +1,33 @@
+{
+  "name": "@meng/plugin-tool-todo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "执行阶段的持久化 Todo 清单",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "meng.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --experimental-strip-types test/todo.ts"
+  },
+  "dependencies": {
+    "@meng/core": "workspace:*",
+    "@meng/session": "workspace:*",
+    "@meng/tools": "workspace:*",
+    "@meng/web": "workspace:*"
+  },
+  "meng": {
+    "plugin": {
+      "apiVersion": 1,
+      "id": "tool-todo",
+      "patch": "./meng.patch.yml"
+    }
+  }
+}

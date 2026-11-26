@@ -1,0 +1,3 @@
+- insert:
+    - id: completion-gate
+      name: '@meng/plugin-completion-gate'

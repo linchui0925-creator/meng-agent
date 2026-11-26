@@ -108,7 +108,10 @@ export interface ExecProcess {
   readonly signal: NodeJS.Signals | string | null
   /** 落定即 resolve, 永不 reject */
   readonly done: Promise<ExecResult>
+  /** 消费增量；读到终态后不能重放。 */
   readOutput(): ExecRead
+  /** 不消费地从缓冲区取当前尾部；给界面查看，不抢模型的下一次增量。 */
+  peekOutput(): ExecRead
   /** 停掉整个进程组。已经结束返回 false */
   kill(): boolean
 }

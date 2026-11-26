@@ -1,6 +1,7 @@
 import { useState } from 'react'
 
 import type { SlotComponent } from './layout.ts'
+import type { ThemeMode } from '../prefs.ts'
 import styles from './SidebarNav.module.css'
 
 export function SidebarNav({
@@ -9,12 +10,18 @@ export function SidebarNav({
   plugins,
   activeView,
   onViewChange,
+  themeMode,
+  onThemeChange,
 }: {
   pluginCount: number
   Slot: SlotComponent
   plugins: unknown
   activeView: 'chat' | 'tasks'
   onViewChange: (view: 'chat' | 'tasks') => void
+  /** 主题的**模式** (light/dark/system), 不是解析后的深浅 */
+  themeMode: ThemeMode
+  /** 写主题。归宿主 —— 侧栏自己不碰 localStorage */
+  onThemeChange: (mode: ThemeMode) => void
 }) {
   const [openPlugins, setOpenPlugins] = useState(true)
 
@@ -46,6 +53,9 @@ export function SidebarNav({
         </span>
         定时任务
       </button>
+
+      {/* 通用工具位：主题、计算器等独立前端插件从这里挂入，核心不 import 具体实现。 */}
+      <Slot name="sidebar.utility" props={{ themeMode, onThemeChange }} />
 
       {pluginCount > 0 && (
         <div className={styles.pluginGroup} data-plugin-nav-group="">

@@ -21,13 +21,15 @@ import { LLM_CODE, type LLMService, type LlmFailure, type Message, type StreamRe
 import type { SessionService } from '@meng/session'
 import type { PromptService } from '@meng/prompt'
 import type { ToolCall, ToolService } from '@meng/tools'
-import { getMemory, provideLoop, type LoopService } from '@meng/loop'
+import { getMemory, provideLoop, type LoopService, type TurnStopVerdict } from '@meng/loop'
+import { filterToolsByRoute, getTaskRouter } from '@meng/task-router'
 
 export const name = 'meng-loop-basic'
 export const inject = ['llm', 'session', 'tools', 'prompt']
 
-export function apply(ctx: Ctx, config: { checkpointEvery?: number; hardStopSteps?: number; defaultModel?: string }): Disposer {
+export function apply(ctx: Ctx, config: { checkpointEvery?: number; checkpointAfterReads?: number; hardStopSteps?: number; defaultModel?: string }): Disposer {
   const checkpointEvery = Math.max(4, Math.floor(config.checkpointEvery ?? 20))
+  const checkpointAfterReads = Math.max(4, Math.floor(config.checkpointAfterReads ?? 8))
   const hardStopSteps = Math.max(checkpointEvery, Math.floor(config.hardStopSteps ?? 500))
 
   const service: LoopService = {
@@ -37,21 +39,40 @@ export function apply(ctx: Ctx, config: { checkpointEvery?: number; hardStopStep
       const tools = ctx.get<ToolService>('tools')
       const prompt = ctx.get<PromptService>('prompt')
       const memory = getMemory(ctx)
+      const taskRouter = getTaskRouter(ctx)
       if (!llm || !session || !tools || !prompt) throw new Error('loop 依赖的能力面缺失')
 
       const runId = input.runId ?? ''
       const meta = (extra: Record<string, unknown> = {}) => ({ ...(runId ? { runId } : {}), ...extra })
+      const taskRoute = taskRouter?.classify({
+        sessionId: input.sessionId,
+        text: input.text,
+        ...(input.attachments?.length ? { attachmentCount: input.attachments.length } : {}),
+      })
 
       session.append(input.sessionId, 'turn/started', meta({
         text: input.text,
         ...(input.attachments?.length ? { attachments: input.attachments } : {}),
         ...(input.interruption === undefined ? {} : { interruption: input.interruption }),
+        ...(taskRoute ? { taskRoute } : {}),
       }))
-      const system = await prompt.render({ sessionId: input.sessionId })
       const summaries: string[] = []
       const toolTrace: ProgressTool[] = []
       const filesTouched = new Set<string>()
+      const excluded = new Set(input.excludeTools ?? [])
+      const activeTools = () => {
+        const visible = tools.active().filter((tool) => !excluded.has(tool.name))
+        return taskRoute ? filterToolsByRoute(visible, taskRoute) : visible
+      }
       let consecutiveFailures = 0
+      let checkpointNudge: string | undefined
+      let readOnlyStreak = 0
+      let totalToolCalls = 0
+      let lastCheckpointToolCall = 0
+      let completionGateRounds = 0
+      let firstTextAt: number | undefined
+      const startedAt = Date.now()
+      const signatureCounts = new Map<string, number>()
 
       for (let turn = 0; ; turn++) {
         if (input.signal?.aborted) {
@@ -61,7 +82,17 @@ export function apply(ctx: Ctx, config: { checkpointEvery?: number; hardStopStep
         }
 
         const model = input.model ?? config.defaultModel ?? ''
-        if (turn > 0 && (turn % checkpointEvery === 0 || turn >= hardStopSteps)) {
+        const repeatedSignature = [...signatureCounts.values()].some((count) => count >= 3)
+        const readOnlyStall = readOnlyStreak >= checkpointAfterReads && totalToolCalls - lastCheckpointToolCall >= checkpointAfterReads
+        const repeatedStall = repeatedSignature && totalToolCalls - lastCheckpointToolCall >= 3
+        const shouldCheckpoint = turn > 0 && (
+          turn % checkpointEvery === 0 ||
+          readOnlyStall ||
+          repeatedStall ||
+          turn >= hardStopSteps
+        )
+        if (shouldCheckpoint) {
+          lastCheckpointToolCall = totalToolCalls
           const forced: ProgressVerdict | undefined = turn >= hardStopSteps
             ? {
                 decision: 'stop' as const,
@@ -78,6 +109,9 @@ export function apply(ctx: Ctx, config: { checkpointEvery?: number; hardStopStep
             tools: toolTrace,
             filesTouched: [...filesTouched],
             consecutiveFailures,
+            readOnlyStreak,
+            totalToolCalls,
+            elapsedMs: Date.now() - startedAt,
           })
           session.append(input.sessionId, 'progress/checkpoint', meta({
             step: turn,
@@ -96,11 +130,20 @@ export function apply(ctx: Ctx, config: { checkpointEvery?: number; hardStopStep
             yield { type: 'done', reason: 'error', error: reason }
             return
           }
+          checkpointNudge = [
+            '[运行监督器提示]',
+            verdict.reason,
+            ...(verdict.nextFocus ? [`下一步重点：${verdict.nextFocus}`] : []),
+            '这不是新的用户任务；不要从头重做，立即按提示收敛到下一步。',
+          ].join('\n')
         }
 
-        const history = session.project(input.sessionId, {
+        // 任务状态（Plan/Todo/Goal）会在工具调用中变化，所以系统提示不能在一轮开头
+        // 只渲染一次。每次模型请求前重算；内容没变时 provider 仍可复用前缀缓存。
+        const system = await prompt.render({ sessionId: input.sessionId })
+        const history = expandRecordToolResults(session.project(input.sessionId, {
           ...(input.contextReset === undefined ? {} : { afterSeq: input.contextReset.afterSeq }),
-        })
+        }), ctx.get('records'))
         const reference: Message[] = input.contextReset?.reference
           ? [{
               role: 'system',
@@ -113,7 +156,12 @@ export function apply(ctx: Ctx, config: { checkpointEvery?: number; hardStopStep
               }],
             }]
           : []
-        const baseMessages = [...reference, ...history]
+        const checkpointMessage: Message[] = checkpointNudge
+          ? [{ role: 'user', content: [{ type: 'text', text: checkpointNudge }] }]
+          : []
+        // 监督器/完成门提示只注入下一次模型请求，不能粘在后半段每一轮。
+        checkpointNudge = undefined
+        const baseMessages = [...reference, ...history, ...checkpointMessage]
         let preparedMessages = baseMessages
         if (memory) {
           try {
@@ -121,7 +169,7 @@ export function apply(ctx: Ctx, config: { checkpointEvery?: number; hardStopStep
               sessionId: input.sessionId,
               model,
               system,
-              tools: tools.active(),
+              tools: activeTools(),
               messages: baseMessages,
               ...(runId ? { runId } : {}),
               ...(input.signal ? { signal: input.signal } : {}),
@@ -140,8 +188,9 @@ export function apply(ctx: Ctx, config: { checkpointEvery?: number; hardStopStep
             ...preparedMessages,
           ],
           // 只给**启用的组**。全量进 prompt 会吃掉上下文, 也让模型更容易选错;
-          // 分组开关在设置页里 (配置 tools.disabled)
-          tools: tools.active(),
+          // 分组开关在设置页里 (配置 tools.disabled); excludeTools 再裁掉从属运行
+          // 不可递归调用的编排工具。
+          tools: activeTools(),
           signal: input.signal,
         }
 
@@ -150,6 +199,8 @@ export function apply(ctx: Ctx, config: { checkpointEvery?: number; hardStopStep
         const calls: ToolCall[] = []
         let failure: LlmFailure | undefined
         let usage: TokenUsage | undefined
+        let actualModel = model
+        let actualProvider: string | undefined
 
         const persistAborted = (): void => {
           if (text || reasoning || calls.length > 0 || usage) {
@@ -157,6 +208,9 @@ export function apply(ctx: Ctx, config: { checkpointEvery?: number; hardStopStep
               text,
               ...(reasoning ? { reasoning } : {}),
               ...(usage ? { usage } : {}),
+              ...(firstTextAt ? { firstTextAt } : {}),
+              model: actualModel,
+              ...(actualProvider ? { provider: actualProvider } : {}),
               toolCalls: calls.map((c) => ({ id: c.id, name: c.name, args: c.args })),
               partial: true,
               interrupted: true,
@@ -169,14 +223,21 @@ export function apply(ctx: Ctx, config: { checkpointEvery?: number; hardStopStep
           // 走 llm.stream() (组装后的流) 而不是 resolve().stream():
           // 块组装是中立层的活, provider 只吐 delta
           for await (const chunk of llm.stream(request)) {
+            if (chunk.type === 'route') {
+              actualModel = chunk.model
+              actualProvider = chunk.provider
+              continue
+            }
             if (chunk.type === 'text-delta') {
+              if (firstTextAt === undefined && chunk.text) firstTextAt = Date.now()
               text += chunk.text
               yield { type: 'text', text: chunk.text }
             }
-            // reasoning 不上行广播: 契约里没有这个事件类型, 加了前端就得改。
-            // 它照样落进 llm/completed, 将来要显示再加 (那时才动契约)
+            // reasoning 作为独立通道上行；它不拼进正文，只给运行时间线看。
+            // 完整的 reasoning 仍会落进 llm/completed，重放时才有真相。
             if (chunk.type === 'reasoning-delta') {
               reasoning += chunk.text
+              yield { type: 'reasoning', text: chunk.text }
             }
             if (chunk.type === 'usage') {
               usage = chunk.usage
@@ -227,6 +288,9 @@ export function apply(ctx: Ctx, config: { checkpointEvery?: number; hardStopStep
           text,
           ...(reasoning ? { reasoning } : {}),
           ...(usage ? { usage } : {}),
+          ...(firstTextAt ? { firstTextAt } : {}),
+          model: actualModel,
+          ...(actualProvider ? { provider: actualProvider } : {}),
           toolCalls: calls.map((c) => ({ id: c.id, name: c.name, args: c.args })),
         }))
 
@@ -236,6 +300,30 @@ export function apply(ctx: Ctx, config: { checkpointEvery?: number; hardStopStep
         )
 
         if (calls.length === 0) {
+          const verdict = await ctx.waterfall<TurnStopVerdict>(
+            'turn/stopping',
+            [{ sessionId: input.sessionId, ...(runId ? { runId } : {}), text, reason: 'stop' }],
+            () => ({ stop: true as const }),
+          )
+          if (!verdict.stop) {
+            completionGateRounds++
+            if (completionGateRounds > 3) {
+              const reason = `完成门连续 ${completionGateRounds} 次未通过：${verdict.message}`
+              session.append(input.sessionId, 'turn/ended', meta({
+                reason: 'error',
+                error: reason,
+                code: 'COMPLETION_GATE',
+              }))
+              yield { type: 'done', reason: 'error', error: reason }
+              return
+            }
+            checkpointNudge = [
+              '[完成门]',
+              verdict.message,
+              '这不是新的用户任务。先补齐完成条件，再给最终答复。',
+            ].join('\n')
+            continue
+          }
           session.append(input.sessionId, 'turn/ended', meta({ reason: 'stop' }))
           yield { type: 'done', reason: 'stop' }
           return
@@ -251,12 +339,19 @@ export function apply(ctx: Ctx, config: { checkpointEvery?: number; hardStopStep
           })
           const signature = `${call.name}:${stableJson(call.args)}`
           const file = fileOfTool(call)
+          const readOnly = isReadOnlyTool(call)
+          const target = targetOfTool(call)
+          totalToolCalls++
+          signatureCounts.set(signature, (signatureCounts.get(signature) ?? 0) + 1)
+          readOnlyStreak = readOnly ? readOnlyStreak + 1 : 0
           if (file) filesTouched.add(file)
           toolTrace.push({
             name: call.name,
             ok: result.ok,
+            readOnly,
             signature,
             ...(file ? { file } : {}),
+            ...(target ? { target } : {}),
             ...(result.ok ? {} : { error: result.error ?? result.text }),
           })
           consecutiveFailures = result.ok ? 0 : consecutiveFailures + 1
@@ -272,8 +367,10 @@ export function apply(ctx: Ctx, config: { checkpointEvery?: number; hardStopStep
 interface ProgressTool {
   name: string
   ok: boolean
+  readOnly: boolean
   signature: string
   file?: string
+  target?: string
   error?: string
 }
 
@@ -293,6 +390,9 @@ async function progressCheckpoint(input: {
   tools: ProgressTool[]
   filesTouched: string[]
   consecutiveFailures: number
+  readOnlyStreak: number
+  totalToolCalls: number
+  elapsedMs: number
 }): Promise<ProgressVerdict> {
   const recent = input.tools.slice(-16)
   const counts = new Map<string, number>()
@@ -323,11 +423,18 @@ async function progressCheckpoint(input: {
     recentTools: recent.map((tool) => ({
       name: tool.name,
       ok: tool.ok,
+      readOnly: tool.readOnly,
+      ...(tool.target ? { target: tool.target } : {}),
       ...(tool.file ? { file: tool.file } : {}),
       ...(tool.error ? { error: tool.error.slice(0, 240) } : {}),
     })),
     filesTouched: input.filesTouched.slice(-20),
     consecutiveFailures: input.consecutiveFailures,
+    readOnlyStreak: input.readOnlyStreak,
+    totalToolCalls: input.totalToolCalls,
+    readCalls: input.tools.filter((tool) => tool.readOnly).length,
+    progressCalls: input.tools.filter((tool) => !tool.readOnly).length,
+    elapsedMs: input.elapsedMs,
   }
 
   try {
@@ -408,10 +515,60 @@ function stableJson(value: unknown): string {
   }
 }
 
+const READ_ONLY_TOOLS = new Set([
+  'read', 'grep', 'glob', 'memory_search', 'memory_read', 'job_output', 'job_list', 'skill', 'get_goal',
+])
+
+function isReadOnlyTool(call: ToolCall): boolean {
+  return READ_ONLY_TOOLS.has(call.name)
+}
+
+function targetOfTool(call: ToolCall): string | undefined {
+  for (const key of ['file_path', 'path', 'pattern', 'command', 'objective', 'id', 'job_id', 'query']) {
+    const value = call.args[key]
+    if (typeof value === 'string' && value.trim()) return value.trim().slice(0, 240)
+  }
+  const action = call.args['action']
+  const name = call.args['name']
+  if (typeof action === 'string' && action.trim()) {
+    return `${action.trim()}${typeof name === 'string' && name.trim() ? `:${name.trim()}` : ''}`.slice(0, 240)
+  }
+  return undefined
+}
+
 function fileOfTool(call: ToolCall): string | undefined {
   if (call.name !== 'write' && call.name !== 'edit') return undefined
   const file = call.args['file_path']
   return typeof file === 'string' && file.trim() ? file.trim() : undefined
+}
+
+/**
+ * 把模型请求里的工具结果按 recordId 恢复全文。
+ *
+ * 会话事件仍然只存 2000 字回显（WS 帧不能被大输出拖垮），但模型下一轮
+ * 不应该只看开头。记录库是完整结果的真相源；恢复后再交给 memory 裁剪。
+ */
+export function expandRecordToolResults(
+  messages: readonly Message[],
+  records: { get(id: string): { text?: unknown; error?: unknown } | undefined } | undefined,
+): Message[] {
+  if (!records) return [...messages]
+  return messages.map((message) => {
+    if (message.role !== 'tool') return message
+    let changed = false
+    const content = message.content.map((block) => {
+      if (block.type !== 'tool-result' || !block.recordId) return block
+      const record = records.get(block.recordId)
+      const full = typeof record?.text === 'string' ? record.text : undefined
+      if (full === undefined) return block
+      changed = true
+      return {
+        ...block,
+        content: [{ type: 'text' as const, text: full.slice(0, 60_000) }],
+      }
+    })
+    return changed ? { ...message, content } : message
+  })
 }
 
 /**

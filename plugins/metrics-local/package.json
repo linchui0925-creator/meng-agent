@@ -1,0 +1,28 @@
+{
+  "name": "@meng/plugin-metrics-local",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "持久记录首字时间、步骤数、重复读取和完成率",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "files": ["src", "meng.patch.yml"],
+  "scripts": {
+    "test": "node --experimental-strip-types test/metrics.ts"
+  },
+  "dependencies": {
+    "@meng/core": "workspace:*",
+    "@meng/session": "workspace:*",
+    "@meng/web": "workspace:*"
+  },
+  "meng": {
+    "plugin": {
+      "apiVersion": 1,
+      "id": "metrics-local",
+      "patch": "./meng.patch.yml"
+    }
+  }
+}

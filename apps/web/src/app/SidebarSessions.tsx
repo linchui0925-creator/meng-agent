@@ -7,7 +7,7 @@
 import { useState } from 'react'
 
 import type { SlotComponent } from './layout.ts'
-import { groupSessions, previewTasks, type SessionSummary } from './sessions.ts'
+import { activityAtOf, groupSessions, previewTasks, type SessionSummary } from './sessions.ts'
 import { splitByWorkspace, type Workspace } from './workspaces.ts'
 import { ArchiveIcon, CheckIcon, ChevronIcon, CloseIcon, FolderIcon, TrashIcon } from './icons.tsx'
 import { RenameSessionDialog } from './RenameSessionDialog.tsx'
@@ -116,7 +116,7 @@ export function SidebarSessions({
           <span className={styles.sessionTitle} title="双击重命名">
             {session.title}
           </span>
-          <span className={styles.sessionMeta}>{formatSessionTime(session.at, now)}</span>
+          <span className={styles.sessionMeta}>{formatSessionTime(activityAtOf(session), now)}</span>
         </span>
 
         {session.preview && <span className={styles.sessionPreview}>{session.preview}</span>}

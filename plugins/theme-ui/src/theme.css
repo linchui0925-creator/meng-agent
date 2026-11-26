@@ -1,0 +1,79 @@
+/* ── 主题导航 ──
+   一行三个图标按钮: 侧栏只有 264px, 三个带文字的项会挤成两行。
+   当前项靠背景 + 底边高亮说话, 文字只留给读屏和 tooltip。 */
+
+.theme-group {
+  margin-top: var(--meng-specific-space-2);
+  padding-top: var(--meng-specific-space-2);
+  border-top: 1px solid var(--meng-alias-border-l1);
+}
+
+.theme-head {
+  display: flex;
+  align-items: center;
+  gap: var(--meng-specific-space-2);
+  padding: var(--meng-specific-space-1) var(--meng-specific-space-2);
+  color: var(--meng-alias-fg-muted);
+  font-size: var(--meng-specific-text-xs);
+  letter-spacing: 0.06em;
+}
+
+/* 当前模式写在组标题右边: 一眼知道现在是什么, 又不用三个按钮各带一段文字 */
+.theme-current {
+  margin-left: auto;
+  letter-spacing: 0;
+  color: var(--meng-alias-fg-secondary);
+}
+
+.theme-items {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--meng-specific-space-1);
+  padding: var(--meng-specific-space-1) var(--meng-specific-space-2);
+}
+
+.theme-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--meng-specific-radius-md);
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-muted);
+  font: inherit;
+  font-size: var(--meng-specific-text-xs);
+  cursor: pointer;
+}
+
+.theme-item:hover {
+  background: var(--meng-alias-bg-hover);
+  color: var(--meng-alias-fg-secondary);
+}
+
+.theme-item[data-active] {
+  background: var(--meng-alias-bg-surface);
+  border-color: var(--meng-alias-border-l1);
+  color: var(--meng-alias-fg-primary);
+}
+
+.theme-item:focus-visible {
+  outline: 2px solid var(--meng-alias-focus-ring);
+  outline-offset: -2px;
+}
+
+.theme-item svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.theme-item[data-active] svg {
+  color: var(--meng-alias-accent);
+}

@@ -1,0 +1,21 @@
+{
+  "name": "@meng/plugin-tool-ralph",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Ralph：每轮启动全新子智能体，用工作区和结构化交接推进同一目标",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "files": ["src", "meng.patch.yml", "README.md"],
+  "scripts": {
+    "test": "node --experimental-strip-types test/ralph.ts"
+  },
+  "dependencies": {
+    "@meng/core": "workspace:*",
+    "@meng/subagent": "workspace:*",
+    "@meng/tools": "workspace:*"
+  }
+}

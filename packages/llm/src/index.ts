@@ -59,6 +59,10 @@ export interface ToolResultBlock {
   toolCallId: string
   content: ContentBlock[]
   isError?: boolean
+  /** 会话事件只存回显；模型请求前可按这个 id 从记录库恢复全文。 */
+  recordId?: string
+  truncated?: boolean
+  bytes?: number
 }
 
 /**
@@ -252,6 +256,8 @@ export type FinishReason =
 
 /** provider 吐的原始流。`index` 是块号, 用来关联交错的 delta */
 export type StreamChunk =
+  /** 本次实际命中的供应商路由；发生故障转移时会出现多次，最后一次是真正产出结果的。 */
+  | { type: 'route'; provider: string; model: string; fallback?: boolean; from?: string; reason?: string }
   | { type: 'block-start'; index: number; blockType: BlockType }
   | { type: 'text-delta'; index: number; text: string }
   | { type: 'reasoning-delta'; index: number; text: string }
@@ -346,6 +352,10 @@ export async function* assemble(chunks: AsyncIterable<StreamChunk>): AsyncIterab
   }
 
   for await (const chunk of chunks) {
+    if (chunk.type === 'route') {
+      yield chunk
+      continue
+    }
     if (chunk.type === 'block-start') {
       sawBlock = true
       openAt(chunk.index, chunk.blockType)
@@ -1064,6 +1074,53 @@ export function apply(ctx: Ctx, config: { defaultModel?: string | DefaultModel }
     )
   }
 
+  const fallbackCodes = new Set<string>([
+    LLM_CODE.QUOTA,
+    LLM_CODE.AUTH,
+    LLM_CODE.INVALID_CREDENTIAL,
+    LLM_CODE.MISSING_CREDENTIAL,
+    LLM_CODE.RATE_LIMIT,
+    LLM_CODE.SERVER,
+    LLM_CODE.TIMEOUT,
+    LLM_CODE.TRANSPORT,
+    LLM_CODE.NO_ADAPTER,
+    LLM_CODE.DISCOVERY_FAILED,
+    LLM_CODE.EMPTY_RESPONSE,
+  ])
+
+  const hasImageInput = (req: StreamRequest): boolean => {
+    const hasImage = (blocks: readonly ContentBlock[]): boolean => blocks.some((block) =>
+      block.type === 'image' || (block.type === 'tool-result' && hasImage(block.content)),
+    )
+    return req.messages.some((message) => hasImage(message.content))
+  }
+
+  const shouldFallback = (failure: LlmFailure, req: StreamRequest): boolean => {
+    if (fallbackCodes.has(failure.code)) return true
+    return failure.code === LLM_CODE.BAD_REQUEST && hasImageInput(req) &&
+      /image|vision|multimodal|图片|视觉/i.test(failure.message)
+  }
+
+  const fallbackTargets = (primary: ResolvedRoute | undefined, req: StreamRequest): ResolvedRoute[] => {
+    const out: ResolvedRoute[] = []
+    for (const route of regs.keys()) {
+      if (route === primary?.id || !usable(route)) continue
+      const listed = modelList(route)
+      const picked = listed.find((item) => item.id === req.model) ?? listed[0]
+      if (!picked) continue
+      const target: ResolvedRoute = { id: route, model: picked.id, adapter: regs.get(route)!.adapter }
+      try {
+        assertImageInput(target, req)
+        assertReasoningEffort(target, req.reasoningEffort ?? target.reasoningEffort)
+      } catch {
+        continue
+      }
+      out.push(target)
+      if (out.length >= 3) break
+    }
+    return out
+  }
+
   const service: LLMService = {
     register(provider) {
       return service.registerAdapter([provider.id], providerAdapter(provider))
@@ -1211,15 +1268,67 @@ export function apply(ctx: Ctx, config: { defaultModel?: string | DefaultModel }
     stream(req) {
       return (async function* () {
         await service.refreshModels()
-        const target = resolve(req.model, req.provider)
-        assertImageInput(target, req)
-        const reasoningEffort = req.reasoningEffort ?? target.reasoningEffort
-        assertReasoningEffort(target, reasoningEffort)
-        yield* assemble(target.adapter.stream(target.id, {
-          ...req,
-          model: target.model,
-          ...(reasoningEffort ? { reasoningEffort } : {}),
-        }))
+        let primary: ResolvedRoute | undefined
+        let lastFailure: LlmFailure | undefined
+        try {
+          primary = resolve(req.model, req.provider)
+        } catch (error) {
+          if (error instanceof LlmError && shouldFallback(error.failure, req)) lastFailure = error.failure
+          else throw error
+        }
+        const targets = [...(primary ? [primary] : []), ...fallbackTargets(primary, req)]
+        if (targets.length === 0) {
+          throw lastFailure
+            ? new LlmError(lastFailure.message, lastFailure.code, lastFailure)
+            : new LlmError('没有可用的模型路由', LLM_CODE.NO_ADAPTER)
+        }
+
+        for (let index = 0; index < targets.length; index++) {
+          const target = targets[index]!
+          try {
+            assertImageInput(target, req)
+            const reasoningEffort = req.reasoningEffort ?? target.reasoningEffort
+            assertReasoningEffort(target, reasoningEffort)
+            yield {
+              type: 'route' as const,
+              provider: target.id,
+              model: target.model,
+              fallback: index > 0,
+              ...(index > 0 && primary ? { from: primary.id, reason: lastFailure?.message ?? 'primary failed' } : {}),
+            }
+            let emitted = false
+            for await (const chunk of assemble(target.adapter.stream(target.id, {
+              ...req,
+              model: target.model,
+              ...(reasoningEffort ? { reasoningEffort } : {}),
+            }))) {
+              if (chunk.type === 'finish' && (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted')) {
+                const failure = chunk.reason.failure
+                if (!emitted && shouldFallback(failure, req) && index < targets.length - 1) {
+                  lastFailure = failure
+                  break
+                }
+                yield chunk
+                return
+              }
+              if (chunk.type !== 'usage') emitted = true
+              yield chunk
+            }
+            return
+          } catch (error) {
+            if (error instanceof LlmError && shouldFallback(error.failure, req) && index < targets.length - 1) {
+              lastFailure = error.failure
+              continue
+            }
+            throw error
+          }
+        }
+
+        throw new LlmError(
+          lastFailure?.message ?? '所有模型路由都失败',
+          lastFailure?.code ?? LLM_CODE.NO_ADAPTER,
+          lastFailure ?? {},
+        )
       })()
     },
   }

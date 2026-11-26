@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { defineInvariant, type Ctx, type StatusGraph } from '@meng/core'
 import { buildPlugin } from './build.ts'
 import { packPlugin, verifyPlugin, verifyPluginPackage } from './package.ts'
@@ -15,6 +15,7 @@ import { scaffoldPlugin } from './scaffold.ts'
 import type { AdapterKind } from './manifest.ts'
 import type { PluginKind } from './types.ts'
 import { validatePlugin } from './validate.ts'
+import { advanceStudioWorkflow, initialStudioWorkflow, isStudioWorkflow, type StudioStep, type StudioStepName } from './workflow.ts'
 
 export { buildPlugin } from './build.ts'
 export { packPlugin, verifyPlugin, verifyPluginPackage } from './package.ts'
@@ -56,7 +57,7 @@ interface ToolDef {
   mutates?: boolean
   group?: string
   timeoutMs?: number
-  handler(args: Record<string, unknown>): Promise<unknown> | unknown
+  handler(args: Record<string, unknown>, ctx?: unknown, call?: { sessionId?: string }): Promise<unknown> | unknown
 }
 
 interface Tools {
@@ -80,6 +81,11 @@ interface ProfileRuntime {
   plugins?: Array<{ pluginId?: string }>
 }
 
+interface StudioSession {
+  read(sessionId: string): Array<{ type: string; data: unknown }>
+  append(sessionId: string, type: 'todo/write', data: { todos: StudioStep[] }): unknown
+}
+
 const writeSchema = {
   type: 'object',
   properties: {
@@ -97,8 +103,43 @@ export function apply(ctx: Ctx): void {
   const graph = ctx.get<StatusGraph>('graph')
   const platform = ctx.get<Platform>('platform')
   const profileRuntime = ctx.get<ProfileRuntime>('plugin-profile')
+  const studioSession = ctx.get<StudioSession>('session')
   const externalIds = new Set((profileRuntime?.plugins ?? []).flatMap((item) => typeof item.pluginId === 'string' ? [item.pluginId] : []))
   if (!tools || !prompt || !web) throw new Error('需要 tools、prompt 与 web 能力面')
+
+  const readWorkflow = (call: { sessionId?: string } | undefined, label: string): StudioStep[] | undefined => {
+    if (!studioSession || !call?.sessionId) return undefined
+    const events = studioSession.read(call.sessionId)
+    for (let i = events.length - 1; i >= 0; i--) {
+      const event = events[i]
+      if (event?.type !== 'todo/write') continue
+      const raw = (event.data as { todos?: unknown }).todos
+      if (!Array.isArray(raw)) return undefined
+      const steps = raw.flatMap((item): StudioStep[] => {
+        if (!item || typeof item !== 'object') return []
+        const row = item as { content?: unknown; status?: unknown }
+        if (typeof row.content !== 'string') return []
+        if (row.status !== 'pending' && row.status !== 'in_progress' && row.status !== 'completed') return []
+        return [{ content: row.content, status: row.status }]
+      })
+      return isStudioWorkflow(steps, label) ? steps : undefined
+    }
+    return undefined
+  }
+
+  const writeWorkflow = (call: { sessionId?: string } | undefined, steps: StudioStep[]): StudioStep[] => {
+    if (studioSession && call?.sessionId) studioSession.append(call.sessionId, 'todo/write', { todos: steps })
+    return steps
+  }
+
+  const startWorkflow = (call: { sessionId?: string } | undefined, label: string): StudioStep[] =>
+    writeWorkflow(call, initialStudioWorkflow(label))
+
+  const advanceWorkflow = (call: { sessionId?: string } | undefined, label: string, step: StudioStepName): StudioStep[] =>
+    writeWorkflow(call, advanceStudioWorkflow(readWorkflow(call, label) ?? [], label, step))
+
+  const nextOf = (steps: StudioStep[]): string =>
+    steps.find((item) => item.status === 'in_progress')?.content ?? '等待用户验收'
 
   // 工具名用下划线, 不用点号: 厂商接口对 function.name 的规则是
   // `^[a-zA-Z0-9_-]+$` (OpenAI / DeepSeek / Gemini 一致), 点号会被整包拒掉 ——
@@ -112,40 +153,34 @@ export function apply(ctx: Ctx): void {
   })
   register({
     name: 'studio_profile_list',
-    description: '列出梦 profile 中已安装、启停状态和插件配置',
-    parameters: {
-      type: 'object',
-      properties: { directory: { type: 'string' } },
-      required: ['directory'],
-      additionalProperties: false,
-    },
-    handler: (args) => {
-      const plugins = new ProfileStore(text(args.directory)).init().pkg.meng?.profile?.bundles?.map((name) => {
-        const state = new ProfileStore(text(args.directory)).list().find((item) => item.name === name)
-        return state
-      }) ?? []
-      return result('profile 插件清单', { plugins })
+    description: '列出运行中梦的 profile：已安装、启停状态和插件配置',
+    parameters: { type: 'object', properties: {}, additionalProperties: false },
+    handler: () => {
+      const directory = profileDir({})
+      const store = new ProfileStore(directory)
+      store.init()
+      const plugins = store.list()
+      return result('profile 插件清单', { directory, plugins })
     },
   })
   register({
     name: 'studio_profile_add',
-    description: '把插件 bundle 登记到 profile；只改清单和依赖，不联网安装',
+    description: '把插件 bundle 登记到运行中梦的 profile；只改清单和依赖，不联网安装',
     mutates: true,
     parameters: {
       type: 'object',
       properties: {
-        directory: { type: 'string' },
         name: { type: 'string' },
         version: { type: 'string' },
         enabled: { type: 'boolean' },
         config: { type: 'object', additionalProperties: true },
         confirm: { type: 'boolean' },
       },
-      required: ['directory', 'name', 'version', 'confirm'],
+      required: ['name', 'version', 'confirm'],
       additionalProperties: false,
     },
     handler: (args) => guard(args, () => {
-      const store = new ProfileStore(text(args.directory))
+      const store = new ProfileStore(profileDir({}))
       store.init()
       const config = isRecord(args.config) ? { ...args.config } : {}
       if (typeof args.enabled === 'boolean') config.enabled = args.enabled
@@ -155,22 +190,21 @@ export function apply(ctx: Ctx): void {
   })
   register({
     name: 'studio_profile_set',
-    description: '修改 profile 中插件的启停状态和配置',
+    description: '修改运行中梦的 profile 中插件启停状态和配置',
     mutates: true,
     parameters: {
       type: 'object',
       properties: {
-        directory: { type: 'string' },
         name: { type: 'string' },
         enabled: { type: 'boolean' },
         config: { type: 'object', additionalProperties: true },
         confirm: { type: 'boolean' },
       },
-      required: ['directory', 'name', 'confirm'],
+      required: ['name', 'confirm'],
       additionalProperties: false,
     },
     handler: (args) => guard(args, () => {
-      const store = new ProfileStore(text(args.directory))
+      const store = new ProfileStore(profileDir({}))
       const name = text(args.name)
       if (typeof args.enabled === 'boolean') store.setEnabled(name, args.enabled)
       if (isRecord(args.config)) store.setConfig(name, { ...args.config })
@@ -179,20 +213,19 @@ export function apply(ctx: Ctx): void {
   })
   register({
     name: 'studio_profile_remove',
-    description: '从 profile 清单中移除插件 bundle；默认不删除用户数据',
+    description: '从运行中梦的 profile 清单移除插件 bundle；默认不删除用户数据',
     mutates: true,
     parameters: {
       type: 'object',
       properties: {
-        directory: { type: 'string' },
         name: { type: 'string' },
         confirm: { type: 'boolean' },
       },
-      required: ['directory', 'name', 'confirm'],
+      required: ['name', 'confirm'],
       additionalProperties: false,
     },
     handler: (args) => guard(args, () => {
-      const state = new ProfileStore(text(args.directory)).remove(text(args.name))
+      const state = new ProfileStore(profileDir({})).remove(text(args.name))
       return result('插件已从 profile 移除', state.pkg)
     }),
   })
@@ -423,13 +456,12 @@ export function apply(ctx: Ctx): void {
   })
   register({
     name: 'studio_install',
-    description: '校验并安装自包含插件 tgz 到 profile；失败自动回滚，不联网',
+    description: '校验并安装自包含插件 tgz 到运行中梦的 profile；失败自动回滚，不联网',
     mutates: true,
     timeoutMs: 60_000,
     parameters: {
       type: 'object',
       properties: {
-        profile: { type: 'string', description: 'profile 目录' },
         archive: { type: 'string', description: '插件 .tgz 路径' },
         expectedSha256: { type: 'string', description: '可选的 tgz SHA-256' },
         signature: { type: 'string', description: '可选 detached 签名文件' },
@@ -437,27 +469,29 @@ export function apply(ctx: Ctx): void {
         requireSignature: { type: 'boolean' },
         confirm: { type: 'boolean' },
       },
-      required: ['profile', 'archive', 'confirm'],
+      required: ['archive', 'confirm'],
       additionalProperties: false,
     },
-    handler: async (args) => guardAsync(args, async () =>
-      result('插件已安装', await installArchive(text(args.profile), text(args.archive), {
+    handler: async (args, _ctx, call) => guardAsync(args, async () => {
+      const archive = text(args.archive)
+      const installed = await installArchive(profileDir({}), archive, {
         ...(optional(args.expectedSha256) ? { expectedSha256: optional(args.expectedSha256) } : {}),
         ...(optional(args.signature) ? { signature: optional(args.signature) } : {}),
         ...(optional(args.trustStore) ? { trustStore: optional(args.trustStore) } : {}),
         ...(args.requireSignature === true ? { requireSignature: true } : {}),
-      })),
-    ),
+      })
+      const workflow = advanceWorkflow(call, basename(archive).replace(/\.tgz$/i, ''), '安装到 profile')
+      return result(`插件已安装到运行中梦的 profile，重启梦后生效；下一步：${nextOf(workflow)}`, { ...installed, workflow, next: nextOf(workflow) })
+    }),
   })
   register({
     name: 'studio_install_package',
-    description: '用 npm 安装带运行依赖的插件 tgz；联网需显式 allowNetwork=true，失败自动回滚',
+    description: '用 npm 安装带运行依赖的插件 tgz 到运行中梦的 profile；联网需显式 allowNetwork=true，失败自动回滚',
     mutates: true,
     timeoutMs: 180_000,
     parameters: {
       type: 'object',
       properties: {
-        profile: { type: 'string' },
         archive: { type: 'string' },
         allowNetwork: { type: 'boolean' },
         npmCache: { type: 'string' },
@@ -469,11 +503,12 @@ export function apply(ctx: Ctx): void {
         requireSignature: { type: 'boolean' },
         confirm: { type: 'boolean' },
       },
-      required: ['profile', 'archive', 'confirm'],
+      required: ['archive', 'confirm'],
       additionalProperties: false,
     },
-    handler: async (args) => guardAsync(args, async () =>
-      result('插件及依赖已安装', await installPackage(text(args.profile), text(args.archive), {
+    handler: async (args, _ctx, call) => guardAsync(args, async () => {
+      const archive = text(args.archive)
+      const installed = await installPackage(profileDir({}), archive, {
         ...(args.allowNetwork === true ? { allowNetwork: true } : {}),
         ...(optional(args.npmCache) ? { npmCache: optional(args.npmCache) } : {}),
         ...(optional(args.packageManager) ? { packageManager: optional(args.packageManager) as 'npm' | 'pnpm' } : {}),
@@ -482,43 +517,43 @@ export function apply(ctx: Ctx): void {
         ...(optional(args.signature) ? { signature: optional(args.signature) } : {}),
         ...(optional(args.trustStore) ? { trustStore: optional(args.trustStore) } : {}),
         ...(args.requireSignature === true ? { requireSignature: true } : {}),
-      })),
-    ),
+      })
+      const workflow = advanceWorkflow(call, basename(archive).replace(/\.tgz$/i, ''), '安装到 profile')
+      return result(`插件及依赖已安装到运行中梦的 profile，重启梦后生效；下一步：${nextOf(workflow)}`, { ...installed, workflow, next: nextOf(workflow) })
+    }),
   })
   register({
     name: 'studio_uninstall',
-    description: '从 profile 卸载插件程序；默认保留 .meng 数据目录',
+    description: '从运行中梦的 profile 卸载插件程序；默认保留 .meng 数据目录',
     mutates: true,
     parameters: {
       type: 'object',
       properties: {
-        profile: { type: 'string' },
         name: { type: 'string' },
         confirm: { type: 'boolean' },
       },
-      required: ['profile', 'name', 'confirm'],
+      required: ['name', 'confirm'],
       additionalProperties: false,
     },
     handler: (args) => guard(args, () =>
-      result('插件已卸载，用户数据保留', uninstallPlugin(text(args.profile), text(args.name))),
+      result('插件已卸载，用户数据保留；重启梦后生效', uninstallPlugin(profileDir({}), text(args.name))),
     ),
   })
   register({
     name: 'studio_rollback',
-    description: '回滚最近一次插件安装或卸载事务',
+    description: '回滚运行中梦的最近一次插件安装或卸载事务',
     mutates: true,
     parameters: {
       type: 'object',
       properties: {
-        profile: { type: 'string' },
         transactionId: { type: 'string' },
         confirm: { type: 'boolean' },
       },
-      required: ['profile', 'confirm'],
+      required: ['confirm'],
       additionalProperties: false,
     },
     handler: (args) => guard(args, () =>
-      result('插件事务已回滚', rollbackLast(text(args.profile), optional(args.transactionId))),
+      result('插件事务已回滚；重启梦后生效', rollbackLast(profileDir({}), optional(args.transactionId))),
     ),
   })
   register({
@@ -541,9 +576,10 @@ export function apply(ctx: Ctx): void {
       required: ['id', 'output', 'confirm'],
       additionalProperties: false,
     },
-    handler: (args) => guard(args, () => {
+    handler: (args, _ctx, call) => guard(args, () => {
+      const id = text(args.id)
       const created = scaffoldPlugin({
-        id: text(args.id),
+        id,
         output: text(args.output),
         packageName: optional(args.packageName),
         kind: (optional(args.kind) ?? 'backend') as PluginKind,
@@ -552,7 +588,8 @@ export function apply(ctx: Ctx): void {
         description: optional(args.description),
         source: optional(args.source),
       })
-      return result('插件骨架已创建；继续实现业务代码后再构建', created)
+      const workflow = startWorkflow(call, id)
+      return result(`插件骨架已创建；下一步：${nextOf(workflow)}`, { ...created, workflow, next: nextOf(workflow) })
     }),
   })
   register({
@@ -575,10 +612,11 @@ export function apply(ctx: Ctx): void {
       required: ['id', 'source', 'output', 'confirm'],
       additionalProperties: false,
     },
-    handler: (args) => guard(args, () => {
+    handler: (args, _ctx, call) => guard(args, () => {
       if (!args.source) throw new Error('适配外部功能必须提供 source')
+      const id = text(args.id)
       const created = scaffoldPlugin({
-        id: text(args.id),
+        id,
         output: text(args.output),
         packageName: optional(args.packageName),
         kind: (optional(args.kind) ?? 'fullstack') as PluginKind,
@@ -587,7 +625,8 @@ export function apply(ctx: Ctx): void {
         description: optional(args.description),
         source: text(args.source),
       })
-      return result('适配骨架已创建；请只读分析原源码，在新目录实现插件入口', created)
+      const workflow = startWorkflow(call, id)
+      return result(`适配骨架已创建；下一步：${nextOf(workflow)}`, { ...created, workflow, next: nextOf(workflow) })
     }),
   })
   register({
@@ -602,9 +641,12 @@ export function apply(ctx: Ctx): void {
       required: ['directory'],
       additionalProperties: false,
     },
-    handler: (args) => {
-      const report = validatePlugin(text(args.directory), { built: args.built !== false })
-      return { ok: report.ok, text: report.ok ? '插件规范校验通过' : report.errors.join('\n'), value: report }
+    handler: (args, _ctx, call) => {
+      const directory = text(args.directory)
+      const report = validatePlugin(directory, { built: args.built !== false })
+      if (!report.ok) return { ok: false, text: report.errors.join('\n'), value: report }
+      const workflow = advanceWorkflow(call, basename(directory), '规范校验')
+      return { ok: true, text: `插件规范校验通过；下一步：${nextOf(workflow)}`, value: { ...report, workflow, next: nextOf(workflow) } }
     },
   })
   register({
@@ -613,7 +655,12 @@ export function apply(ctx: Ctx): void {
     mutates: true,
     timeoutMs: 120_000,
     parameters: writeSchema,
-    handler: async (args) => guardAsync(args, async () => result('插件构建完成', await buildPlugin(text(args.directory)))),
+    handler: async (args, _ctx, call) => guardAsync(args, async () => {
+      const directory = text(args.directory)
+      const built = await buildPlugin(directory)
+      const workflow = advanceWorkflow(call, basename(directory), '构建插件')
+      return result(`插件构建完成；下一步：${nextOf(workflow)}`, { ...built, workflow, next: nextOf(workflow) })
+    }),
   })
   register({
     name: 'studio_pack',
@@ -630,9 +677,12 @@ export function apply(ctx: Ctx): void {
       required: ['directory', 'destination', 'confirm'],
       additionalProperties: false,
     },
-    handler: async (args) => guardAsync(args, async () =>
-      result('分发包已生成', await packPlugin(text(args.directory), text(args.destination))),
-    ),
+    handler: async (args, _ctx, call) => guardAsync(args, async () => {
+      const directory = text(args.directory)
+      const packed = await packPlugin(directory, text(args.destination))
+      const workflow = advanceWorkflow(call, basename(directory), '打包分发')
+      return result(`分发包已生成；下一步：${nextOf(workflow)}`, { ...packed, workflow, next: nextOf(workflow) })
+    }),
   })
   register({
     name: 'studio_verify',
@@ -649,12 +699,15 @@ export function apply(ctx: Ctx): void {
       required: ['confirm'],
       additionalProperties: false,
     },
-    handler: async (args) => guardAsync(args, async () => {
+    handler: async (args, _ctx, call) => guardAsync(args, async () => {
       if (!args.directory && !args.archive) throw new Error('directory 与 archive 至少提供一个')
       const report = args.archive
         ? await verifyPluginPackage(text(args.archive))
         : await verifyPlugin(text(args.directory))
-      return { ok: report.ok, text: report.details.join('\n'), value: report }
+      if (!report.ok) return { ok: false, text: report.details.join('\n'), value: report }
+      const label = args.directory ? basename(text(args.directory)) : basename(text(args.archive)).replace(/\.tgz$/i, '')
+      const workflow = advanceWorkflow(call, label, '隔离验证')
+      return { ok: true, text: `隔离验证通过；下一步：${nextOf(workflow)}`, value: { ...report, workflow, next: nextOf(workflow) } }
     }),
   })
   const profileDir = (payload: Record<string, unknown>): string => {

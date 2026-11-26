@@ -1,0 +1,3 @@
+- insert:
+    - id: plan-mode
+      name: '@meng/plugin-plan-mode'

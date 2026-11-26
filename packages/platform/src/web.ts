@@ -62,10 +62,12 @@ export function webFaces(): PlatformFaces {
     },
     notify: NotificationCtor === undefined ? undefined : {
       async send(title, body) {
+        if (NotificationCtor.permission === 'denied') return
         if (NotificationCtor.permission !== 'granted' && NotificationCtor.requestPermission) {
-          await NotificationCtor.requestPermission()
+          const permission = await NotificationCtor.requestPermission()
+          if (permission !== 'granted') return
         }
-        new NotificationCtor(title, { body }).close()
+        new NotificationCtor(title, { body })
       },
     },
     clipboard: navigator?.clipboard === undefined ? undefined : {

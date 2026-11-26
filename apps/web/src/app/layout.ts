@@ -21,7 +21,7 @@ import type { JobRow, Message, ModifiedFile, PendingQuestion, ToolCall, WaitStat
 import type { QueuedMessage } from './queue.ts'
 import type { SessionSummary } from './sessions.ts'
 import type { Workspace } from './workspaces.ts'
-import type { Prefs } from '../prefs.ts'
+import type { Prefs, ThemeMode } from '../prefs.ts'
 import type { ResolvedTheme } from '../theme.ts'
 import type { ReasoningEffort } from '@meng/llm'
 import type { MemoryStatus } from '@meng/loop'
@@ -162,6 +162,10 @@ export type ModelSwitchPrompt = {
 }
 
 export type ComposerApi = {
+  /** 当前会话；首屏尚未创建时为空。插件可用 ensureSession 先创建。 */
+  sessionId?: string
+  /** 幂等创建/取得当前会话，返回后端 sessionId。 */
+  ensureSession: (title?: string) => Promise<string>
   value: string
   setValue: (value: string) => void
   /** 发送当前值；agent 正在运行时由宿主自动放入等待队列。 */
@@ -310,6 +314,20 @@ export type LayoutApi = {
   onRenameSession: (sessionId: string, title: string) => Promise<void>
   theme: ResolvedTheme
   /**
+   * 主题的**模式** (light/dark/system), 不是解析后的深浅。
+   *
+   * 为什么两个都要: 标题栏那个日/月按钮只需要"现在是深还是浅"(theme),
+   * 而侧栏主题导航要显示「跟随系统」这一档 —— 那只有模式知道。
+   * `theme` 是 resolve 后的结果, `prefs.theme` 是用户选的原值, 两者不是一回事。
+   */
+  themeMode: ThemeMode
+  /**
+   * 写主题模式。归宿主: 偏好只有一个写入口 (App.changePrefs),
+   * 侧栏 / 标题栏 / 设置页都走它 —— 三个入口各写各的, 是这类界面
+   * 最常见的"设置不生效"来源。
+   */
+  onThemeChange: (mode: ThemeMode) => void
+  /**
    * 视觉偏好（密度 / 动效 / 气泡 / 工具卡折叠）。
    *
    * 传整份而不是拆成一个个布尔: 布局是「渲染时要用到偏好」的地方,
@@ -371,7 +389,14 @@ export type LayoutApi = {
   readAttachment: (attachmentId: string) => Promise<{ id: string; mime: string; dataBase64: string }>
   /** 会话内任务托盘：读取增量输出 / 停止任务。 */
   jobActions: {
-    read: (jobId: string) => Promise<{ text: string; job?: unknown }>
+    /** full=true 读取不消费的尾部快照；false 保留旧的增量读取。 */
+    read: (jobId: string, full?: boolean) => Promise<{
+      text: string
+      lossy?: boolean
+      spillPath?: string
+      tailTruncated?: boolean
+      job?: unknown
+    }>
     stop: (jobId: string) => Promise<unknown>
   }
 }

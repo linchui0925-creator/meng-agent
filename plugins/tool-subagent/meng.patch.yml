@@ -1,0 +1,3 @@
+- insert:
+    - id: tool-subagent
+      name: '@meng/plugin-tool-subagent'

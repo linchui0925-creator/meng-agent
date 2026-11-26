@@ -26,7 +26,10 @@
       "@meng/net": ["packages/net/src/index.ts"],
       "@meng/prompt": ["packages/prompt/src/index.ts"],
       "@meng/loop": ["packages/loop/src/index.ts"],
+      "@meng/task-router": ["packages/task-router/src/index.ts"],
+      "@meng/run-state": ["packages/run-state/src/index.ts"],
       "@meng/jobs": ["packages/jobs/src/index.ts"],
+      "@meng/subagent": ["packages/subagent/src/index.ts"],
       "@meng/slots": ["packages/slots/src/index.ts"],
       "@meng/modules": ["packages/modules/src/index.ts"],
       "@meng/modules/client": ["packages/modules/src/client.ts"],
@@ -57,6 +60,7 @@
     "packages/web-react",
     "packages/slots",
     "packages/modules",
-    "apps/web"
+    "apps/web",
+    "plugins/screen-ambient"
   ]
 }

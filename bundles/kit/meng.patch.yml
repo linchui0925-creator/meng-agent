@@ -10,6 +10,35 @@
 # 两个地方都写配置迟早会漂移, 那是 Python 版 36 个 include_router 的老毛病。
 
 - insert:
+    # Agent 总任务策略：复杂度、插件/核心、计划与委派。放在能力面之前，
+    # 因为它只注入系统提示，不依赖工具或会话服务。
+    - id: agent-policy
+      name: '@meng/plugin-agent-policy'
+
+    # 交付模式分流：简答不挂工具，小改限制工具预算，多步要求 Todo，长期开放 Goal/子代理。
+    # 可单独关闭；关闭后 loop-basic 恢复原来的全量工具行为。
+    - id: task-router
+      name: '@meng/plugin-task-router'
+      config:
+        smallEditMaxTools: 8
+        requireTodoForMulti: true
+
+    # 当前轮只注入任务读写/搜索/验证状态，不注入工具正文。
+    - id: evidence-workbench
+      name: '@meng/plugin-evidence-workbench'
+      config:
+        maxMarkers: 24
+
+    # 正常结束前的运行时完成门：Plan、Todo 和验证证据缺一不可。
+    - id: completion-gate
+      name: '@meng/plugin-completion-gate'
+
+    # 持久性能指标：TTFT、步骤数、重复读取、无进展占比和完成率。
+    - id: metrics-local
+      name: '@meng/plugin-metrics-local'
+      config:
+        dir: !!js process.env.MENG_DATA_DIR || '.meng'
+
     # ── seam: 能力面 ──────────────────────────────────────────
     # 文件读写都走它。工具不许 import node:fs (将来进 lint)。
     # 换托管版只读 fs 提供方时, 下面四个工具插件一行都不用改
@@ -142,6 +171,10 @@
         maxBlocks: 80
         # smallModel: 'gpt-4o-mini'
 
+    # 项目技能：只把技能目录注入提示，正文按需用 skill 工具读取。
+    - id: skill-local
+      name: '@meng/plugin-skill-local'
+
     # 模型中途向用户提问。没有它, 信息不足时模型只能猜
     - id: tool-ask
       name: '@meng/plugin-tool-ask'
@@ -153,6 +186,40 @@
       config:
         waitTimeoutMs: 30000
         maxWaitTimeoutMs: 600000
+
+    # 先规划、再批准、再执行的协作状态。Plan 是软引导；是否允许写仍由
+    # policy-fs / policy-approval 独立决定。
+    - id: plan-mode
+      name: '@meng/plugin-plan-mode'
+
+    # 执行锚点：模型维护整份 Todo，前端在对话顶部显示进度。
+    - id: tool-todo
+      name: '@meng/plugin-tool-todo'
+      config:
+        allowParallelInProgress: false
+
+    # 同一会话的长期目标与自动续轮驱动。用户停止或执行报错时自动暂停。
+    - id: goal
+      name: '@meng/plugin-goal'
+      config:
+        autoContinue: true
+        maxGoalRounds: 12
+
+    # 子智能体能力面 + 单次委派工具。子会话使用独立上下文和隐藏 sessionId。
+    - id: subagent-local
+      name: '@meng/plugin-subagent-local'
+      config:
+        maxConcurrent: 4
+        maxResultChars: 16000
+    - id: tool-subagent
+      name: '@meng/plugin-tool-subagent'
+
+    # Ralph 是独立编排工具，不是普通长任务的默认路径。
+    - id: tool-ralph
+      name: '@meng/plugin-tool-ralph'
+      config:
+        maxRounds: 12
+        maxReportChars: 12000
 
     # ── 纯前端插件: 只有产物, 没有后端 apply ────────────────────
     # 没有 name 的那一行是**故意**的: 它不需要被 import, 只要让前端知道
@@ -166,3 +233,24 @@
         platforms: [web]
         immediately: false
         slots: ['sidebar.footer']
+
+    # 计算器是纯前端插件；默认随发行版装载，但核心侧栏只保留 sidebar.utility 座位。
+    - id: calculator
+      client:
+        platforms: [web, desktop]
+        immediately: false
+        slots: ['sidebar.utility']
+
+    # 主题导航和标题栏切换也是前端 UI 插件；宿主只提供主题状态和写入口。
+    - id: theme-ui
+      client:
+        platforms: [web, desktop]
+        immediately: false
+        slots: ['sidebar.utility', 'topbar.actions']
+
+    # 输入框底部统一协作下拉：Plan / Todo / Goal / 子智能体共用一格。
+    - id: collab-ui
+      client:
+        platforms: [web, desktop]
+        immediately: false
+        slots: ['composer.tools']

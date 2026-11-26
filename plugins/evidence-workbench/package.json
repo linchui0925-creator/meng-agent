@@ -1,0 +1,30 @@
+{
+  "name": "@meng/plugin-evidence-workbench",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "把当前任务读写、搜索和验证状态注入上下文，不注入工具正文",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "files": ["src", "meng.patch.yml"],
+  "scripts": {
+    "test": "node --experimental-strip-types test/evidence.ts"
+  },
+  "dependencies": {
+    "@meng/core": "workspace:*",
+    "@meng/prompt": "workspace:*",
+    "@meng/run-state": "workspace:*",
+    "@meng/session": "workspace:*",
+    "@meng/task-router": "workspace:*"
+  },
+  "meng": {
+    "plugin": {
+      "apiVersion": 1,
+      "id": "evidence-workbench",
+      "patch": "./meng.patch.yml"
+    }
+  }
+}

@@ -80,10 +80,15 @@ export function createContext(id = 'root', parent: Ctx | null = null): Ctx {
         throw new Error(`能力面 ${name} 已被占用 (作用域 ${id})`)
       }
       services.set(name, value)
+      // 后加载的插件可以监听这个事件，把 op / 路由挂到后来才出现的能力面上。
+      // 典型场景：kit 层的工具插件先加载，server 层的 web 能力后注册。
+      ctx.emit('capability/registered', name, value)
       // 能力面也进 disposer 栈: 卸载 llm 包时 ctx.llm 必须跟着消失,
       // 否则重装会撞"已被占用", 直接死在第二次装载上 (这个坑 Python 版踩过)
       const off: Disposer = () => {
-        if (services.get(name) === value) services.delete(name)
+        if (services.get(name) !== value) return
+        services.delete(name)
+        ctx.emit('capability/unregistered', name, value)
       }
       disposers.push(off)
       return off

@@ -285,5 +285,7 @@ export type { HttpApp, RouteCtx, SessionEventType }
 export const EVENT_TYPES = [
   'hello', 'session/created', 'turn/started', 'llm/chunk', 'llm/completed',
   'tool/called', 'tool/completed', 'tool/blocked', 'question/asked', 'question/answered',
-  'model/switched', 'context/compacted', 'progress/checkpoint', 'job/started', 'job/completed', 'turn/ended', 'plugin/graph', 'error',
+  'model/switched', 'context/compacted', 'progress/checkpoint',
+  'plan/mode', 'plan/submitted', 'todo/write', 'goal/change', 'subagent/started', 'subagent/completed',
+  'job/started', 'job/completed', 'turn/ended', 'plugin/graph', 'error',
 ] as const

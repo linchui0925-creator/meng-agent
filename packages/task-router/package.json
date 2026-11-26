@@ -1,0 +1,16 @@
+{
+  "name": "@meng/task-router",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "任务交付模式契约与确定性分类器",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "files": ["src"],
+  "dependencies": {
+    "@meng/core": "workspace:*"
+  }
+}

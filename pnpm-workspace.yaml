@@ -3,6 +3,11 @@ packages:
   - 'bundles/*'
   - 'apps/*'
   - 'plugins/*'
+overrides:
+  # app-builder-lib 用 `@electron/get` 的 `ElectronDownloadCacheMode` 枚举,
+  # 而 3.0.0 没导出它 (3.1.0 才加)。范围是 ^3.0.0, pnpm 默认解析到 3.0.0,
+  # 于是 electron-builder 在打包时炸 "Cannot read properties of undefined"。
+  '@electron/get': 3.1.0
 allowBuilds:
   '@google/genai': false
   electron: true

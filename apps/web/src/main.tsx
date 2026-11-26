@@ -29,6 +29,7 @@ import { createClientModuleSystem, type ClientModuleLoader } from '@meng/modules
 import { bootShell, type EntryState, type ShellHandle } from '@meng/shell'
 import * as MengSlots from '@meng/slots'
 import { createSlotRegistry, type SlotDef, type SlotRegistry } from '@meng/slots'
+import type { PlatformFaces } from '@meng/platform'
 import type { Transport } from '@meng/transport'
 import { createInprocTransport } from '@meng/transport/inproc'
 import { createIpcTransport } from '@meng/transport/ipc'
@@ -85,6 +86,7 @@ const SLOT_DEFS: Array<[string, SlotDef]> = [
   ['composer', { kind: 'chain', scope: 'session-maybe' }],
   ['sidebar.footer', { kind: 'list', scope: 'root' }],
   ['sidebar.nav', { kind: 'list', scope: 'root' }],
+  ['sidebar.utility', { kind: 'list', scope: 'root' }],
   // 新会话空屏、输入建议下方。插件可放一张轻量入口卡，不抢输入框。
   ['home.actions', { kind: 'list', scope: 'session-maybe' }],
   // 右侧第三栏。与内置插件状态面板并列，插件可贡献自己的紧凑面板。
@@ -110,6 +112,8 @@ const SLOT_DEFS: Array<[string, SlotDef]> = [
   // 输入框工具条: 附件 / 模型选择 / 引用文件。没有它, 插件想加一个按钮
   // 就只能整块替换 composer —— 那是用大炮打蚊子, 还会丢草稿
   ['composer.actions', { kind: 'list', scope: 'session-maybe' }],
+  // 输入框底部环境栏里的协作入口；Plan / Todo / Goal / 子智能体共用这一格下拉。
+  ['composer.tools', { kind: 'list', scope: 'session-maybe' }],
   // 状态条: token 用量 / 模型名 / 索引进度。用 root, 无会话时也该能显示
   ['statusbar.item', { kind: 'list', scope: 'root' }],
 
@@ -151,6 +155,22 @@ const PLUGIN_ROWS: PluginRow[] = [
     // 随发行版打包 → 保守启动时保留
     origin: 'builtin',
   },
+  {
+    id: 'calculator',
+    url: '/plugins/calculator/client.js',
+    platforms: ['web', 'desktop'],
+    inject: ['slots'],
+    immediately: false,
+    origin: 'builtin',
+  },
+  {
+    id: 'theme-ui',
+    url: '/plugins/theme-ui/client.js',
+    platforms: ['web', 'desktop'],
+    inject: ['slots'],
+    immediately: false,
+    origin: 'builtin',
+  },
 ]
 
 interface Booted {
@@ -161,6 +181,8 @@ interface Booted {
   fixture: string | null
   /** 模块系统。dev 面板与浏览器验收脚本靠它做 invalidate */
   modules: ClientModuleLoader
+  /** 三端能力面。桌面/网页通知都从这里走。 */
+  platform: PlatformFaces
 }
 
 /**
@@ -506,7 +528,7 @@ async function bootstrap(report: (entries: EntryState[]) => void): Promise<Boote
   // dev 出口: 浏览器验收脚本用它做 invalidate / 重新装载 / 断网
   Object.assign(window, { __meng: { modules, slots, ctx, transport, handle } })
 
-  return { handle, transport, slots, fixture, modules }
+  return { handle, transport, slots, fixture, modules, platform }
 }
 
 function WebApp() {
@@ -532,7 +554,22 @@ function WebApp() {
             {/* ?crash=N 在渲染期炸 N 次, 用来验兜底界面 —— 炸够次数就恢复, 让 reset 路径可验 */}
             {params.get('crash') && <CrashBomb times={Number(params.get('crash')) || 1} />}
             <TransportProvider transport={booted.transport}>
-              <App transport={booted.transport} slots={booted.slots} fixture={booted.fixture} auto={params.get('auto') ?? undefined} />
+              <App
+                transport={booted.transport}
+                slots={booted.slots}
+                fixture={booted.fixture}
+                auto={params.get('auto') ?? undefined}
+                notify={(title, body) => {
+                  const desktop = (globalThis as { mengDesktop?: unknown }).mengDesktop !== undefined
+                  if (desktop) {
+                    void booted.transport.invoke('system.notify', { title, body }).catch(() => {
+                      void booted.platform.notify?.send(title, body)
+                    })
+                    return
+                  }
+                  void booted.platform.notify?.send(title, body)
+                }}
+              />
             </TransportProvider>
           </>
         ) : null

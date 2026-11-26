@@ -1,0 +1,6 @@
+- insert:
+    - id: calculator
+      client:
+        platforms: [web, desktop]
+        immediately: false
+        slots: ['sidebar.utility']

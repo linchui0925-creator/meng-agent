@@ -10,6 +10,7 @@
     "@meng/loop": "workspace:*",
     "@meng/prompt": "workspace:*",
     "@meng/session": "workspace:*",
+    "@meng/task-router": "workspace:*",
     "@meng/tools": "workspace:*"
   }
 }

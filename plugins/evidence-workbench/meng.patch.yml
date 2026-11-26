@@ -1,0 +1,5 @@
+- insert:
+    - id: evidence-workbench
+      name: '@meng/plugin-evidence-workbench'
+      config:
+        maxMarkers: 24

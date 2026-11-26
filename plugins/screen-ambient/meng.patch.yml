@@ -1,0 +1,3 @@
+- insert:
+    - id: screen-ambient
+      name: '@meng/plugin-screen-ambient'

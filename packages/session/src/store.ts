@@ -8,7 +8,7 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type { SessionEvent, SessionEventType, SessionMeta } from './index.ts'
 
@@ -103,6 +103,7 @@ interface MetaRow {
   title: string
   workspace: string | null
   created_at: number
+  updated_at: number
   last_seq: number
   turns: number
   preview: string | null
@@ -135,6 +136,7 @@ export function createSessionStore(file: string, legacyFile?: string): SessionSt
       title text not null,
       workspace text,
       created_at integer not null,
+      updated_at integer not null default 0,
       last_seq integer not null,
       turns integer not null default 0,
       preview text
@@ -170,26 +172,39 @@ export function createSessionStore(file: string, legacyFile?: string): SessionSt
   if (!sessionColumns.some((column) => column.name === 'permission_mode')) {
     db.exec('alter table sessions add column permission_mode text')
   }
+  if (!sessionColumns.some((column) => column.name === 'updated_at')) {
+    db.exec('alter table sessions add column updated_at integer not null default 0')
+    db.exec(`
+      update sessions
+      set updated_at = coalesce(
+        (select max(at) from session_events where session_events.session_id = sessions.session_id),
+        created_at
+      )
+      where updated_at = 0
+    `)
+  }
+  db.exec('create index if not exists idx_sessions_activity on sessions(updated_at desc, last_seq desc)')
 
   const insertEvent = db.prepare(`
     insert or ignore into session_events (seq, session_id, type, at, data)
     values (?, ?, ?, ?, ?)
   `)
   const insertSession = db.prepare(`
-    insert into sessions (session_id, title, workspace, created_at, last_seq, turns, preview)
-    values (?, ?, ?, ?, ?, 0, null)
+    insert into sessions (session_id, title, workspace, created_at, updated_at, last_seq, turns, preview)
+    values (?, ?, ?, ?, ?, ?, 0, null)
   `)
   const selectSession = db.prepare('select * from sessions where session_id = ?')
   const updateCreated = db.prepare(`
     update sessions
-    set title = ?, workspace = ?, created_at = min(created_at, ?)
+    set title = ?, workspace = ?, created_at = min(created_at, ?), updated_at = max(updated_at, ?)
     where session_id = ?
   `)
   const updateActivity = db.prepare(`
     update sessions
     set last_seq = max(last_seq, ?),
         turns = turns + ?,
-        preview = case when ? = 1 then ? else preview end
+        preview = case when ? = 1 then ? else preview end,
+        updated_at = max(updated_at, ?)
     where session_id = ?
   `)
   const selectRead = db.prepare('select * from session_events where session_id = ? order by seq')
@@ -199,7 +214,7 @@ export function createSessionStore(file: string, legacyFile?: string): SessionSt
     where session_id = ? and (? is null or seq < ?)
     order by seq desc limit ?
   `)
-  const selectSessions = db.prepare('select * from sessions order by created_at desc, last_seq desc')
+  const selectSessions = db.prepare('select * from sessions order by updated_at desc, last_seq desc')
   const updateTitle = db.prepare('update sessions set title = ? where session_id = ?')
   const updatePermission = db.prepare('update sessions set permission_mode = ? where session_id = ?')
   const insertAttachment = db.prepare(`
@@ -213,7 +228,7 @@ export function createSessionStore(file: string, legacyFile?: string): SessionSt
   const deleteSession = db.prepare('delete from sessions where session_id = ?')
   const selectNext = db.prepare(`
     select session_id from sessions
-    order by created_at desc, last_seq desc limit 1
+    order by updated_at desc, last_seq desc limit 1
   `)
   const maxSeq = Number((db.prepare('select coalesce(max(seq), -1) as value from session_events').get() as { value: number }).value)
   let seq = maxSeq + 1
@@ -243,6 +258,7 @@ export function createSessionStore(file: string, legacyFile?: string): SessionSt
       sessionId: row.session_id,
       title: row.title,
       at: Number(row.created_at),
+      updatedAt: Number(row.updated_at),
       lastSeq: Number(row.last_seq),
       turns: Number(row.turns),
       ...(row.preview === null ? {} : { preview: row.preview }),
@@ -253,6 +269,16 @@ export function createSessionStore(file: string, legacyFile?: string): SessionSt
 
   function meta(sessionId: string): MetaRow | undefined {
     return selectSession.get(sessionId) as MetaRow | undefined
+  }
+
+  /** 老会话没有绑定目录时，跟随应用配置的默认工作区；普通 CLI 则用启动目录。 */
+  function defaultWorkspace(): string | undefined {
+    const raw = (process.env['MENG_DEFAULT_WORKSPACE'] ?? '').trim()
+    if (raw) {
+      const path = resolve(raw)
+      return existsSync(path) ? path : undefined
+    }
+    return undefined
   }
 
   function titleFor(event: SessionEvent): string {
@@ -290,17 +316,17 @@ export function createSessionStore(file: string, legacyFile?: string): SessionSt
   function insertHistorical(event: SessionEvent): boolean {
     deleted.delete(event.sessionId)
     const existing = meta(event.sessionId)
-    if (!existing) insertSession.run(event.sessionId, titleFor(event), workspaceFor(event), event.at, event.seq)
+    if (!existing) insertSession.run(event.sessionId, titleFor(event), workspaceFor(event), event.at, event.at, event.seq)
     const inserted = putHistorical(event)
     if (!inserted) {
       if (!existing) deleteSession.run(event.sessionId)
       return false
     }
     if (existing && event.type === 'session/created') {
-      updateCreated.run(titleFor(event), workspaceFor(event), event.at, event.sessionId)
+      updateCreated.run(titleFor(event), workspaceFor(event), event.at, event.at, event.sessionId)
     }
     const isTurn = event.type === 'turn/started'
-    updateActivity.run(event.seq, isTurn ? 1 : 0, isTurn ? 1 : 0, isTurn ? previewFor(event) : null, event.sessionId)
+    updateActivity.run(event.seq, isTurn ? 1 : 0, isTurn ? 1 : 0, isTurn ? previewFor(event) : null, event.at, event.sessionId)
     if (event.seq >= seq) seq = event.seq + 1
     return true
   }
@@ -379,7 +405,7 @@ export function createSessionStore(file: string, legacyFile?: string): SessionSt
       if (!existing) {
         // 老插件（jobs/questions）会直接写事件，没有 session/created；为其补投影行。
         // 唯一禁止的是已删除 id 被后续事件复活。
-        insertSession.run(sessionId, titleFor(event), workspaceFor(event), event.at, event.seq)
+        insertSession.run(sessionId, titleFor(event), workspaceFor(event), event.at, event.at, event.seq)
         deleted.delete(sessionId)
       }
       const result = db.prepare(`
@@ -388,7 +414,7 @@ export function createSessionStore(file: string, legacyFile?: string): SessionSt
       if (Number(result.changes) !== 1) throw new Error(`事件序号冲突: ${event.seq}`)
       if (type !== 'session/created') {
         const isTurn = type === 'turn/started'
-        updateActivity.run(event.seq, isTurn ? 1 : 0, isTurn ? 1 : 0, isTurn ? previewFor(event) : null, sessionId)
+        updateActivity.run(event.seq, isTurn ? 1 : 0, isTurn ? 1 : 0, isTurn ? previewFor(event) : null, event.at, sessionId)
       }
       db.exec('commit')
     } catch (err) {
@@ -489,7 +515,7 @@ export function createSessionStore(file: string, legacyFile?: string): SessionSt
     },
 
     workspaceOf(sessionId) {
-      return meta(sessionId)?.workspace ?? undefined
+      return meta(sessionId)?.workspace ?? defaultWorkspace()
     },
 
     permissionOf(sessionId) {

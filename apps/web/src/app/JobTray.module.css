@@ -116,6 +116,28 @@
   font-size: 9px;
 }
 
+.command {
+  margin-top: 3px;
+  color: var(--meng-alias-fg-muted);
+  font-size: 9px;
+}
+.command summary {
+  width: fit-content;
+  cursor: pointer;
+  list-style: none;
+}
+.command summary::-webkit-details-marker { display: none; }
+.command summary:hover { color: var(--meng-alias-fg-secondary); }
+.command code {
+  display: block;
+  max-height: 64px;
+  margin-top: 4px;
+  overflow: auto;
+  color: var(--meng-alias-fg-code);
+  font-family: var(--meng-specific-font-mono);
+  font-size: 10px;
+  white-space: pre-wrap;
+}
 .meta {
   display: flex;
   flex-wrap: wrap;
@@ -184,6 +206,14 @@
   font-weight: var(--meng-specific-weight-normal);
 }
 
+.outputMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 10px;
+  padding: 0 var(--meng-specific-space-3) var(--meng-specific-space-2);
+  color: var(--meng-alias-fg-muted);
+  font-size: 9px;
+}
 .output pre {
   max-height: 180px;
   margin: 0;

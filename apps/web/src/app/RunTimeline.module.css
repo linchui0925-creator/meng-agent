@@ -45,6 +45,58 @@
 .step[open] .chevron { transform: rotate(90deg); }
 .stepBody { padding: 0 10px 10px; }
 .thought { color: var(--meng-alias-fg-secondary); font-size: 12px; line-height: 1.62; max-width: 68ch; }
+.reasoningRow {
+  min-width: 0;
+  margin: 2px 0 6px;
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: var(--meng-specific-radius-sm);
+  background: color-mix(in srgb, var(--meng-alias-bg-inset) 58%, transparent);
+  overflow: hidden;
+}
+.reasoningHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--meng-alias-fg-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.reasoningHead:hover { background: var(--meng-alias-bg-hover); }
+.reasoningHead:focus-visible { outline: 2px solid var(--meng-alias-focus-ring); outline-offset: -2px; }
+.reasoningMark { flex: none; color: var(--meng-alias-fg-secondary); font-size: 10px; }
+.reasoningTitle { flex: none; color: var(--meng-alias-fg-secondary); font-size: 10.5px; }
+.reasoningSeparator { flex: none; width: 2px; height: 2px; border-radius: 999px; background: var(--meng-alias-fg-muted); }
+.reasoningSummary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--meng-alias-fg-muted);
+  font-size: 10.5px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reasoningSummary[data-follow-end] { text-overflow: clip; }
+.reasoningChevron { flex: none; color: var(--meng-alias-fg-muted); font-size: 10px; }
+.reasoningBody {
+  max-height: 220px;
+  margin: 0;
+  padding: 7px 9px 8px;
+  overflow: auto;
+  border-top: 1px solid var(--meng-alias-border-l1);
+  color: var(--meng-alias-fg-muted);
+  font-family: var(--meng-specific-font-mono);
+  font-size: 10.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .currentLabel { display: flex; align-items: center; gap: 6px; color: var(--meng-alias-positive); font-size: 9px; font-weight: var(--meng-specific-weight-strong); margin-bottom: 4px; }
 .currentLabel i { width: 5px; height: 5px; border-radius: 999px; background: currentColor; box-shadow: 0 0 8px currentColor; }
 .tools { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; width: 100%; margin-top: 8px; }

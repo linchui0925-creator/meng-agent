@@ -1,0 +1,34 @@
+{
+  "name": "@meng/plugin-plan-mode",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Plan 模式：先调研并提交方案，用户批准后才执行",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "meng.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --experimental-strip-types test/plan-mode.ts"
+  },
+  "dependencies": {
+    "@meng/core": "workspace:*",
+    "@meng/questions": "workspace:*",
+    "@meng/session": "workspace:*",
+    "@meng/tools": "workspace:*",
+    "@meng/web": "workspace:*"
+  },
+  "meng": {
+    "plugin": {
+      "apiVersion": 1,
+      "id": "plan-mode",
+      "patch": "./meng.patch.yml"
+    }
+  }
+}

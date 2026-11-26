@@ -27,6 +27,13 @@ import { catalogOf } from './catalog.ts'
 const execFileAsync = promisify(execFile)
 const REASONING_EFFORTS = new Set<ReasoningEffort>(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
 
+/** 自检/冒烟/后台测试用的会话不是用户对话，不进入侧栏。 */
+function isInternalSessionId(sessionId: string): boolean {
+  return sessionId === 'demo' || sessionId === 'cli'
+    || sessionId === '__detached__' || sessionId === '__invariant__'
+    || sessionId.startsWith('inv-') || sessionId.startsWith('sess-')
+}
+
 /** 粗估输入 token：中文按 1 字 1 token，其他字符按 4 字符 1 token。 */
 function estimateTextTokens(text: string): number {
   let cjk = 0
@@ -96,6 +103,16 @@ export function registerBuiltinOps(
     uptimeMs: Math.round(process.uptime() * 1000),
   }))
 
+  op('system.notify', async (payload) => {
+    const title = String(payload.title ?? '').trim()
+    const body = String(payload.body ?? '').trim()
+    if (!title) throw new HttpError('bad-request', '缺 title')
+    const platform = ctx.get<{ notify?: { send(title: string, body: string): Promise<void> } }>('platform')
+    if (!platform?.notify) throw new HttpError('no-capability', '当前端没有系统通知能力', 503)
+    await platform.notify.send(title, body)
+    return { ok: true }
+  })
+
   // ── 会话 ──────────────────────────────────────────────
   op('session.create', (payload) => {
     const title = String(payload.title ?? '新会话')
@@ -106,9 +123,12 @@ export function registerBuiltinOps(
      * 工作区，前端还得再判一次，而"没有"和"空"在界面上是两种画法。
      */
     const rawWorkspace = payload.workspace
+    const requested = rawWorkspace !== undefined && rawWorkspace !== null && String(rawWorkspace).trim() !== ''
+      ? String(rawWorkspace)
+      : (process.env['MENG_DEFAULT_WORKSPACE']?.trim() || process.cwd())
     let workspace: string | undefined
-    if (rawWorkspace !== undefined && rawWorkspace !== null && String(rawWorkspace).trim() !== '') {
-      workspace = normalizePath(String(rawWorkspace))
+    if (requested.trim() !== '') {
+      workspace = normalizePath(requested)
       // 目录没了就明确拒掉：让它"创建成功但所有工具都跑不动"是更坏的失败
       if (!existsSync(workspace)) throw new HttpError('bad-request', `工作区不存在: ${workspace}`)
       if (!statSync(workspace).isDirectory()) throw new HttpError('bad-request', `不是目录: ${workspace}`)
@@ -118,7 +138,7 @@ export function registerBuiltinOps(
     return { sessionId, at: Date.now(), ...(workspace ? { workspace } : {}) }
   })
 
-  op('session.list', () => session().sessions())
+  op('session.list', () => session().sessions().filter((item) => !isInternalSessionId(item.sessionId)))
 
   /**
    * 工作区列表。**两份来源合起来**:
@@ -139,7 +159,7 @@ export function registerBuiltinOps(
       if (w.missing) continue
       seen.set(w.path, { id: w.path, name: w.name, path: w.path })
     }
-    for (const s of session().sessions()) {
+    for (const s of session().sessions().filter((item) => !isInternalSessionId(item.sessionId))) {
       const path = s.workspace
       if (!path || seen.has(path) || !existsSync(path)) continue
       seen.set(path, { id: path, name: basename(path) || path, path })
@@ -451,6 +471,11 @@ export function registerBuiltinOps(
             // 代价是断线重放没有 chunk, 前端用 llm/completed 的整段补齐
             web.broadcast('llm/chunk', { delta: ev.text, runId }, { sessionId, runId })
           }
+          if (ev.type === 'reasoning') {
+            // 同一个事件类型走 channel 分流，避免扩充下行事件闭集；
+            // 前端只把 reasoning 放进当前 step，不拼进最终回复正文。
+            web.broadcast('llm/chunk', { delta: ev.text, runId, channel: 'reasoning' }, { sessionId, runId })
+          }
           if (ev.type === 'done') {
             doneReason = ev.reason
             if (ev.error !== undefined) runError = ev.error
@@ -594,7 +619,13 @@ export function registerBuiltinOps(
     const jobId = String(payload.jobId ?? '')
     if (!sessionId || !jobId) throw new HttpError('bad-request', '缺 sessionId 或 jobId')
     try {
-      return jobs().read(jobId, { sessionId })
+      const maxChars = Number(payload.maxChars)
+      return jobs().read(jobId, { sessionId }, payload.full === true
+        ? {
+            mode: 'tail' as const,
+            ...(Number.isFinite(maxChars) && maxChars > 0 ? { maxChars } : {}),
+          }
+        : undefined)
     } catch (err) {
       throw jobHttpError(err)
     }
@@ -618,12 +649,7 @@ export function registerBuiltinOps(
     if (!sessionId) throw new HttpError('bad-request', '缺 sessionId')
     if (!command) throw new HttpError('bad-request', '缺命令')
     if (session().read(sessionId).length === 0) throw new HttpError('not-found', `会话不存在: ${sessionId}`, 404)
-    const rawDescription = String(payload.description ?? '').trim() || command.slice(0, 80)
-    // tool-bash 用“至少两个空格分隔词”校验意图；中文短描述本身没有空格，
-    // 补一段不可见意图后缀，任务标签仍然只显示命令原文。
-    const description = rawDescription.split(/\s+/).filter(Boolean).length >= 2
-      ? rawDescription
-      : `${rawDescription} background task`
+    const description = String(payload.description ?? '').trim() || command.slice(0, 80)
     const result = await tools().call({
       id: `web-job-${randomUUID().slice(0, 8)}`,
       name: 'bash',

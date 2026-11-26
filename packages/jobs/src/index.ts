@@ -68,6 +68,8 @@ export interface JobSnapshot {
   kind: string
   /** 人类可读的一句话 (命令前 80 字 / URL), 给列表和通知用 */
   label: string
+  /** 后台命令的原文；只给需要展示技术细节的界面，不进入任务标题 */
+  command?: string
   status: JobStatus
   /** 终态的补充说明: 'exit code: 1' / '被用户中止' / 失败原因 */
   detail?: string
@@ -84,7 +86,19 @@ export interface JobOutput {
   lossy: boolean
   /** 全量落盘位置 (相对工作区), 模型可以直接 read */
   spillPath?: string
+  /** 按尾部快照读取时，前面的内容被截掉了。 */
+  tailTruncated?: boolean
   job: JobSnapshot
+}
+
+/** 后台输出读取方式。默认保持原来的增量语义。 */
+export type JobReadMode = 'incremental' | 'tail'
+
+export interface JobReadOptions {
+  /** incremental = 消费增量；tail = 不消费，给界面重复看最近输出 */
+  mode?: JobReadMode
+  /** tail 模式最多保留多少字符，默认由实现决定 */
+  maxChars?: number
 }
 
 /**
@@ -96,6 +110,8 @@ export interface JobHooks {
   done: Promise<{ status: 'completed' | 'killed' | 'failed'; detail?: string }>
   /** 增量读。不给 = 这个任务没有输出 */
   readOutput?(): { text: string; lossy: boolean; spillPath?: string }
+  /** 不消费的尾部快照；有它时界面查看输出不会抢走模型的下一次增量 */
+  peekOutput?(): { text: string; lossy: boolean; spillPath?: string }
   /** 停。返回 false = 已经停了 / 停不了 */
   cancel?(reason?: string): boolean
 }
@@ -105,6 +121,8 @@ export interface JobStartSpec {
   kind: string
   /** 非空, 给人和模型看 */
   label: string
+  /** 任务背后的原始命令；由具体工具填写，可选 */
+  command?: string
   /** 有值 = 只有这个会话能读/杀 */
   ownerSession?: string
   /** 起活并交出句柄。**同步抛错才算起不来** */
@@ -116,8 +134,10 @@ export interface JobService {
   /** 当前会话能看见的全部任务 (含已结束的)。不给 caller = 只要无主的 */
   list(caller?: JobCaller): JobSnapshot[]
   get(id: string, caller?: JobCaller): JobSnapshot
-  /** 增量读。读到终态 = 视为"已上报", 落定时不再发通知 */
-  read(id: string, caller?: JobCaller): JobOutput
+  /** 增量读。读到终态 = 视为"已上报", 落定时不再发通知。
+   *  `options.mode='tail'` 是不消费的尾部快照，用给界面重复查看。
+   */
+  read(id: string, caller?: JobCaller, options?: JobReadOptions): JobOutput
   kill(id: string, caller?: JobCaller, reason?: string): 'requested' | 'already-finished'
   /**
    * 等它落定。**超时不是错误** —— 返回一个还是 running 的快照。

@@ -17,15 +17,19 @@
  * 不能让它们都变成"模型读过" (那会让先读后写策略形同虚设)。
  */
 
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
 import { sandboxRoot } from '@meng/config'
+import type { PromptService } from '@meng/prompt'
 import { defineInvariant, type Ctx, type Disposer } from '@meng/core'
 import type { SessionService } from '@meng/session'
 import type { ToolDef, ToolResult, ToolService } from '@meng/tools'
 
 export const name = 'meng-plugin-tool-search'
-export const inject = ['tools']
+const execFileAsync = promisify(execFile)
+export const inject = ['tools', 'prompt']
 
 export interface Config {
   // 工作区根由 @meng/config 统一给, 见 sandboxRoot()
@@ -42,7 +46,8 @@ const fail = (error: string): ToolResult => ({ ok: false, text: '', error })
 
 /** 不进搜索的目录 —— 体积第一, 噪音第二 */
 const IGNORE = new Set([
-  'node_modules', '.git', '.meng', 'dist', 'build', '.next', '.venv311',
+  'node_modules', '.git', '.meng', 'dist', 'build', 'release', 'out',
+  '.next', '.venv311', '.pnpm-store', 'tmp',
   '__pycache__', '.cache', 'coverage', '.DS_Store',
 ])
 
@@ -50,6 +55,8 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
   const tools = ctx.get<ToolService>('tools')
   if (!tools) throw new Error('能力面 tools 未装载')
   const session = ctx.get<SessionService>('session')
+  const prompt = ctx.get<PromptService>('prompt')
+  if (!prompt) throw new Error('tool-search 需要 prompt 能力面')
 
   /**
    * 工作区根 —— **每次调用现读**。设置页改了工作区, 下一次 glob/grep 就按新根搜。
@@ -189,6 +196,15 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
           const start = fence(args.path, root, call?.grants?.outside === true)
           const base = baseOf(root, start)
           const include = args.include ? globToRegExp(String(args.include)) : null
+          // dsh 的 grep 底层就是 ripgrep；本机有 rg 时优先走它，避免原生逐文件
+          // readFile 在 release/ 产物上卡十几秒。没有 rg 时再退回 walker。
+          const rgHits = await grepWithRipgrep(start, base, pattern, args.include, call?.signal)
+          if (rgHits !== undefined) {
+            const top = rgHits.slice(0, grepMaxMatches)
+            if (!top.length) return ok(`无匹配: ${pattern}`)
+            const foot = rgHits.length >= grepMaxMatches ? `\n… 命中数已达上限 ${grepMaxMatches} — 缩小 pattern/path/include` : ''
+            return ok(top.join('\n') + foot)
+          }
           const hits: string[] = []
           for (const rel of walk(start, base)) {
             if (hits.length >= grepMaxMatches) break
@@ -222,8 +238,56 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
   ]
 
   const disposers = defs.map((def) => ctx.effect(() => tools.register(def)))
+  const promptDisposers = [
+    ctx.effect(() => prompt.section({
+      id: 'tool:glob',
+      order: 103,
+      render: () => '找文件用 glob，不要用 bash ls/find。知道大致目录时带 path；pattern 不带路径分隔符会匹配整个工作区。',
+    })),
+    ctx.effect(() => prompt.section({
+      id: 'tool:grep',
+      order: 104,
+      render: () => '搜内容用 grep，不要用 bash grep/rg。优先带 path 或 include 缩小范围；命中后再用 read 看上下文。',
+    })),
+  ]
   return () => {
     for (const off of disposers.reverse()) off()
+    for (const off of promptDisposers.reverse()) off()
+  }
+}
+
+/**
+ * 用 ripgrep 做内容搜索。argv 直传，不经过 shell，pattern/include 不会被 shell 展开；
+ * 返回 undefined 表示当前环境没有可用的 rg 或 rg 不支持这个正则，调用方走原生 walker。
+ */
+async function grepWithRipgrep(
+  start: string,
+  base: string,
+  pattern: string,
+  include: unknown,
+  signal: AbortSignal | undefined,
+): Promise<string[] | undefined> {
+  const relStart = relative(base, start) || '.'
+  const args = [
+    '--line-number', '--no-heading', '--color', 'never',
+    '--glob', '!**/node_modules/**', '--glob', '!**/.git/**', '--glob', '!**/dist/**',
+    '--glob', '!**/release/**', '--glob', '!**/out/**', '--glob', '!**/tmp/**',
+    '--glob', '!**/.meng/**',
+  ]
+  if (typeof include === 'string' && include.trim()) args.push('--glob', include)
+  args.push(pattern, relStart)
+  try {
+    const result = await execFileAsync('rg', args, {
+      cwd: base,
+      maxBuffer: 20 * 1024 * 1024,
+      ...(signal === undefined ? {} : { signal }),
+    })
+    return String(result.stdout).split('\n').filter(Boolean).map((line) => line.replace(/^\.\//, ''))
+  } catch (err) {
+    const code = (err as { code?: string | number }).code
+    // rg 的 1 = 没有命中，不是错误；其他情况回退到 walker，保留 JS 正则语义。
+    if (code === 1) return []
+    return undefined
   }
 }
 

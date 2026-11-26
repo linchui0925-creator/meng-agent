@@ -1,0 +1,217 @@
+/*
+ * 设置分区的样式。
+ *
+ * 以 `?inline` 导入成字符串, 由 factory 在**物化时**注入, 并打上
+ * `data-plugin="screen-ambient"` (docs/08 §6: 显式标记, 运行期只回收带自己标记的)。
+ *
+ * 用变量时守住 §4.2 那条: 颜色一律取 `--meng-alias-*`(宿主换肤时这一块跟着变),
+ * 尺寸取 `--meng-specific-*`(结构层, 可以读, 不许改)。插件自己发明色值是绕过对比度审计。
+ */
+
+.sa-root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--meng-specific-space-4);
+  max-width: 640px;
+}
+
+.sa-lead {
+  margin: 0;
+  color: var(--meng-alias-fg-secondary);
+  font-size: var(--meng-specific-text-sm);
+  line-height: 1.6;
+}
+
+/* ── 分组 ── */
+
+.sa-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--meng-specific-space-2);
+}
+
+.sa-group-title {
+  margin: 0;
+  font-size: var(--meng-specific-text-sm);
+  font-weight: var(--meng-specific-weight-strong);
+  color: var(--meng-alias-fg-primary);
+}
+
+.sa-group-body {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--meng-alias-border-l1);
+  border-radius: var(--meng-specific-radius-md);
+  background: var(--meng-alias-bg-raised);
+  overflow: hidden;
+}
+
+/* ── 一行一个设置项 ── */
+
+.sa-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--meng-specific-space-4);
+  padding: var(--meng-specific-space-3);
+  border-top: 1px solid var(--meng-alias-border-l1);
+}
+
+/* 第一行不要上边框 —— 边框在外层 groupBody 上已经有了 */
+.sa-group-body > .sa-row:first-child {
+  border-top: none;
+}
+
+.sa-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--meng-specific-space-1);
+  min-width: 0;
+}
+
+.sa-row-title {
+  font-size: var(--meng-specific-text-sm);
+  font-weight: var(--meng-specific-weight-medium);
+  color: var(--meng-alias-fg-primary);
+}
+
+.sa-row-desc {
+  margin: 0;
+  font-size: var(--meng-specific-text-xs);
+  line-height: 1.5;
+  color: var(--meng-alias-fg-muted);
+}
+
+.sa-row-control {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* ── 按钮 ── */
+
+.sa-button,
+.sa-button-primary {
+  padding: var(--meng-specific-space-1) var(--meng-specific-space-3);
+  border-radius: var(--meng-specific-radius-sm);
+  font: inherit;
+  font-size: var(--meng-specific-text-sm);
+  cursor: pointer;
+  transition: background var(--meng-specific-dur-fast) ease;
+}
+
+.sa-button {
+  border: 1px solid var(--meng-alias-border-l2);
+  background: var(--meng-alias-bg-inset);
+  color: var(--meng-alias-fg-primary);
+}
+
+.sa-button:hover:not(:disabled) {
+  background: var(--meng-alias-bg-hover);
+}
+
+.sa-button-primary {
+  border: 1px solid transparent;
+  background: var(--meng-alias-accent);
+  color: var(--meng-alias-fg-on-accent);
+}
+
+.sa-button-primary:hover:not(:disabled) {
+  background: var(--meng-alias-accent-hover);
+}
+
+.sa-button:disabled,
+.sa-button-primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ── 开关 ── */
+
+.sa-switch {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--meng-alias-border-l2);
+  border-radius: var(--meng-specific-radius-full);
+  background: var(--meng-alias-bg-inset);
+  cursor: pointer;
+  transition: background var(--meng-specific-dur-fast) ease;
+}
+
+.sa-switch[data-on] {
+  background: var(--meng-alias-accent);
+  border-color: transparent;
+}
+
+.sa-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--meng-specific-radius-full);
+  background: var(--meng-alias-bg-surface);
+  transition: transform var(--meng-specific-dur-fast) ease;
+}
+
+.sa-switch[data-on] .sa-switch-knob {
+  transform: translateX(18px);
+}
+
+/* ── 滑杆 ── */
+
+.sa-slider {
+  width: 140px;
+  accent-color: var(--meng-alias-accent);
+  cursor: pointer;
+}
+
+.sa-slider:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ── 状态徽章 ── */
+
+.sa-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px var(--meng-specific-space-2);
+  border-radius: var(--meng-specific-radius-sm);
+  background: var(--meng-alias-bg-inset);
+  border: 1px solid var(--meng-alias-border-l1);
+  font-size: var(--meng-specific-text-xs);
+  color: var(--meng-alias-fg-secondary);
+  white-space: nowrap;
+}
+
+.sa-badge[data-state='running'] {
+  background: var(--meng-alias-positive-subtle);
+  color: var(--meng-alias-positive);
+  border-color: transparent;
+}
+
+.sa-badge[data-state='denied'],
+.sa-badge[data-state='unsupported'],
+.sa-badge[data-state='no-permission'] {
+  background: var(--meng-alias-danger-subtle);
+  color: var(--meng-alias-danger);
+  border-color: transparent;
+}
+
+.sa-badge[data-state='requesting'] {
+  background: var(--meng-alias-live-subtle);
+  color: var(--meng-alias-live);
+  border-color: transparent;
+}
+
+/* ── 注脚 ── */
+
+.sa-note {
+  margin: 0;
+  font-size: var(--meng-specific-text-xs);
+  line-height: 1.6;
+  color: var(--meng-alias-fg-muted);
+}

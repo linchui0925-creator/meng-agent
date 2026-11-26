@@ -51,12 +51,13 @@ import {
   type ExecStream,
 } from '@meng/exec'
 import { getJobs, type JobService } from '@meng/jobs'
+import type { PromptService } from '@meng/prompt'
 import type { SessionService } from '@meng/session'
 import type { ToolDef, ToolResult, ToolService } from '@meng/tools'
 
 export const name = 'meng-plugin-tool-bash'
 /** 认缝不认实现: 没有 executor 就装不上来, 装上来就一定是能跑的 */
-export const inject = ['tools', 'exec']
+export const inject = ['tools', 'exec', 'prompt']
 
 export interface Config {
   // 工作区根 (workdir 的围栏基准) 由 @meng/config 统一给, 见 sandboxRoot()
@@ -106,6 +107,8 @@ function marker(stream: ExecStream, label: string): string[] {
 export function apply(ctx: Ctx, config: Config = {}): Disposer {
   const tools = ctx.get<ToolService>('tools')
   if (!tools) throw new Error('能力面 tools 未装载')
+  const prompt = ctx.get<PromptService>('prompt')
+  if (!prompt) throw new Error('tool-bash 需要 prompt 能力面')
   const exec = getExec(ctx)
   if (!exec) throw new Error('能力面 exec 未装载 —— bash 需要一个执行器')
 
@@ -117,11 +120,21 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
   const jobs = getJobs(ctx)
   const session = ctx.get<SessionService>('session')
 
-  function startBackground(service: JobService, executor: ExecService, command: string, spec: ExecSpec, sessionId: string | undefined): ToolResult {
+  function startBackground(
+    service: JobService,
+    executor: ExecService,
+    command: string,
+    description: string,
+    spec: ExecSpec,
+    sessionId: string | undefined,
+  ): ToolResult {
     try {
       const id = service.start({
         kind: 'bash',
-        label: labelOf(command),
+        // 标题是模型写的“这件事做什么”，不是一串 shell。命令原文单独留着，
+        // 让界面能展开查细节，但不把用户先扔进命令噪音里。
+        label: description || labelOf(command),
+        command,
         ...(sessionId ? { ownerSession: sessionId } : {}),
         run() {
           const proc = executor.start(spec)
@@ -139,6 +152,14 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
                 ...(chunk.stdoutSpillPath ? { spillPath: chunk.stdoutSpillPath } : {}),
               }
             },
+            peekOutput() {
+              const chunk = proc.peekOutput()
+              return {
+                text: chunk.delta,
+                lossy: chunk.lossy,
+                ...(chunk.stdoutSpillPath ? { spillPath: chunk.stdoutSpillPath } : {}),
+              }
+            },
             cancel() {
               return proc.kill()
             },
@@ -147,7 +168,9 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
       })
       return ok(
         `已在后台启动: ${id}\n命令: ${command}\n` +
+          `任务说明: ${description}\n` +
           '它不随这一轮结束而停止。用 job_output 读增量输出, job_kill 停掉它。' +
+          '后台任务不要重定向 stdout/stderr 到文件，否则用户和 job_output 都看不到输出。' +
           '不要 sleep 等它 —— 去干别的事, 它结束时会有一条消息。',
       )
     } catch (err) {
@@ -218,9 +241,10 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
       const command = String(args.command ?? '')
       if (!command) return fail('缺参数 command')
       const description = String(args.description ?? '').trim()
-      const words = description.split(/\s+/).filter(Boolean)
-      if (!words.length) return fail('缺参数 description —— 先说清楚这条命令做什么')
-      if (words.length < 2) return fail(`description 太短 ("${description}"): 用 5-10 个词说明意图`)
+      if (!description) return fail('缺参数 description —— 先说清楚这条命令做什么')
+      if (!hasDescriptiveIntent(description)) {
+        return fail(`description 太短 ("${description}"): 用 5-10 个词说明意图`)
+      }
 
       const perm = args.sandbox_permissions
       if (perm !== undefined && perm !== 'workspace-write' && perm !== 'danger-full-access') {
@@ -266,7 +290,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
       }
 
       if (background && jobs) {
-        return startBackground(jobs, exec, command, spec, call?.sessionId)
+        return startBackground(jobs, exec, command, description, spec, call?.sessionId)
       }
 
       try {
@@ -287,8 +311,14 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
   }
 
   const off = ctx.effect(() => tools.register(def))
+  const offPrompt = ctx.effect(() => prompt.section({
+    id: 'tool:bash',
+    order: 105,
+    render: () => 'bash 只用于运行命令、测试、构建和 Git；不要用 bash 做 ls/cat/grep/find/sed/head/tail 文件探索。',
+  }))
   return () => {
     off()
+    offPrompt()
   }
 }
 
@@ -300,6 +330,14 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
  */
 function resolveRoot(input: string, base?: string): string {
   return posix(resolve(base ?? '.', input))
+}
+
+/** 中文描述通常没有空格，不能只按英文单词数判断“说清楚了没有”。 */
+function hasDescriptiveIntent(description: string): boolean {
+  const words = description.split(/\s+/).filter(Boolean)
+  if (words.length >= 2) return true
+  const cjk = [...description].filter((ch) => /[\u3400-\u9fff]/.test(ch)).length
+  return cjk >= 2
 }
 
 /** 后台任务的标签: 命令压成一行再截断。模型和用户都靠它认任务 */

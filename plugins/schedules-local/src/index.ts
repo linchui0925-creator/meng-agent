@@ -112,6 +112,8 @@ function validateBase(input: Partial<Schedule>): Omit<Schedule, 'id' | 'createdA
   if (workspace !== undefined && (!existsSync(workspace) || !statSync(workspace).isDirectory())) {
     throw new HttpError('bad-request', `工作区不存在: ${workspace}`)
   }
+  const model = typeof input.model === 'string' ? input.model.trim() : ''
+  if (!model) throw new HttpError('bad-request', '定时任务必须选择运行模型，不能让它偷偷回落到第一家供应商')
   return {
     title,
     prompt,
@@ -121,7 +123,7 @@ function validateBase(input: Partial<Schedule>): Omit<Schedule, 'id' | 'createdA
     ...(typeof input.dayOfMonth === 'number' ? { dayOfMonth: input.dayOfMonth } : {}),
     ...(typeof input.runAt === 'number' ? { runAt: input.runAt } : {}),
     ...(workspace === undefined ? {} : { workspace }),
-    ...(typeof input.model === 'string' && input.model.trim() !== '' ? { model: input.model.trim() } : {}),
+    model,
     enabled: input.enabled !== false,
   }
 }
@@ -180,6 +182,9 @@ export function apply(ctx: Ctx, config: SchedulesConfig = {}): Disposer {
 
   async function startRun(schedule: Schedule): Promise<{ sessionId: string }> {
     if (running.has(schedule.id)) throw new HttpError('conflict', '这个任务正在运行', 409)
+    if (!schedule.model?.trim()) {
+      throw new HttpError('bad-request', '定时任务还没有选择运行模型，请到任务中心编辑并选择模型')
+    }
     const sessionId = randomUUID().slice(0, 8)
     const runId = randomUUID().slice(0, 8)
     const now = Date.now()
@@ -212,7 +217,7 @@ export function apply(ctx: Ctx, config: SchedulesConfig = {}): Disposer {
         for await (const event of loop().run({
           sessionId,
           text: schedule.prompt,
-          ...(schedule.model ? { model: schedule.model } : {}),
+          model: schedule.model,
           runId,
           signal: ctrl.signal,
         })) {

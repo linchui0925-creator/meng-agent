@@ -1,0 +1,33 @@
+{
+  "name": "@meng/plugin-collab-ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "输入框底部统一协作下拉：Plan、Todo、Goal、子智能体",
+  "main": "./src/client-entry.tsx",
+  "exports": {
+    "./client": "./client/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": ["src", "client", "README.md"],
+  "scripts": {
+    "build": "vite build",
+    "test": "node --experimental-strip-types test/contract.ts"
+  },
+  "devDependencies": {
+    "@meng/modules": "workspace:*",
+    "@meng/ui": "workspace:*",
+    "@types/react": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "react": "^19.3.1",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.0"
+  },
+  "meng": {
+    "client": {
+      "platforms": ["web", "desktop"],
+      "immediately": false,
+      "slots": ["composer.tools"]
+    }
+  }
+}

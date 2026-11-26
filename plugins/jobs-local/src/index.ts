@@ -25,6 +25,7 @@ import {
   type JobCaller,
   type JobHooks,
   type JobOutput,
+  type JobReadOptions,
   type JobService,
   type JobSnapshot,
   type JobStartSpec,
@@ -44,6 +45,7 @@ interface JobRecord {
   id: string
   kind: string
   label: string
+  command: string | undefined
   ownerSession: string | undefined
   status: JobStatus
   detail: string | undefined
@@ -56,9 +58,24 @@ interface JobRecord {
   markSettled: () => void
   /** 等落定的挂起点。落定时一次性全部放行 */
   waiters: Set<() => void>
+  /** 没有 peekOutput 的旧生产者：把历次增量攒下来，供界面 tail 查看 */
+  capturedOutput: string
+  capturedLossy: boolean
+  capturedSpillPath: string | undefined
 }
 
 const DEFAULT_MAX_PER_OWNER = 10
+/** 界面 tail 查看的默认窗口；防止一条 `yes` 把浏览器撑爆。 */
+const OUTPUT_TAIL_DEFAULT = 20_000
+const OUTPUT_TAIL_MAX = 200_000
+const OUTPUT_CAPTURE_MAX = 256_000
+
+function tailOf(text: string, maxChars = OUTPUT_TAIL_DEFAULT): string {
+  const limit = Number.isFinite(maxChars)
+    ? Math.max(1, Math.min(OUTPUT_TAIL_MAX, Math.floor(maxChars)))
+    : OUTPUT_TAIL_DEFAULT
+  return text.length > limit ? text.slice(-limit) : text
+}
 
 export function apply(ctx: Ctx, config: Config = {}): Disposer {
   const maxPerOwner = config.maxConcurrentJobsPerOwner ?? DEFAULT_MAX_PER_OWNER
@@ -78,6 +95,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
       id: job.id,
       kind: job.kind,
       label: job.label,
+      ...(job.command !== undefined ? { command: job.command } : {}),
       status: job.status,
       ...(job.detail !== undefined ? { detail: job.detail } : {}),
       ...(job.ownerSession !== undefined ? { ownerSession: job.ownerSession } : {}),
@@ -159,6 +177,17 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
     if (!job.reported) notify(job)
   }
 
+  function remember(job: JobRecord, chunk: { text: string; lossy: boolean; spillPath?: string }): void {
+    if (chunk.text) {
+      job.capturedOutput += chunk.text
+      if (job.capturedOutput.length > OUTPUT_CAPTURE_MAX) {
+        job.capturedOutput = job.capturedOutput.slice(-OUTPUT_CAPTURE_MAX)
+      }
+    }
+    job.capturedLossy ||= chunk.lossy
+    if (chunk.spillPath) job.capturedSpillPath = chunk.spillPath
+  }
+
   const service: JobService = {
     start(spec: JobStartSpec) {
       if (closed) throw new JobError(JOBS_CODE.INVALID, '任务注册表已关闭')
@@ -195,6 +224,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
         id,
         kind: spec.kind,
         label: spec.label,
+        command: spec.command,
         ownerSession: spec.ownerSession,
         status: 'running',
         detail: undefined,
@@ -205,6 +235,9 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
         settled,
         markSettled,
         waiters: new Set(),
+        capturedOutput: '',
+        capturedLossy: false,
+        capturedSpillPath: undefined,
       }
       store.set(id, job)
 
@@ -238,9 +271,39 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
       return snapshot(expect(id, caller))
     },
 
-    read(id, caller): JobOutput {
+    read(id, caller, options?: JobReadOptions): JobOutput {
       const job = expect(id, caller)
+
+      if (options?.mode === 'tail') {
+        // 新生产者直接给“当前尾部快照”，不推进消费游标；模型随后 job_output
+        // 仍然能拿到自己的增量。旧生产者没有 peek 时退回消费 + 本地累积。
+        const peek = job.hooks.peekOutput?.()
+        if (peek !== undefined) {
+          if (isTerminal(job.status)) job.reported = true
+          const text = tailOf(peek.text, options.maxChars)
+          return {
+            text,
+            lossy: peek.lossy,
+            ...(peek.spillPath ? { spillPath: peek.spillPath } : {}),
+            ...(text.length < peek.text.length ? { tailTruncated: true } : {}),
+            job: snapshot(job),
+          }
+        }
+
+        const chunk = job.hooks.readOutput?.() ?? { text: '', lossy: false }
+        remember(job, chunk)
+        const text = tailOf(job.capturedOutput, options.maxChars)
+        return {
+          text,
+          lossy: chunk.lossy || job.capturedLossy,
+          ...((chunk.spillPath ?? job.capturedSpillPath) ? { spillPath: chunk.spillPath ?? job.capturedSpillPath } : {}),
+          ...(text.length < job.capturedOutput.length ? { tailTruncated: true } : {}),
+          job: snapshot(job),
+        }
+      }
+
       const chunk = job.hooks.readOutput?.() ?? { text: '', lossy: false }
+      remember(job, chunk)
       // 读到终态才算"上报过"。读中间过程的增量不该压掉完成通知 ——
       // 模型读了一眼进度就去干别的了, 它仍然需要知道"后来跑完了"
       if (isTerminal(job.status)) job.reported = true
@@ -417,6 +480,28 @@ export const invariant = defineInvariant('@meng/plugin-jobs-local', [
       for (const method of ['start', 'list', 'get', 'read', 'kill', 'wait', 'onJobDone'] as const) {
         if (typeof jobs[method] !== 'function') throw new Error(`jobs 缺方法 ${method}`)
       }
+    },
+  },
+  {
+    id: 'tail-read-does-not-consume-incremental-output',
+    run(ctx) {
+      const jobs = ownRegistry(ctx)
+      const id = jobs.start({
+        kind: 'inv',
+        label: '构建桌面包',
+        command: 'pnpm build',
+        run: () => ({
+          done: new Promise(() => {}),
+          readOutput: () => ({ text: '模型增量\n', lossy: false }),
+          peekOutput: () => ({ text: '最新一行\n', lossy: false }),
+        }),
+      })
+      const first = jobs.read(id, undefined, { mode: 'tail' })
+      const second = jobs.read(id, undefined, { mode: 'tail' })
+      if (first.text !== '最新一行\n' || second.text !== first.text) throw new Error('tail 读取不稳定')
+      if (jobs.get(id).command !== 'pnpm build') throw new Error('命令原文没进快照')
+      const incremental = jobs.read(id)
+      if (incremental.text !== '模型增量\n') throw new Error('tail 抢走了模型的增量')
     },
   },
   {

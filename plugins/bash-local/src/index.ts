@@ -492,6 +492,17 @@ class LocalBashExecutor implements ExecService {
   }
 }
 
+/** stdout/stderr 合成一次 ExecRead；增量读和尾部快照共用同一套格式。 */
+function toExecRead(out: StreamRead, err: StreamRead): ExecRead {
+  const sep = out.text.length > 0 && !out.text.endsWith('\n') ? '\n' : ''
+  return {
+    delta: err.text.length > 0 ? `${out.text}${sep}[stderr]\n${err.text}` : out.text,
+    lossy: out.lossy || err.lossy,
+    ...(out.spillRel ? { stdoutSpillPath: out.spillRel } : {}),
+    ...(err.spillRel ? { stderrSpillPath: err.spillRel } : {}),
+  }
+}
+
 /**
  * 后台进程句柄。@meng/jobs 的实现把它当生产者交出去 ——
  * 这一层只负责"一个后台进程怎么读怎么写怎么杀", 不负责编号、围栏和通知
@@ -542,13 +553,13 @@ class BackgroundProc implements ExecProcess {
     const err = this.spawned.stderr.read(this.errOffset)
     this.outOffset = out.nextOffset
     this.errOffset = err.nextOffset
-    const sep = out.text.length > 0 && !out.text.endsWith('\n') ? '\n' : ''
-    return {
-      delta: err.text.length > 0 ? `${out.text}${sep}[stderr]\n${err.text}` : out.text,
-      lossy: out.lossy || err.lossy,
-      ...(out.spillRel ? { stdoutSpillPath: out.spillRel } : {}),
-      ...(err.spillRel ? { stderrSpillPath: err.spillRel } : {}),
-    }
+    return toExecRead(out, err)
+  }
+
+  peekOutput(): ExecRead {
+    // offset 0 = 从当前保留窗口的头部读，不推进游标。后台输出本来就保留尾部窗口，
+    // 所以这里拿到的就是“现在能给人看的最新内容”，不会抢走模型的增量。
+    return toExecRead(this.spawned.stdout.read(0), this.spawned.stderr.read(0))
   }
 
   kill(): boolean {

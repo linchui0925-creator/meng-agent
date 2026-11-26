@@ -12,7 +12,7 @@
  * 契约见 HANDOFF §1.16 / B-28。
  */
 
-import type { SessionSummary } from './sessions.ts'
+import { activityAtOf, sortSessionsByActivity, type SessionSummary } from './sessions.ts'
 
 export interface Workspace {
   id: string
@@ -101,11 +101,11 @@ export function splitByWorkspace(
   const groups = [...buckets.entries()]
     .map(([id, items]) => ({
       workspace: byId.get(id)!,
-      items: [...items].sort((a, b) => b.at - a.at),
+      items: sortSessionsByActivity(items),
     }))
-    .sort((a, b) => (b.items[0]?.at ?? 0) - (a.items[0]?.at ?? 0))
+    .sort((a, b) => activityAtOf(b.items[0] ?? { at: 0 }) - activityAtOf(a.items[0] ?? { at: 0 }))
 
-  return { tasks: [...tasks].sort((a, b) => b.at - a.at), groups }
+  return { tasks: sortSessionsByActivity(tasks), groups }
 }
 
 /**

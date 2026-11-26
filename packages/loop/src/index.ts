@@ -133,6 +133,8 @@ export interface RunInput {
   interruption?: RunInterruption
   /** 由调用方分配, 会写进每条事件的 data.runId —— 前端靠它给并发 run 分组 */
   runId?: string
+  /** 子智能体等从属运行必须排除的工具；只影响本次 run。 */
+  excludeTools?: readonly string[]
   signal?: AbortSignal
 }
 
@@ -145,8 +147,23 @@ export interface RunInput {
  */
 export type LoopEvent =
   | { type: 'text'; text: string }
+  /** 思考增量；前端只用于运行时间线，不写进最终回复。 */
+  | { type: 'reasoning'; text: string }
   | { type: 'tool'; call: ToolCall; result: string }
   | { type: 'done'; reason: 'stop' | 'max-turns' | 'error' | 'aborted'; error?: string }
+
+
+/** 正常结束前的完成门。插件可以要求继续执行，而不是直接结束。 */
+export interface TurnStopInput {
+  sessionId: string
+  runId?: string
+  text: string
+  reason: 'stop'
+}
+
+export type TurnStopVerdict =
+  | { stop: true }
+  | { stop: false; message: string; source?: string }
 
 export interface LoopService {
   run(input: RunInput): AsyncIterable<LoopEvent>

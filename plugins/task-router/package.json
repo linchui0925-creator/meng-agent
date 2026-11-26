@@ -1,0 +1,30 @@
+{
+  "name": "@meng/plugin-task-router",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "运行时任务交付模式分流：简答、小改、多步与长期任务",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "files": ["src", "meng.patch.yml"],
+  "scripts": {
+    "test": "node --experimental-strip-types test/task-router.ts"
+  },
+  "dependencies": {
+    "@meng/core": "workspace:*",
+    "@meng/prompt": "workspace:*",
+    "@meng/session": "workspace:*",
+    "@meng/task-router": "workspace:*",
+    "@meng/tools": "workspace:*"
+  },
+  "meng": {
+    "plugin": {
+      "apiVersion": 1,
+      "id": "task-router",
+      "patch": "./meng.patch.yml"
+    }
+  }
+}

@@ -1,0 +1,6 @@
+- insert:
+    - id: theme-ui
+      client:
+        platforms: [web, desktop]
+        immediately: false
+        slots: ['sidebar.utility', 'topbar.actions']

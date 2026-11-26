@@ -36,6 +36,17 @@ export type SessionEventType =
   | 'context/compacted'
   /** 运行中自检：模型判断任务是在正常推进还是已经跑偏。 */
   | 'progress/checkpoint'
+  /** Plan 模式状态；最后一次事件决定当前是否只规划。 */
+  | 'plan/mode'
+  /** 用户批准的计划正文；保留下来供后续 Todo 和审计引用。 */
+  | 'plan/submitted'
+  /** 模型维护的整份任务清单快照。 */
+  | 'todo/write'
+  /** 长期目标状态；一个会话最多一个当前目标。 */
+  | 'goal/change'
+  /** 子智能体开始/结束，只写父会话，用于观察和审计。 */
+  | 'subagent/started'
+  | 'subagent/completed'
   /**
    * 后台任务开跑。与 job/completed **同形状** (完整快照, status='running',
    * 没有 finishedAt) —— 前端按 id upsert 同一条任务条, 不需要两套渲染分支。
@@ -88,7 +99,10 @@ export function compactionCheckpointMessage(summary: string): ProjectedMessage {
 export interface SessionMeta {
   sessionId: string
   title: string
+  /** 创建时间；用于日期分组。 */
   at: number
+  /** 最近活动时间；用于把正在执行/刚完成的会话排到最上面。 */
+  updatedAt: number
   lastSeq: number
   turns: number
   /**
@@ -191,11 +205,15 @@ export function apply(
           out.push({ role: 'user', content })
         }
         if (event.type === 'llm/completed') {
-          const { text, toolCalls } = event.data as {
+          const { text, reasoning, toolCalls } = event.data as {
             text?: string
+            reasoning?: string
             toolCalls?: Array<{ id: string; name: string; args: unknown }>
           }
           const blocks: ContentBlock[] = []
+          // 思考块必须保留：DeepSeek 等厂商在“带工具调用的 assistant”
+          // 下一轮要求回传 reasoning_content；丢掉它会让工具链判成上下文断裂。
+          if (reasoning) blocks.push({ type: 'reasoning', text: reasoning })
           // 空 content 是非法的 —— OpenAI 系 provider 在有 tool_calls 时收到
           // content: "" 会直接 400。Python 版这里踩过: 工具轮次静默失败,
           // 表现为"模型突然不说话了"。有文本就带文本块, 没有就不带
@@ -212,10 +230,13 @@ export function apply(
           out.push({ role: 'assistant', content: blocks })
         }
         if (event.type === 'tool/completed') {
-          const { callId, result, ok } = event.data as {
+          const { callId, result, ok, recordId, truncated, bytes } = event.data as {
             callId?: string
             result?: string
             ok?: boolean
+            recordId?: string
+            truncated?: boolean
+            bytes?: number
           }
           const text = ok === false ? `错误: ${result ?? ''}` : (result ?? '')
           // 工具结果是**块**而不是消息上的扁平字段: 一条 user 消息可以同时装
@@ -229,6 +250,9 @@ export function apply(
                 toolCallId: callId ?? '',
                 content: [{ type: 'text', text }],
                 ...(ok === false ? { isError: true } : {}),
+                ...(recordId ? { recordId } : {}),
+                ...(truncated === true ? { truncated: true } : {}),
+                ...(typeof bytes === 'number' ? { bytes } : {}),
               },
             ],
           })

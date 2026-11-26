@@ -1,0 +1,16 @@
+{
+  "name": "@meng/run-state",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "当前运行的任务证据与读写状态投影",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "files": ["src"],
+  "dependencies": {
+    "@meng/session": "workspace:*"
+  }
+}

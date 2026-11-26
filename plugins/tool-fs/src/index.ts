@@ -16,11 +16,12 @@
 
 import { defineInvariant, type Ctx, type Disposer } from '@meng/core'
 import { FsError, type FsCallOptions, type FsService } from '@meng/fs'
+import type { PromptService } from '@meng/prompt'
 import type { SessionService } from '@meng/session'
 import type { ToolCall, ToolDef, ToolResult, ToolService } from '@meng/tools'
 
 export const name = 'meng-plugin-tool-fs'
-export const inject = ['tools', 'fs']
+export const inject = ['tools', 'fs', 'prompt']
 
 export interface Config {
   readLimit?: number
@@ -66,6 +67,8 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
   const fs = ctx.get<FsService>('fs')
   if (!fs) throw new Error('能力面 fs 未装载')
   const session = ctx.get<SessionService>('session')
+  const prompt = ctx.get<PromptService>('prompt')
+  if (!prompt) throw new Error('tool-fs 需要 prompt 能力面')
 
   const readLimit = config.readLimit ?? 2000
   const readMaxLineLength = config.readMaxLineLength ?? 2000
@@ -183,8 +186,21 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
   ]
 
   const disposers = defs.map((def) => ctx.effect(() => tools.register(def)))
+  const promptDisposers = [
+    ctx.effect(() => prompt.section({
+      id: 'tool:read',
+      order: 101,
+      render: () => '使用 read 读取文件；大文件用 offset/limit 分段。源码和配置不要用 bash cat/sed/head/tail 读取。',
+    })),
+    ctx.effect(() => prompt.section({
+      id: 'tool:write-edit',
+      order: 102,
+      render: () => '修改已有文件优先用 edit；新建或整文件替换用 write。覆盖已有文件前先 read；不要用 bash 拼 heredoc 写源码。',
+    })),
+  ]
   return () => {
     for (const off of disposers.reverse()) off()
+    for (const off of promptDisposers.reverse()) off()
   }
 }
 

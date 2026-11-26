@@ -1,0 +1,23 @@
+{
+  "name": "@meng/plugin-skill-local",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "项目技能发现与按需读取",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "files": ["src", "README.md"],
+  "scripts": {
+    "test": "node --experimental-strip-types test/skill.ts"
+  },
+  "dependencies": {
+    "@meng/config": "workspace:*",
+    "@meng/core": "workspace:*",
+    "@meng/prompt": "workspace:*",
+    "@meng/session": "workspace:*",
+    "@meng/tools": "workspace:*"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "name": "@meng/plugin-completion-gate",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "在正常结束前检查 Plan、Todo 和验证证据",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "files": ["src", "meng.patch.yml"],
+  "scripts": {
+    "test": "node --experimental-strip-types test/completion.ts"
+  },
+  "dependencies": {
+    "@meng/core": "workspace:*",
+    "@meng/loop": "workspace:*",
+    "@meng/run-state": "workspace:*",
+    "@meng/session": "workspace:*",
+    "@meng/task-router": "workspace:*",
+    "@meng/tools": "workspace:*"
+  },
+  "meng": {
+    "plugin": {
+      "apiVersion": 1,
+      "id": "completion-gate",
+      "patch": "./meng.patch.yml"
+    }
+  }
+}

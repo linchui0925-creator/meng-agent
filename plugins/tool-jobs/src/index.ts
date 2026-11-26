@@ -125,6 +125,7 @@ export function apply(ctx: Ctx, config: Config = {}): Disposer {
               '规则:',
               '- 记住你起的每个 job_id。别为了等它而 sleep 或空转 —— 去干下一件独立的事。',
               '- 它跑完时你会收到一条 [后台任务 ... 已结束] 的消息。不要主动去猜它是否结束。',
+              '- 后台任务必须把 stdout/stderr 留在管道里，不要重定向到文件；否则用户和 job_output 都看不到过程。',
               '- 给用户最终答复之前, 用 job_output 把还相关的任务收一遍 (只有真的被它挡住时才 wait)。',
               '- 不再需要的任务用 job_kill 停掉, 别让它白跑。',
             ].join('\n'),

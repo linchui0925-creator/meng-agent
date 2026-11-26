@@ -17,7 +17,7 @@
   "scripts": { "build": "tsc -p tsconfig.json" },
   "peerDependencies": { "@meng/core": ">=0.0.0" },
   "devDependencies": {
-    "@meng/core": "0.0.0",
+    "@meng/core": "workspace:*",
     "@types/node": "^22.10.2",
     "typescript": "^5.9.3"
   },

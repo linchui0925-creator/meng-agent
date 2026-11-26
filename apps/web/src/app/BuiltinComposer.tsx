@@ -46,6 +46,8 @@ function queueStyleOf(search: string): QueueStyle {
 }
 
 export function BuiltinComposer({
+  sessionId,
+  ensureSession,
   value,
   setValue,
   send,
@@ -270,7 +272,7 @@ export function BuiltinComposer({
           />
           {/* 输入框工具条: 附件 / 引用。空着时容器整体不占宽 (CSS :empty) */}
           <div className={styles.composerActions}>
-            <Slot name="composer.actions" props={{ value, busy, online }} />
+            <Slot name="composer.actions" props={{ value, busy, online, sessionId, ensureSession }} />
           </div>
           <Textarea
             variant="bare"
@@ -306,6 +308,7 @@ export function BuiltinComposer({
 
         <div className={styles.composerBottom}>
           {controls !== undefined ? <ComposerBar controls={controls} /> : null}
+          <Slot name="composer.tools" props={{ sessionId, busy, ensureSession }} />
           <button
             type="button"
             className={styles.send}

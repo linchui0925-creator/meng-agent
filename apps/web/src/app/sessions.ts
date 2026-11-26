@@ -18,8 +18,10 @@ import type { Transport } from '@meng/transport'
 export interface SessionSummary {
   sessionId: string
   title: string
-  /** 首次活动时间（后端 `SessionMeta.at`）。排序与分组都用它 */
+  /** 创建时间；用于日期回退。 */
   at: number
+  /** 最近活动时间；运行中和刚完成的会话按它置顶。 */
+  updatedAt?: number
   lastSeq: number
   /** 内容预览。后端目前不提供 —— 有就渲染第二行，没有就单行 */
   preview?: string
@@ -75,7 +77,7 @@ export function groupSessions(list: readonly SessionSummary[], now: number): Ses
   }
 
   for (const s of list) {
-    const day = startOfDay(s.at)
+    const day = startOfDay(activityAtOf(s))
     if (day >= today) buckets.today.push(s)
     else if (day >= yesterday) buckets.yesterday.push(s)
     else buckets.earlier.push(s)
@@ -92,9 +94,18 @@ export function groupSessions(list: readonly SessionSummary[], now: number): Ses
       key,
       label: labels[key],
       // 组内倒序：最近聊过的排最前。**不改动入参** —— sort 原地排序会污染调用方的数组
-      items: [...buckets[key]].sort((a, b) => b.at - a.at),
+      items: sortSessionsByActivity(buckets[key]),
     }))
     .filter((g) => g.items.length > 0)
+}
+
+export function activityAtOf(session: Pick<SessionSummary, 'at' | 'updatedAt'>): number {
+  return session.updatedAt ?? session.at
+}
+
+/** 最近活动的排最前；同一时刻按全局事件序号兜底。 */
+export function sortSessionsByActivity(list: readonly SessionSummary[]): SessionSummary[] {
+  return [...list].sort((a, b) => activityAtOf(b) - activityAtOf(a) || b.lastSeq - a.lastSeq)
 }
 
 /** 侧栏任务区默认只展示最近 5 条，超过后折叠。 */
@@ -131,6 +142,7 @@ export function normalizeSessions(raw: unknown): SessionSummary[] {
       sessionId,
       title: typeof rec.title === 'string' && rec.title ? rec.title : '未命名会话',
       at: typeof rec.at === 'number' && Number.isFinite(rec.at) ? rec.at : 0,
+      ...(typeof rec.updatedAt === 'number' && Number.isFinite(rec.updatedAt) ? { updatedAt: rec.updatedAt } : {}),
       lastSeq: typeof rec.lastSeq === 'number' && Number.isFinite(rec.lastSeq) ? rec.lastSeq : 0,
       preview: typeof rec.preview === 'string' && rec.preview ? rec.preview : undefined,
       workspace: typeof rec.workspace === 'string' && rec.workspace ? rec.workspace : undefined,

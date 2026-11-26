@@ -26,7 +26,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && vite build",
-    "test": "node --experimental-strip-types test/studio.ts && node --experimental-strip-types test/manifest.ts && node --experimental-strip-types test/install.ts && node --experimental-strip-types test/ops.ts && node --experimental-strip-types test/market-web.ts"
+    "test": "node --experimental-strip-types test/studio.ts && node --experimental-strip-types test/manifest.ts && node --experimental-strip-types test/install.ts && node --experimental-strip-types test/ops.ts && node --experimental-strip-types test/market-web.ts && node --experimental-strip-types test/workflow.ts"
   },
   "peerDependencies": {
     "@meng/core": ">=0.0.0"
